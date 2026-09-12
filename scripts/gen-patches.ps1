@@ -52,7 +52,7 @@ git checkout -- . 2>$null | Out-Null
 Write-Host "== 2) 覆盖我们的文件 ==" -ForegroundColor Cyan
 $changed = @()
 Get-ChildItem -Path $OurDir -Recurse -File |
-  Where-Object { $_.FullName -notmatch '\\\.git\\' -and $_.FullName -notmatch '\\node_modules\\' -and $_.FullName -notmatch '\\target\\' -and $_.FullName -notmatch '\\dist\\' } |
+  Where-Object { $_.FullName -notmatch '\\\.git\\' -and $_.FullName -notmatch '\\node_modules\\' -and $_.FullName -notmatch '\\target\\' -and $_.FullName -notmatch '\\dist\\' -and $_.FullName -notmatch '\\\.claude\\' } |
   ForEach-Object {
     $rel = $_.FullName.Substring($OurDir.Length).TrimStart('\') -replace '\\','/'
     $changed += $rel

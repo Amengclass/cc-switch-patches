@@ -197,136 +197,20 @@ index cdd947e..2bde014 100644
      }
  
 diff --git a/src-tauri/src/database/schema.rs b/src-tauri/src/database/schema.rs
-index 0af5d99..8e9402e 100644
+index 0af5d99..757fc79 100644
 --- a/src-tauri/src/database/schema.rs
 +++ b/src-tauri/src/database/schema.rs
-@@ -67,6 +67,7 @@ impl Database {
-             enabled_claude BOOLEAN NOT NULL DEFAULT 0, enabled_codex BOOLEAN NOT NULL DEFAULT 0,
-             enabled_gemini BOOLEAN NOT NULL DEFAULT 0, enabled_grokbuild BOOLEAN NOT NULL DEFAULT 0,
-             enabled_opencode BOOLEAN NOT NULL DEFAULT 0,
-+            enabled_openclaw BOOLEAN NOT NULL DEFAULT 0,
-             enabled_hermes BOOLEAN NOT NULL DEFAULT 0
-         )",
-             [],
-@@ -96,6 +97,7 @@ impl Database {
-             enabled_gemini BOOLEAN NOT NULL DEFAULT 0,
-             enabled_grokbuild BOOLEAN NOT NULL DEFAULT 0,
-             enabled_opencode BOOLEAN NOT NULL DEFAULT 0,
-+            enabled_openclaw BOOLEAN NOT NULL DEFAULT 0,
-             enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
-             installed_at INTEGER NOT NULL DEFAULT 0,
-             content_hash TEXT,
-@@ -105,6 +107,23 @@ impl Database {
-         )
-         .map_err(|e| AppError::Database(e.to_string()))?;
- 
-+        // OpenClaw 支持列：create_tables 阶段幂等补齐，独立于 schema 版本。
-+        // 增强版暂时把 SCHEMA_VERSION 标回 v16（兼容原生 app），因此不通过
-+        // v17 迁移加列；这里对所有库（新库/原生 v16 库/增强版旧库）统一确保列存在。
-+        Self::add_column_if_missing(
-+            conn,
-+            "skills",
-+            "enabled_openclaw",
-+            "BOOLEAN NOT NULL DEFAULT 0",
-+        )?;
-+        // mcp_servers 同款幂等补齐（OpenClaw MCP 支持）。
-+        Self::add_column_if_missing(
-+            conn,
-+            "mcp_servers",
-+            "enabled_openclaw",
-+            "BOOLEAN NOT NULL DEFAULT 0",
-+        )?;
-+
-         // 6. Skill Repos 表
-         conn.execute(
-             "CREATE TABLE IF NOT EXISTS skill_repos (
-@@ -351,6 +370,42 @@ impl Database {
-         )
-         .map_err(|e| AppError::Database(e.to_string()))?;
- 
-+        // 20. Remote Hosts 表（增强版：SSH 远程主机管理）
-+        //     密码不落库，存系统钥匙串（见 remote::credentials）。
-+        conn.execute(
-+            "CREATE TABLE IF NOT EXISTS remote_hosts (
-+                id TEXT PRIMARY KEY,
-+                name TEXT NOT NULL,
-+                host TEXT NOT NULL,
-+                port INTEGER NOT NULL DEFAULT 22,
-+                username TEXT NOT NULL,
-+                auth_method TEXT NOT NULL DEFAULT 'password',
-+                save_password BOOLEAN NOT NULL DEFAULT 1,
-+                route_through_local_proxy BOOLEAN NOT NULL DEFAULT 0,
-+                route_proxy_apps TEXT NOT NULL DEFAULT '{}',
-+                route_proxy_container_apps TEXT NOT NULL DEFAULT '{}',
-+                disabled BOOLEAN NOT NULL DEFAULT 0,
-+                created_at INTEGER,
-+                updated_at INTEGER
-+            )",
-+            [],
-+        )
-+        .map_err(|e| AppError::Database(e.to_string()))?;
-+
-+        // 远程主机「当前生效供应商」记录（per-app），含完整 provider 配置 JSON
-+        // （解耦路由基座）。原 ~/.cc-switch/remote_current_providers.json 已迁入此表。
-+        conn.execute(
-+            "CREATE TABLE IF NOT EXISTS remote_current_providers (
-+                host_id TEXT NOT NULL,
-+                app TEXT NOT NULL,
-+                provider_id TEXT NOT NULL,
-+                provider_config TEXT,
-+                updated_at INTEGER NOT NULL DEFAULT 0,
-+                PRIMARY KEY (host_id, app)
-+            )",
-+            [],
-+        )
-+        .map_err(|e| AppError::Database(e.to_string()))?;
-         // 修复跑过未发布开发版的库：current 标记曾是全局 key，现按应用分组
-         // （随 v12 定稿为 current_profile_id_<scope>，不单独 bump 版本）
-         if conn
-@@ -403,6 +458,43 @@ impl Database {
+@@ -430,6 +430,10 @@ impl Database {
              [],
          );
  
-+        // 尝试添加"走本机路由"列到 remote_hosts 表（兼容旧库升级；新库建表已含该列）
-+        let _ = conn.execute(
-+            "ALTER TABLE remote_hosts ADD COLUMN route_through_local_proxy BOOLEAN NOT NULL DEFAULT 0",
-+            [],
-+        );
++        // 增强版自有表 / 列（P2 收敛点：全部逻辑在 remote::schema，这里只留一行调用，
++        // 使官方升级时本文件的冲突从「~90 行」压到「1 行」）
++        crate::remote::schema::ensure(conn)?;
 +
-+        // 尝试添加 per-app 接管列 route_proxy_apps（JSON：{"claude":true,...}）。
-+        // 旧数据迁移：route_through_local_proxy=1 的主机 → 4 个接管 app 全开（保留原意图）。
-+        let _ = conn.execute(
-+            "ALTER TABLE remote_hosts ADD COLUMN route_proxy_apps TEXT NOT NULL DEFAULT '{}'",
-+            [],
-+        );
-+        let _ = conn.execute(
-+            "UPDATE remote_hosts SET route_proxy_apps = '{\"claude\":true,\"codex\":true,\"gemini\":true,\"grokbuild\":true}' WHERE route_through_local_proxy = 1 AND route_proxy_apps = '{}'",
-+            [],
-+        );
-+        // 展开后清零旧布尔：route_through_local_proxy 已废弃（per-app 全覆盖），
-+        // 不清会残留 1，导致 host_wants_tunnel 误判「需要隧道」（旧库升级场景）。
-+        let _ = conn.execute(
-+            "UPDATE remote_hosts SET route_through_local_proxy = 0 WHERE route_through_local_proxy = 1",
-+            [],
-+        );
-+
-+        // 尝试添加 per-container×app 接管列 route_proxy_container_apps
-+        // （JSON：{"<容器名>":{"claude":true,...}}）。旧库升级后容器侧默认空 = 不接管。
-+        let _ = conn.execute(
-+            "ALTER TABLE remote_hosts ADD COLUMN route_proxy_container_apps TEXT NOT NULL DEFAULT '{}'",
-+            [],
-+        );
-+
-+        // 尝试添加 disabled 列（软禁用）：旧库升级补列，新库建表已含。
-+        // 禁用 = 目标选择/操作排除 + load_host 拦截兜底，远程管理页仍可见可恢复（不删除）。
-+        let _ = conn.execute(
-+            "ALTER TABLE remote_hosts ADD COLUMN disabled BOOLEAN NOT NULL DEFAULT 0",
-+            [],
-+        );
-+
-         // 兼容：若旧版 proxy_config 仍为单例结构（无 app_type），则在启动时直接转换为三行结构
-         // 说明：user_version=2 时不会再触发 v1->v2 迁移，但新代码查询依赖 app_type 列。
-         if Self::table_exists(conn, "proxy_config")?
+         Ok(())
+     }
+ 
 diff --git a/src-tauri/src/database/tests.rs b/src-tauri/src/database/tests.rs
 index 26ff7d9..4088720 100644
 --- a/src-tauri/src/database/tests.rs

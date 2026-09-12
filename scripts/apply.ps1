@@ -28,7 +28,15 @@ if ($OfficialDir) {
   if (Test-Path $TargetDir) { Remove-Item -LiteralPath $TargetDir -Recurse -Force }
   Copy-Item $OfficialDir $TargetDir -Recurse -Force
   Push-Location $TargetDir
-  git checkout -- . 2>$null | Out-Null
+  if ($Version) {
+    # 官方仓可能停在 main（= 最新 tag），按 -Version 切到目标 tag
+    git checkout -q $Version 2>&1 | Out-Null
+    if ($LASTEXITCODE -eq 0) { Write-Host "  已切换到官方 $Version" }
+    else { Write-Host "  [!] 切换到 $Version 失败，沿用当前检出（可能是非 git 目录）" -ForegroundColor Yellow; git checkout -- . 2>$null | Out-Null }
+  } else {
+    git checkout -- . 2>$null | Out-Null
+    Write-Host "  (未指定 -Version，沿用来源目录当前检出: $(git rev-parse --abbrev-ref HEAD 2>$null) $(git describe --tags --always 2>$null))"
+  }
   Pop-Location
 } else {
   Write-Host "`n[1/4] 克隆官方 $Version" -ForegroundColor Cyan

@@ -23,6 +23,7 @@ pub mod opencode;
 pub mod pi;
 pub mod prompt;
 pub mod providers;
+pub mod schema;
 pub mod sessions;
 pub mod settings;
 pub mod sftp_io;

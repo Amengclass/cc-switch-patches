@@ -35,7 +35,7 @@ $overlayRoot = Join-Path $MagicDir "overlay"
 if (Test-Path $overlayRoot) { Remove-Item -LiteralPath $overlayRoot -Recurse -Force }
 New-Item -ItemType Directory -Force -Path $overlayRoot | Out-Null
 
-$skip = '\\\.git\\|\\node_modules\\|\\target\\|\\dist\\|\\\.vite\\|\\tmp-official\\'
+$skip = '\\\.git\\|\\node_modules\\|\\target\\|\\dist\\|\\\.vite\\|\\tmp-official\\|\\\.claude\\|\\worktrees\\|\\\.reasonix\\|\\src-tauri\\gen\\'
 $n = 0
 Get-ChildItem -Path $EditedRepo -Recurse -File | Where-Object { $_.FullName -notmatch $skip } | ForEach-Object {
   $rel = $_.FullName.Substring($EditedRepo.Length).TrimStart('\')

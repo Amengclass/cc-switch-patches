@@ -59,11 +59,12 @@ Check "lib.rs 注册悬浮窗钩子" { Contains "src-tauri/src/lib.rs" "floating
 Check "悬浮窗三窗口 label 常量" { Contains "src-tauri/src/floating.rs" "BALL_LABEL" }
 
 # ---------- D. 后端：数据库 ----------
-Check "schema 含 remote_hosts 表" { Contains "src-tauri/src/database/schema.rs" "remote_hosts" }
-Check "schema 含 remote_current_providers 表" { Contains "src-tauri/src/database/schema.rs" "remote_current_providers" }
-Check "schema 含 enabled_openclaw 列" { Contains "src-tauri/src/database/schema.rs" "enabled_openclaw" }
+Check "schema 含 remote_hosts 表" { Contains "src-tauri/src/remote/schema.rs" "remote_hosts" }
+Check "schema 含 remote_current_providers 表" { Contains "src-tauri/src/remote/schema.rs" "remote_current_providers" }
+Check "schema 含 enabled_openclaw 列" { Contains "src-tauri/src/remote/schema.rs" "enabled_openclaw" }
 
 # ---------- E. 后端：OpenClaw ----------
+Check "官方 schema.rs 保留 P2 单点调用" { Contains "src-tauri/src/database/schema.rs" "remote::schema::ensure" }
 Check "openclaw MCP 模块存在" { Exists "src-tauri/src/mcp/openclaw.rs" }
 Check "openclaw 配置模块存在" { Exists "src-tauri/src/openclaw_config.rs" }
 
