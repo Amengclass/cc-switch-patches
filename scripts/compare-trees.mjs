@@ -13,14 +13,15 @@ if (!refDir || !tgtDir) {
   process.exit(1);
 }
 const quiet = flags.includes("--quiet");
-const SKIP = /[\\/](\.git|node_modules|target|dist|\.vite|tmp-official)[\\/]/;
+const SKIP_SEGMENTS = new Set([".git", "node_modules", "target", "dist", ".vite", "tmp-official", "magic", ".claude", ".reasonix", "gen"]);
+const SKIP = (rel) => rel.split(/[\\/]/).some((s) => SKIP_SEGMENTS.has(s));
 
 function walk(root, base = "") {
   const out = [];
   for (const e of fs.readdirSync(root, { withFileTypes: true })) {
     const rel = base ? `${base}/${e.name}` : e.name;
     const full = path.join(root, e.name);
-    if (SKIP.test(full) || SKIP.test(`${full}/`)) continue;
+    if (SKIP(rel)) continue;
     if (e.isDirectory()) out.push(...walk(full, rel));
     else out.push(rel);
   }
