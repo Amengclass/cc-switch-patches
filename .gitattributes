@@ -1,0 +1,5 @@
+# 关键：本仓库必须**字节保真**。
+#  - patches/*.patch 若在 checkout 时被转成 CRLF，git apply 会全部失败
+#  - overlay 文件必须与官方源码同编码同换行
+# 因此对所有文件关闭换行/编码转换（-text = 不做任何 EOL 转换）。
+* -text
