@@ -11,16 +11,10 @@
       "ja",
       "zh-TW"
     ],
-    "config_overrides": "src-tauri/tauri.conf.json, src-tauri/tauri.windows.conf.json",
-    "cargo_additions": [
-      "tar",
-      "russh",
-      "russh-sftp",
-      "keyring"
-    ]
+    "config_overrides": "src-tauri/tauri.conf.json, src-tauri/tauri.windows.conf.json"
   },
   "deleted_files": [
     "session-manager.md"
   ],
-  "last_verified": null
+  "last_verified": "2026-09-12"
 }

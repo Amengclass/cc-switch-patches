@@ -1938,7 +1938,7 @@ index b8899b0..1572550 100644
        </span>
  
 diff --git a/src/components/providers/ProviderCard.tsx b/src/components/providers/ProviderCard.tsx
-index 3927b62..d4e19c7 100644
+index 3927b62..52f4371 100644
 --- a/src/components/providers/ProviderCard.tsx
 +++ b/src/components/providers/ProviderCard.tsx
 @@ -22,6 +22,7 @@ import SubscriptionQuotaFooter from "@/components/SubscriptionQuotaFooter";
@@ -1995,19 +1995,16 @@ index 3927b62..d4e19c7 100644
  
    const { data: health } = useProviderHealth(
      provider.id,
-@@ -266,8 +276,9 @@ export function ProviderCard({
-   }, [provider.notes, displayUrl, fallbackUrlText]);
- 
+@@ -268,6 +278,8 @@ export function ProviderCard({
    const isBoundCodexOfficial = codexOfficialIdentity === "managed_account";
--  const usageEnabled =
--    provider.meta?.usage_script?.enabled ?? isBoundCodexOfficial;
-+  const usageEnabled = provider.meta?.usage_script?.enabled ?? isBoundCodexOfficial;
+   const usageEnabled =
+     provider.meta?.usage_script?.enabled ?? isBoundCodexOfficial;
 +  const { settings } = useSettings();
 +  const quotaInline = (settings?.quotaDisplayMode ?? "compact") === "compact";
    const isOfficial = isOfficialProvider(provider, appId);
    const supportsOfficialSubscription =
      isOfficial && ["claude", "codex", "gemini", "grokbuild"].includes(appId);
-@@ -319,6 +330,8 @@ export function ProviderCard({
+@@ -319,6 +331,8 @@ export function ProviderCard({
    const { data: usage } = useUsageQuery(provider.id, appId, {
      enabled: usageEnabled && !isOfficial && !isOfficialSubscriptionUsage,
      autoQueryInterval,
@@ -2016,7 +2013,7 @@ index 3927b62..d4e19c7 100644
    });
  
    const isTokenPlan =
-@@ -329,10 +342,13 @@ export function ProviderCard({
+@@ -329,10 +343,13 @@ export function ProviderCard({
    const [isExpanded, setIsExpanded] = useState(false);
  
    useEffect(() => {
@@ -2032,7 +2029,7 @@ index 3927b62..d4e19c7 100644
  
    const handleOpenWebsite = () => {
      if (!isClickableUrl) {
-@@ -604,14 +620,14 @@ export function ProviderCard({
+@@ -604,14 +621,14 @@ export function ProviderCard({
                {isCopilot ? (
                  <CopilotQuotaFooter
                    meta={provider.meta}
@@ -2049,7 +2046,7 @@ index 3927b62..d4e19c7 100644
                      isCurrent={isCurrent}
                      autoQueryInterval={
                        isBoundCodexOfficial
-@@ -623,30 +639,31 @@ export function ProviderCard({
+@@ -623,30 +640,31 @@ export function ProviderCard({
                ) : isXaiOauth ? (
                  <XaiOauthQuotaFooter
                    meta={provider.meta}
@@ -2087,7 +2084,7 @@ index 3927b62..d4e19c7 100644
                  <UsageFooter
                    provider={provider}
                    providerId={provider.id}
-@@ -654,10 +671,13 @@ export function ProviderCard({
+@@ -654,10 +672,13 @@ export function ProviderCard({
                    usageEnabled={usageEnabled}
                    isCurrent={isCurrent}
                    isInConfig={isInConfig}
@@ -2103,7 +2100,7 @@ index 3927b62..d4e19c7 100644
                  <button
                    onClick={(e) => {
                      e.stopPropagation();
-@@ -686,6 +706,7 @@ export function ProviderCard({
+@@ -686,6 +707,7 @@ export function ProviderCard({
                isCurrent={isCurrent}
                isInConfig={isInConfig}
                isTesting={isTesting}
@@ -2111,7 +2108,7 @@ index 3927b62..d4e19c7 100644
                isProxyTakeover={isProxyTakeover}
                isOfficialBlockedByProxy={isOfficialBlockedByProxy}
                isReadOnly={isHermesReadOnly}
-@@ -737,8 +758,9 @@ export function ProviderCard({
+@@ -737,8 +759,9 @@ export function ProviderCard({
          </div>
        </div>
  
@@ -2123,7 +2120,7 @@ index 3927b62..d4e19c7 100644
            <UsageFooter
              provider={provider}
              providerId={provider.id}
-@@ -746,7 +768,9 @@ export function ProviderCard({
+@@ -746,7 +769,9 @@ export function ProviderCard({
              usageEnabled={usageEnabled}
              isCurrent={isCurrent}
              isInConfig={isInConfig}
