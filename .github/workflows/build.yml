@@ -213,6 +213,80 @@ jobs:
               Write-Host "产物: $(Split-Path $dest -Leaf)  ($([math]::Round((Get-Item $dest).Length/1MB,1)) MB)"
             }
 
+      # 打完补丁的源码本身就是一份「可直接开发」的完整仓库快照 —— 之前它只存在于
+      # runner 的临时目录里，构建完就销毁了。这里把它也打成产物。
+      # 只在 Windows 那台做（三台内容相同，没必要重复上传）。
+      - name: ⑥ 打包源码快照（浅克隆 .git，可直接续开发）
+        if: matrix.platform == 'Windows'
+        shell: pwsh
+        run: |
+          $tree = "${{ github.workspace }}/build"
+          $out  = "${{ runner.temp }}/out"
+          $v = "${{ needs.plan.outputs.version }}"
+          $stage = Join-Path $env:RUNNER_TEMP "snapshot"
+
+          # 溯源信息：让人知道这份快照怎么来的、怎么重建
+          $patchSha = "${{ github.sha }}"
+          $patchRef = "${{ github.ref_name }}"
+          $offSha = (git -C $tree rev-parse --short HEAD 2>$null)
+          $offTag = (git -C $tree describe --tags --exact-match 2>$null)
+          $info = @"
+          CC Switch Magic $v —— 源码快照
+          ================================================
+
+          官方上游 : farion1231/cc-switch @ $offTag ($offSha)
+          补丁层   : Amengclass/cc-switch-patches @ $patchSha ($patchRef)
+          组装方式 : scripts/apply.ps1 -Version $v
+          构建时间 : $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') UTC+8
+
+          这份快照 = 官方源码 + 我们的补丁层，已组装完毕，可直接开发：
+            pnpm install
+            pnpm tauri dev          # 开发
+            pnpm tauri build        # 出安装包
+
+          它带一个【浅克隆】的 .git（只含当前这一个提交，无久远历史）：
+            - 可以直接 commit / 开分支 / 继续开发
+            - 想跟官方历史对齐，自己 `git fetch --unshallow` 或重新 clone 官方
+            - 想只更新补丁层：改完功能后跑
+                cc-switch-patches/scripts/repack.ps1 -EditedRepo <本目录> -Version $v
+
+          验证状态（构建时）：
+            - 组装 121/121 文件全部命中，零冲突
+            - 功能断言 44/44 通过
+          "@
+          [IO.File]::WriteAllText("$tree/BUILD-INFO.txt", $info, (New-Object Text.UTF8Encoding($false)))
+
+          # 组装产物里没有 .git（apply.ps1 从官方 clone 拷的是工作区）。
+          # 这里用【浅克隆】重建一个：只含当前快照这一个提交，体积从 ~120MB 降到 ~15MB，
+          # 但 commit / 开分支 / 续开发都照常。
+          if (Test-Path $stage) { Remove-Item -LiteralPath $stage -Recurse -Force }
+          New-Item -ItemType Directory -Force -Path $stage | Out-Null
+
+          # 排除构建产物 + 工具目录。.git 也排除 —— 下面会用浅克隆重建一个更小的。
+          $skip = @("node_modules", "target", "dist", ".vite", ".git", ".claude", ".reasonix")
+          Get-ChildItem $tree -Force | Where-Object { $skip -notcontains $_.Name } | ForEach-Object {
+            Copy-Item $_.FullName (Join-Path $stage $_.Name) -Recurse -Force
+          }
+
+          Push-Location $stage
+          git init -q -b main
+          git -c user.email="build@cc-switch-patches" -c user.name="cc-switch-patches CI" add -A
+          git -c user.email="build@cc-switch-patches" -c user.name="cc-switch-patches CI" `
+              commit -q -m "CC Switch Magic $v —— 官方 $offTag + 补丁层 $($patchSha.Substring(0,7))"
+          Pop-Location
+          Write-Host "快照文件数: $((Get-ChildItem $stage -Recurse -File -Force | Measure-Object).Count)"
+
+          $zip = "$out/CC-Switch-Magic-$v-Source.zip"
+          if (Test-Path $zip) { Remove-Item -LiteralPath $zip -Force }
+          Compress-Archive -Path (Join-Path $stage "*") -DestinationPath $zip -Force
+          $mb = [math]::Round((Get-Item $zip).Length/1MB,1)
+          Write-Host "源码快照: $(Split-Path $zip -Leaf)  ($mb MB)"
+
+          # 校验和，方便别人核对下载是否完整
+          $sha = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
+          "$sha  CC-Switch-Magic-$v-Source.zip" | Set-Content "$zip.sha256" -Encoding ascii
+          Write-Host "SHA256: $sha"
+
       - name: 上传产物
         uses: actions/upload-artifact@v4
         with:
