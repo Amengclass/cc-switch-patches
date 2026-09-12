@@ -1,27 +1,44 @@
 name: Build CC Switch Magic
 
-# 手动触发：仓库页面 → Actions → Build CC Switch Magic → Run workflow → 填版本号
+# 触发：仓库页面 → Actions → Build CC Switch Magic → Run workflow
+# 也可在推送 magic-* tag 时自动出包
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: "官方 tag（如 v3.20.1）。留空 = base.json 里锁定的版本"
+        description: "官方 tag（如 v3.20.1）。留空 = base.json 锁定的版本"
         required: false
         default: ""
         type: string
       make_release:
-        description: "构建成功后创建 GitHub Release 并附上 exe"
+        description: "构建成功后创建 GitHub Release 并附上全部产物"
         required: false
         default: false
         type: boolean
+  push:
+    tags: ["magic-*"]
 
 permissions:
   contents: write
 
 jobs:
   build:
-    runs-on: windows-latest
-    timeout-minutes: 120
+    name: ${{ matrix.platform }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            platform: Windows
+            bundles: nsis,msi
+          - os: ubuntu-22.04
+            platform: Linux
+            bundles: deb,appimage
+          - os: macos-14
+            platform: macOS
+            bundles: dmg
 
     steps:
       - name: 检出补丁层
@@ -35,66 +52,141 @@ jobs:
       - name: 准备 Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: "20"
 
       - name: 准备 Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: 缓存 cargo 产物
+      - name: macOS 补 universal 目标
+        if: runner.os == 'macOS'
+        run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
+
+      - name: Linux 系统依赖
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config curl wget file patchelf libssl-dev rpm \
+            libgtk-3-dev librsvg2-dev libayatana-appindicator3-dev
+          sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev \
+            || sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.0-dev
+          sudo apt-get install -y --no-install-recommends libsoup-3.0-dev \
+            || sudo apt-get install -y --no-install-recommends libsoup2.4-dev
+
+      - name: 缓存 cargo registry
         uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            ${{ runner.temp }}/cc-switch-build/src-tauri/target
           key: cargo-${{ runner.os }}-${{ github.run_id }}
-          restore-keys: |
-            cargo-${{ runner.os }}-
+          restore-keys: cargo-${{ runner.os }}-
 
       - name: ① 组装：官方源码 + 补丁
         shell: pwsh
         run: |
           $v = "${{ inputs.version }}"
-          if ([string]::IsNullOrWhiteSpace($v)) {
-            ./scripts/apply.ps1 -TargetDir "${{ runner.temp }}/cc-switch-build"
-          } else {
-            ./scripts/apply.ps1 -TargetDir "${{ runner.temp }}/cc-switch-build" -Version $v
-          }
+          $a = @("-TargetDir", "${{ runner.temp }}/cc-switch-build")
+          if (-not [string]::IsNullOrWhiteSpace($v)) { $a += @("-Version", $v) }
+          ./scripts/apply.ps1 @a
 
       - name: ② 验证：功能断言（42 条）
         shell: pwsh
         run: ./checks/feature-checks.ps1 -TargetDir "${{ runner.temp }}/cc-switch-build"
 
-      - name: ③ 构建 exe
+      - name: ③ 安装前端依赖
+        working-directory: ${{ runner.temp }}/cc-switch-build
+        run: pnpm install --frozen-lockfile
+
+      - name: ④ 打包（release + 安装包）
+        working-directory: ${{ runner.temp }}/cc-switch-build
+        shell: bash
+        run: |
+          set -euxo pipefail
+          if [ "${{ runner.os }}" = "macOS" ]; then
+            pnpm tauri build --target universal-apple-darwin --bundles ${{ matrix.bundles }}
+          else
+            pnpm tauri build --bundles ${{ matrix.bundles }}
+          fi
+
+      - name: ⑤ 收集并重命名（照官方命名规则）
         shell: pwsh
         run: |
-          cd "${{ runner.temp }}/cc-switch-build"
-          pnpm install --frozen-lockfile
-          pnpm build:renderer
-          cd src-tauri
-          cargo build --features tauri/custom-protocol
+          $tree = "${{ runner.temp }}/cc-switch-build"
+          $out  = "${{ runner.temp }}/out"
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
 
-      - name: ④ 收集产物
-        shell: pwsh
-        run: |
-          $exe = Get-ChildItem "${{ runner.temp }}/cc-switch-build/src-tauri/target/debug" -Filter *.exe | Select-Object -First 1
-          Write-Host "产物: $($exe.FullName)  $([math]::Round($exe.Length/1MB,1)) MB"
-          New-Item -ItemType Directory -Force -Path "${{ runner.temp }}/out" | Out-Null
-          Copy-Item $exe.FullName "${{ runner.temp }}/out/" -Force
+          $v = "${{ inputs.version }}"
+          if ([string]::IsNullOrWhiteSpace($v)) {
+            $v = (Get-Content "$tree/src-tauri/tauri.conf.json" -Raw | ConvertFrom-Json).version
+          }
+          $plat = "${{ matrix.platform }}"
 
-      - name: 上传 exe（Artifact）
+          if ($plat -eq "Windows") {
+            $exe = Get-ChildItem "$tree/src-tauri/target/release" -Filter "*.exe" -File -ErrorAction SilentlyContinue |
+                   Where-Object { $_.Name -notmatch "setup|uninstall" } | Select-Object -First 1
+            if ($exe) {
+              $pd = Join-Path $out "portable"
+              New-Item -ItemType Directory -Force -Path $pd | Out-Null
+              Copy-Item $exe.FullName (Join-Path $pd "CC-Switch-Magic.exe") -Force
+              Compress-Archive -Path $pd -DestinationPath "$out/CC-Switch-Magic-$v-$plat-Portable.zip" -Force
+              [System.IO.Directory]::Delete($pd, $true)
+              Write-Host "便携版: CC-Switch-Magic-$v-$plat-Portable.zip"
+            }
+          }
+
+          $bundle = "$tree/src-tauri/target/release/bundle"
+          if (-not (Test-Path $bundle)) { $bundle = "$tree/src-tauri/target/universal-apple-darwin/release/bundle" }
+          $i = 0
+          Get-ChildItem $bundle -Recurse -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.Extension -in @(".msi", ".exe", ".dmg", ".deb", ".AppImage", ".rpm") } |
+            Where-Object { $_.Name -notmatch "uninstall" } |
+            ForEach-Object {
+              $suffix = switch ($_.Extension) {
+                ".msi"      { "$plat.msi" }
+                ".exe"      { "$plat-Setup.exe" }
+                ".dmg"      { "$plat.dmg" }
+                ".deb"      { "$plat.deb" }
+                ".rpm"      { "$plat.rpm" }
+                ".AppImage" { "$plat.AppImage" }
+              }
+              $dest = "$out/CC-Switch-Magic-$v-$suffix"
+              if (Test-Path $dest) { $dest = "$out/CC-Switch-Magic-$v-$suffix.$i"; $i++ }
+              Copy-Item $_.FullName $dest -Force
+              Write-Host "产物: $(Split-Path $dest -Leaf)  ($([math]::Round((Get-Item $dest).Length/1MB,1)) MB)"
+            }
+
+      - name: 上传产物
         uses: actions/upload-artifact@v4
         with:
-          name: cc-switch-magic-windows
-          path: ${{ runner.temp }}/out/*.exe
+          name: cc-switch-magic-${{ matrix.platform }}
+          path: ${{ runner.temp }}/out/*
           if-no-files-found: error
 
-      - name: 创建 Release（可选）
-        if: ${{ inputs.make_release }}
-        shell: pwsh
+  release:
+    name: 发布 Release
+    needs: build
+    if: ${{ inputs.make_release || startsWith(github.ref, 'refs/tags/magic-') }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: 下载全部产物
+        uses: actions/download-artifact@v4
+        with:
+          path: all
+          merge-multiple: true
+
+      - name: 创建 Release
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $tag = "magic-${{ inputs.version }}-$(Get-Date -Format yyyyMMdd-HHmm)"
-          if ([string]::IsNullOrWhiteSpace("${{ inputs.version }}")) { $tag = "magic-$(Get-Date -Format yyyyMMdd-HHmm)" }
-          gh release create $tag "${{ runner.temp }}/out/*.exe" --title "CC Switch Magic $tag" --notes "由补丁层自动构建（官方 ${{ inputs.version }}）"
+          set -euxo pipefail
+          ls -lh all
+          TAG="magic-${{ inputs.version }}-$(date +%Y%m%d-%H%M)"
+          if [ -z "${{ inputs.version }}" ]; then TAG="magic-$(date +%Y%m%d-%H%M)"; fi
+          gh release create "$TAG" all/* \
+            --repo "${{ github.repository }}" \
+            --title "CC Switch Magic $TAG" \
+            --notes "由补丁层自动构建（官方 ${{ inputs.version }}）"

@@ -14,7 +14,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 if (-not $MagicDir) { $MagicDir = Split-Path -Parent (Split-Path -Parent $PSCommandPath) }
-. (Join-Path $MagicDir "scripts\_proxy.ps1")
+. (Join-Path $MagicDir "scripts/_proxy.ps1")
 $gitProxyArgs = Get-GitProxyArgs
 $base = Get-Content (Join-Path $MagicDir "base.json") -Raw | ConvertFrom-Json
 $upstream = $base.upstream
@@ -62,7 +62,7 @@ Write-Host "  覆盖 $overlayCount 个文件"
 
 # ---------- 3) 结构化合并 ----------
 Write-Host "`n[3/4] 结构化合并（i18n / 配置 / 依赖）" -ForegroundColor Cyan
-node (Join-Path $MagicDir "scripts\merge-structured.mjs") (Join-Path $MagicDir "structured") $TargetDir
+node (Join-Path $MagicDir "scripts/merge-structured.mjs") (Join-Path $MagicDir "structured") $TargetDir
 
 # ---------- 3.5) 删除我们不需要的官方文件 ----------
 if ($base.deleted_files -and $base.deleted_files.Count -gt 0) {
@@ -73,7 +73,10 @@ if ($base.deleted_files -and $base.deleted_files.Count -gt 0) {
 }
 
 # ---------- 3.6) 若已装 prettier，规范化格式（对齐官方 prettier 配置，避免 format:check 失败）----------
-$prettierBin = Join-Path $TargetDir "node_modules\.bin\prettier.cmd"
+# prettier 可执行文件在 Windows 是 .cmd，Linux/macOS 无后缀
+$prettierRel = "node_modules/.bin/prettier.cmd"
+if (-not ($IsWindows -or $env:OS -eq "Windows_NT")) { $prettierRel = "node_modules/.bin/prettier" }
+$prettierBin = Join-Path $TargetDir $prettierRel
 if (Test-Path $prettierBin) {
   Push-Location $TargetDir
   & $prettierBin --write "src/i18n/locales/*.json" "src-tauri/tauri.conf.json" "src-tauri/tauri.windows.conf.json" 2>&1 | Out-Null

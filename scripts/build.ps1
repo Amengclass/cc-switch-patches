@@ -55,6 +55,6 @@ Pop-Location
 if ($code -ne 0) { throw "Rust 构建失败（退出码 $code）" }
 
 $mode = if ($Release) { "release" } else { "debug" }
-$exe = (Get-ChildItem (Join-Path $TargetDir "src-tauri\target\$mode") -Filter *.exe -ErrorAction SilentlyContinue | Select-Object -First 1).FullName
+$exe = (Get-ChildItem (Join-Path $TargetDir "src-tauri/target/$mode") -Filter *.exe -ErrorAction SilentlyContinue | Select-Object -First 1).FullName
 Write-Host "`n=== 构建完成（耗时 $([int]$sw.Elapsed.TotalSeconds)s）===" -ForegroundColor Green
 if (Test-Path $exe) { Write-Host "  产物: $exe" -ForegroundColor Green } else { Write-Host "  未找到预期产物: $exe" -ForegroundColor Yellow }

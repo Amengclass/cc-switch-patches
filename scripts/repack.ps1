@@ -13,7 +13,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 if (-not $MagicDir) { $MagicDir = Split-Path -Parent (Split-Path -Parent $PSCommandPath) }
-. (Join-Path $MagicDir "scripts\_proxy.ps1")
+. (Join-Path $MagicDir "scripts/_proxy.ps1")
 $gitProxyArgs = Get-GitProxyArgs
 $base = Get-Content (Join-Path $MagicDir "base.json") -Raw | ConvertFrom-Json
 if (-not $Version) { $Version = $base.base_tag }
@@ -53,11 +53,11 @@ Write-Host "  overlay: $n 个新增文件"
 
 # 2) 重建补丁
 Write-Host "`n[2/3] 重建补丁" -ForegroundColor Cyan
-& (Join-Path $MagicDir "scripts\gen-patches.ps1") -OfficialDir $OfficialDir -OurDir $EditedRepo -OutDir (Join-Path $MagicDir "patches")
+& (Join-Path $MagicDir "scripts/gen-patches.ps1") -OfficialDir $OfficialDir -OurDir $EditedRepo -OutDir (Join-Path $MagicDir "patches")
 
 # 3) 重建结构化载荷
 Write-Host "`n[3/3] 重建结构化载荷" -ForegroundColor Cyan
-node (Join-Path $MagicDir "scripts\gen-structured.mjs") $OfficialDir $EditedRepo (Join-Path $MagicDir "structured")
+node (Join-Path $MagicDir "scripts/gen-structured.mjs") $OfficialDir $EditedRepo (Join-Path $MagicDir "structured")
 
 # 更新 base.json 计数
 $base.overlay_count = (Get-ChildItem $overlayRoot -Recurse -File).Count

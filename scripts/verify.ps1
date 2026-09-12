@@ -27,7 +27,7 @@ if (Test-Path $WorkDir) { Remove-Item -LiteralPath $WorkDir -Recurse -Force }
 $applyParams = @{ TargetDir = $WorkDir; MagicDir = $MagicDir }
 if ($OfficialDir) { $applyParams.OfficialDir = $OfficialDir }
 if ($Version) { $applyParams.Version = $Version }
-& "$MagicDir\scripts\apply.ps1" @applyParams
+& "$MagicDir\scripts/apply.ps1" @applyParams
 if ($LASTEXITCODE -ne 0) {
   Write-Host "`n[!] 补丁应用存在冲突 —— 升级未完成" -ForegroundColor Yellow
   $exitCode = 2
@@ -47,7 +47,7 @@ if ($ReferenceRepo) {
 
 # ---------- L3 功能断言 ----------
 Write-Host "`n----- L3: 功能断言 -----" -ForegroundColor Cyan
-& "$MagicDir\checks\feature-checks.ps1" -TargetDir $WorkDir
+& "$MagicDir\checks/feature-checks.ps1" -TargetDir $WorkDir
 if ($LASTEXITCODE -ne 0) {
   Write-Host "[!] L3 未通过：有功能断言失败" -ForegroundColor Yellow
   if ($exitCode -eq 0) { $exitCode = 1 }

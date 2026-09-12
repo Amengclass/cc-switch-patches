@@ -44,7 +44,7 @@ Check "overlay 文件齐全 ($($overlayFiles.Count) 个)" {
 # ---------- B. 后端：远程控制面 ----------
 Check "后端 remote 模块存在" { Exists "src-tauri/src/remote/commands.rs" }
 Check "后端 remote 模块 23 个文件" {
-  $n = (Get-ChildItem (Join-Path $TargetDir "src-tauri\src\remote") -File -Filter *.rs -ErrorAction SilentlyContinue).Count
+  $n = (Get-ChildItem (Join-Path $TargetDir "src-tauri/src/remote") -File -Filter *.rs -ErrorAction SilentlyContinue).Count
   if ($n -ge 20) { $true } else { @($false, "只有 $n 个 .rs") }
 }
 Check "lib.rs 注册 remote 命令" { Contains "src-tauri/src/lib.rs" "remote::commands::" 50 }

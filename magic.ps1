@@ -18,7 +18,7 @@ $MagicDir = Split-Path -Parent $PSCommandPath
 $CcwRoot  = Split-Path -Parent $MagicDir
 if (-not $TargetDir)   { $TargetDir   = Join-Path $CcwRoot "cc-switch-build" }
 if (-not $OfficialDir) { $OfficialDir = Join-Path $CcwRoot "cc-switch-official" }
-. (Join-Path $MagicDir "scripts\_proxy.ps1")
+. (Join-Path $MagicDir "scripts/_proxy.ps1")
 $gitProxyArgs = Get-GitProxyArgs
 
 function Step($n, $t) { Write-Host "`n[$n] $t" -ForegroundColor Cyan }
@@ -50,7 +50,7 @@ Write-Host "  目标官方版本: $Version" -ForegroundColor Yellow
 
 # ---------- 1) 组装（打补丁） ----------
 Step "1/3" "组装：官方源码 + 补丁 → $TargetDir"
-& (Join-Path $MagicDir "scripts\apply.ps1") -TargetDir $TargetDir -OfficialDir $OfficialDir -Version $Version
+& (Join-Path $MagicDir "scripts/apply.ps1") -TargetDir $TargetDir -OfficialDir $OfficialDir -Version $Version
 if ($LASTEXITCODE -ne 0) {
   Write-Host "`n✗ 补丁存在冲突，组装未完成。请解冲突后重新运行。" -ForegroundColor Red
   Write-Host "  冲突只影响报错的那些主题，其余补丁已应用。" -ForegroundColor Yellow
@@ -59,7 +59,7 @@ if ($LASTEXITCODE -ne 0) {
 
 # ---------- 2) 验证（功能断言） ----------
 Step "2/3" "验证：功能断言"
-& (Join-Path $MagicDir "checks\feature-checks.ps1") -TargetDir $TargetDir
+& (Join-Path $MagicDir "checks/feature-checks.ps1") -TargetDir $TargetDir
 if ($LASTEXITCODE -ne 0) {
   Write-Host "`n✗ 功能断言未通过，请检查上面的 [FAIL] 项。" -ForegroundColor Red
   exit 3
@@ -73,13 +73,13 @@ if ($SkipBuild) {
 
 # ---------- 3) 编译 ----------
 Step "3/3" "编译：前端 + Rust → exe"
-& (Join-Path $MagicDir "scripts\build.ps1") -TargetDir $TargetDir
+& (Join-Path $MagicDir "scripts/build.ps1") -TargetDir $TargetDir
 if ($LASTEXITCODE -ne 0) {
   Write-Host "`n✗ 编译失败，请看上面的错误。" -ForegroundColor Red
   exit 4
 }
 
-$exe = (Get-ChildItem (Join-Path $TargetDir "src-tauri\target\debug") -Filter *.exe -ErrorAction SilentlyContinue | Select-Object -First 1).FullName
+$exe = (Get-ChildItem (Join-Path $TargetDir "src-tauri/target/debug") -Filter *.exe -ErrorAction SilentlyContinue | Select-Object -First 1).FullName
 Write-Host "`n===================================================" -ForegroundColor Green
 Write-Host "  ✓ 全部完成" -ForegroundColor Green
 Write-Host "===================================================" -ForegroundColor Green
