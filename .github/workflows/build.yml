@@ -27,25 +27,37 @@ permissions:
   contents: write
 
 jobs:
+  # 先算出「要构建哪些平台」的矩阵。
+  # 为什么单开一个 job：GitHub 的 job 级 if 里不能用 matrix，只能在矩阵展开前过滤。
+  # push tag 触发时 inputs 为空 → 构建全部平台。
+  plan:
+    name: 规划平台
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.m.outputs.matrix }}
+    steps:
+      - id: m
+        shell: bash
+        run: |
+          set -euo pipefail
+          ALL='[{"os":"windows-latest","platform":"Windows","bundles":"nsis,msi"},{"os":"ubuntu-22.04","platform":"Linux","bundles":"deb,appimage"},{"os":"macos-14","platform":"macOS","bundles":"dmg"}]'
+          SEL='${{ inputs.platforms }}'
+          if [ -z "$SEL" ] || [ "$SEL" = "全部" ]; then
+            MATRIX="$(echo "$ALL" | jq -c .)"
+          else
+            MATRIX="$(echo "$ALL" | jq -c --arg s "$SEL" '[.[] | select(.platform as $p | $s | contains($p))]')"
+          fi
+          echo "选中平台: $MATRIX"
+          echo "matrix={\"include\":$MATRIX}" >> "$GITHUB_OUTPUT"
+
   build:
     name: ${{ matrix.platform }}
-    # platforms 输入过滤（push tag 触发时 inputs 为空 → 全部构建）
-    if: ${{ inputs.platforms == '' || inputs.platforms == '全部' || contains(inputs.platforms, matrix.platform) }}
+    needs: plan
     runs-on: ${{ matrix.os }}
     timeout-minutes: 180
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - os: windows-latest
-            platform: Windows
-            bundles: nsis,msi
-          - os: ubuntu-22.04
-            platform: Linux
-            bundles: deb,appimage
-          - os: macos-14
-            platform: macOS
-            bundles: dmg
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
 
     steps:
       - name: 检出补丁层
