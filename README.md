@@ -1,110 +1,141 @@
 # CC Switch Magic —— 官方补丁层
 
-> **官方源码就是底座，我们只加一层补丁。** 官方发新版 → 套补丁 → 重新构建 → 产出新 exe。
-> 本仓库**不含官方代码**，只含差异部分。
-
-基线官方版本见 [`base.json`](base.json)（当前 `v3.20.1`）。
+> **本目录只有「补丁 + 工具」，没有任何源码，所以不能直接编译。**
+> 用法：把补丁打到**官方源码**上 → 得到一棵可编译的树 → 编译它。
 
 ---
 
-## 为什么不是「官方 exe 上打补丁」
-
-Tauri 应用的 **Rust 后端 + 前端产物都是编译期焊死进 exe 的**，且官方没有任何插件/扩展机制。
-所以补丁作用在**源码层**，必须重新构建。
-
----
-
-## 目录结构
+## 一、先认清目录分工（最容易搞混的地方）
 
 ```
-├── base.json          # 基线锁定：官方 tag / commit / 计数
-├── overlay/           # A 层：55 个纯新增文件（官方没有的路径）→ 整拷，永不冲突
-├── patches/           # B 层：10 个按主题拆分的补丁 → 冲突只影响单个主题
-├── structured/        # C 层：i18n / 依赖 / 配置 的结构化载荷 → 结构上不可能冲突
-│   ├── i18n/*.json        #   只放我们新增/改值的 key
-│   ├── cargo-additions.json
-│   └── config-overrides.json
-├── checks/            # L3 功能断言清单
-└── scripts/           # 工具链
+C:\Users\Ameng\Desktop\claude_woker\cc_work\
+├── cc-switch-refactor\   ← 我们的源码（唯一真相；重构 / 改功能在这里做）
+├── cc-switch-magic\      ← 本目录：补丁层（从上面的源码抽出来）
+├── cc-switch-official\   ← 官方仓（只读，对照用）
+├── cc-switch\            ← 已发布的成品版（GitHub 上那份，【不要动】）
+└── cc-switch-build\      ← 组装 + 编译产物（可随时删掉重新生成）
 ```
 
-## 三层设计
-
-| 层 | 内容 | 冲突性 |
+| 目录 | 身份 | 能不能改 |
 |---|---|---|
-| **A overlay** | 官方没有的文件（`remote/*`、`floating/*`、`components/remote/*` …） | **永不冲突**（除非官方新建同名文件） |
-| **B patches** | 对官方文件的改动，按主题拆 10 个补丁 | 冲突隔离到单个主题 |
-| **C structured** | i18n / Cargo.toml / tauri.conf.json | **结构上不可能冲突**（按 key / 依赖名合并） |
+| `cc-switch-refactor` | **我们的源码**（当前 = 官方 v3.20.1 + 全部改动） | ✅ 改这个 |
+| `cc-switch-magic` | **补丁层**（overlay / patches / structured / scripts） | ✅ 只加脚本和补丁 |
+| `cc-switch-official` | 官方 `farion1231/cc-switch` 完整克隆 | ❌ 只读 |
+| `cc-switch` | **已发布成品**（`Amengclass/cc-switch`，`0c255bb3`） | ❌ 不动 |
+| `cc-switch-build` | 组装+编译的工作目录 | 随便，可删可重建 |
+
+> 补丁 = **「我们的源码」减去「官方源码」**。所以想加功能，改的是 `cc-switch-refactor`，
+> 然后 `repack` 重新抽取补丁。
 
 ---
 
-## 常用命令
+## 二、两条流程
 
-### 官方发新版：升级
+### 【A】官方发新版 → 出新的魔改版 exe
 
 ```powershell
-# 一键：拉官方 tag → 套 overlay → 结构化合并 → 打补丁
-.\scripts\apply.ps1 -TargetDir D:\build\cc-switch -Version v3.21.0
+cd C:\Users\Ameng\Desktop\claude_woker\cc_work\cc-switch-magic
 
-# 或者：复用已克隆的官方源码
-.\scripts\apply.ps1 -TargetDir D:\build\cc-switch -OfficialDir C:\path\to\official
+# ① 组装：拉官方 vX.Y.Z → 套 overlay + 结构化合并 + 打补丁
+.\scripts\apply.ps1 -TargetDir ..\cc-switch-build -Version v3.21.0
+
+# ② 验证：功能断言 + 编译（升级后必跑）
+.\scripts\verify.ps1 -OfficialDir ..\cc-switch-build
+
+# ③ 出 exe
+.\scripts\build.ps1 -TargetDir ..\cc-switch-build
+# 产物：..\cc-switch-build\src-tauri\target\debug\cc-switch.exe
 ```
 
-### 验证（升级后必跑）
+> 第 ① 步若报 `[FAIL] xxx.patch` —— 就是**该主题撞了官方改动**，只影响那一个补丁，
+> 其余照常应用。手工解冲突后重新 `repack` 即可。
+
+### 【B】我们改了功能 → 更新补丁层
 
 ```powershell
-# L3 功能断言 + L4 与参考树还原比对（秒级）
-.\scripts\verify.ps1 -ReferenceRepo <已知可用的仓库>
+# ① 在 cc-switch-refactor 里改代码（改完提交）
 
-# 追加 L1 结构（cargo check / typecheck）+ L2 逻辑（单测）—— 分钟级
-.\scripts\verify.ps1 -ReferenceRepo <已知可用的仓库> -WithBuild
-```
+# ② 重新抽取补丁层
+.\scripts\repack.ps1 -EditedRepo ..\cc-switch-refactor
 
-### 构建产物
-
-```powershell
-.\scripts\build.ps1 -TargetDir D:\build\cc-switch          # debug exe
-.\scripts\build.ps1 -TargetDir D:\build\cc-switch -Release # release（发布用）
-```
-
-### 我们改了功能之后：重新打包补丁
-
-```powershell
-# 在一个「已组装」的树里改完后
-.\scripts\repack.ps1 -EditedRepo D:\build\cc-switch
+# ③ 验证：官方 + 补丁 是否 == 我们的源码
+.\scripts\verify.ps1 -ReferenceRepo ..\cc-switch-refactor
 ```
 
 ---
 
-## 四层验证（保证「功能一个都没丢」）
+## 三、三层补丁结构
+
+| 层 | 内容 | 为什么这样 |
+|---|---|---|
+| **A `overlay/`** | 官方**没有**的文件（58 个，含 `remote/*`、`floating/*`、`magic.rs` …） | 整文件拷贝 → **永不冲突** |
+| **B `patches/`** | 对官方文件的改动，按主题拆成 10 个 `.patch` | 冲突隔离在单个主题内 |
+| **C `structured/`** | i18n / `Cargo.toml` / `tauri.conf.json` | 按 key / 依赖名合并 → **结构上不可能冲突** |
+
+> C 层是有意设计：官方最常改的就是 **i18n（近 400 提交里改了 79 次）**和配置文件，
+> 走结构化合并后这些**永远不会冲突**。
+
+---
+
+## 四、脚本清单
+
+| 脚本 | 作用 |
+|---|---|
+| `scripts/apply.ps1` | 官方源码 → overlay → 结构化合并 → 打补丁（得到可编译的树） |
+| `scripts/build.ps1` | 前端打包 + Rust 编译 → exe |
+| `scripts/verify.ps1` | 四层验证编排（L1 编译 / L2 测试 / L3 断言 / L4 还原比对） |
+| `scripts/repack.ps1` | 改完功能后重新生成 overlay + patches + structured |
+| `scripts/gen-patches.ps1` | 由「官方 vs 我们」生成主题补丁（`repack` 会调它） |
+| `scripts/gen-structured.mjs` | 生成 i18n delta |
+| `scripts/merge-structured.mjs` | 合并 i18n / 配置 / 依赖到目标树 |
+| `scripts/compare-trees.mjs` | 树比对（JSON/TOML 走语义比较，区分「真差异」与「仅格式」） |
+| `checks/feature-checks.ps1` | 40 条功能断言 |
+
+**`verify.ps1` 参数**：
+- `-ReferenceRepo <我们的源码>` → 跑 L4（组装结果 vs 我们的源码逐文件比对）；**仅在我们想确认「补丁完整」时用**
+- 不传 `-ReferenceRepo` → 跳过 L4，只跑 L1/L2/L3（**升级官方新版时用这个**）
+
+---
+
+## 五、验证机制（保证「功能一个都没丢」）
 
 | 层 | 手段 | 抓什么 |
 |---|---|---|
-| **L1 结构** | `pnpm typecheck` + `cargo check` | 官方改动导致的结构断裂 |
-| **L2 逻辑** | `cargo test` + `pnpm test:unit` | 行为回归 |
-| **L3 断言** | `checks/feature-checks.ps1`（39 条） | **功能被静默吃掉**（不报编译错的那种） |
-| **L4 还原** | `scripts/compare-trees.mjs` | 组装树与已知可用态的逐文件差异 |
+| **L1 结构** | `cargo check` + `pnpm typecheck` | 官方改动导致的结构断裂 |
+| **L2 逻辑** | `cargo test` + `vitest` | 行为回归 |
+| **L3 断言** | `checks/feature-checks.ps1`（40 条） | **功能被静默吃掉**（这种不会报编译错） |
+| **L4 还原** | `scripts/compare-trees.mjs` | 组装结果 vs 参照源码的逐文件差异 |
 
-**L3 是核心**：官方代码被吃掉不会报错，只会功能消失。断言清单逐条写死「我们的功能应该长什么样」。
+「可接受的差异」只有 3 类，`compare-trees.mjs` 会自动识别：
+`i18n/*.json` 键顺序、`Cargo.toml` 条目顺序、`tauri.conf.json` 数组换行格式
+（都是语义相同），外加 `Cargo.lock` 由 cargo 自动重生成。
 
 ---
 
-## 已知的「可接受差异」
+## 六、当前进度
 
-比对时以下差异属正常，不算失败：
-
-| 文件 | 原因 |
+| 阶段 | 状态 |
 |---|---|
-| `src/i18n/locales/*.json` | 键顺序不同（语义相同）——官方顺序 + 我们的 key 追加在末尾 |
-| `src-tauri/Cargo.toml` | 依赖条目顺序不同（语义相同）——我们的依赖插在 `[dependencies]` 开头 |
-| `src-tauri/tauri.conf.json` | JSON 数组换行格式不同（语义相同） |
-| `src-tauri/Cargo.lock` | 由 cargo 首次构建时自动重生成，本就不打补丁 |
+| **P1** 补丁流水线 | ✅ 完成并验证通过 |
+| **P2** 收敛侵入面 | 🔄 已完成 3 个最高风险文件 |
+| **P3** CI 自动化 | ⬜ 未开始 |
 
-`compare-trees.mjs` 会自动把前三类判为「语义相同」，第四类判为「工具链重生成」。
-装了 `prettier` 后 `apply.ps1` 会自动规范化前三类的格式。
+**P2 已收敛**（让官方升级时冲突更少）：
+
+| 文件 | 改前 | 改后 |
+|---|---|---|
+| `src-tauri/src/database/schema.rs` | 92 行 | **4 行** |
+| `src-tauri/src/lib.rs` | 162 行 | **125 行** |
+| `src-tauri/src/services/proxy.rs` | 47 行 | **6 行** |
+
+手法：把逻辑搬进 overlay 模块（`remote::schema` / `magic` / `remote::hooks`），
+官方文件里只留**一行调用**。
 
 ---
 
-## 功能清单
+## 七、注意事项
 
-我们相对官方新增了什么，见 [`docs/MAGIC.md`](docs/MAGIC.md)。
+- **`patches/*.patch` 必须是 LF 换行**（CRLF 会让 `git apply` 全部失败）。
+  本目录有 `.gitattributes` 强制字节保真，别删。
+- `apply.ps1` 会**先 `git checkout <Version>`** 再打补丁——因为官方仓可能停在 `main`（最新版）。
+- 本仓库**不含官方代码**，官方源码由 `apply.ps1` 按需从 `base.json` 里的 `upstream` 拉取。
