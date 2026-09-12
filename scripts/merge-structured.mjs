@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // merge-structured.mjs — C 层：把「结构化载荷」合并进官方源码树
 //   1) i18n：按 JSON key 深合并（新增/改值，官方 key 原样保留）
-//   2) config-overrides：按 dot-path 覆盖 JSON 叶子节点
-//   3) cargo-additions：按「存在即跳过」追加依赖 + windows-sys features
+//   2) config-overrides：按 dot-path 覆盖 JSON 叶子节点（Cargo.toml 已改走补丁 0310）
+
 // 用法: node merge-structured.mjs <structured 目录> <目标仓库目录>
 import fs from "node:fs";
 import path from "node:path";
@@ -13,7 +13,7 @@ if (!structuredDir || !targetDir) {
   process.exit(1);
 }
 
-const stats = { i18nKeys: 0, configLeaves: 0, cargoDeps: 0, cargoFeatures: 0 };
+const stats = { i18nKeys: 0, configLeaves: 0 };
 
 // ---------- 工具 ----------
 function deepMerge(base, delta) {
@@ -90,72 +90,6 @@ if (fs.existsSync(cfgPath)) {
   }
 }
 
-// ---------- 3) Cargo.toml ----------
-const cargoAddPath = path.join(structuredDir, "cargo-additions.json");
-if (fs.existsSync(cargoAddPath)) {
-  const add = JSON.parse(fs.readFileSync(cargoAddPath, "utf8"));
-  const cargoPath = path.join(targetDir, "src-tauri", "Cargo.toml");
-  if (fs.existsSync(cargoPath)) {
-    let lines = fs.readFileSync(cargoPath, "utf8").split(/\r?\n/);
-
-    // 3a) 新增依赖：插在 [dependencies] 之后（依赖名已存在则跳过）
-    const depLineRe = /^\s*([A-Za-z0-9_-]+)\s*=/;
-    const existingDeps = new Set();
-    let depHeader = -1;
-    lines.forEach((l, i) => {
-      if (/^\[dependencies\]\s*$/.test(l)) depHeader = i;
-      const m = l.match(depLineRe);
-      if (m) existingDeps.add(m[1]);
-    });
-    const toAdd = [];
-    for (const dep of add.dependencies || []) {
-      const name = dep.split("=")[0].trim();
-      if (existingDeps.has(name)) {
-        console.log(`  [cargo]  依赖已存在，跳过: ${name}`);
-      } else {
-        toAdd.push(dep);
-        stats.cargoDeps++;
-      }
-    }
-    if (toAdd.length && depHeader >= 0) {
-      lines.splice(depHeader + 1, 0, ...toAdd);
-      console.log(`  [cargo]  新增依赖 ${toAdd.length} 个: ${toAdd.map((d) => d.split("=")[0].trim()).join(", ")}`);
-    }
-
-    // 3b) windows-sys features：追加进 features 数组（已存在则跳过）
-    const wsIdx = lines.findIndex((l) => /\bwindows-sys\s*=\s*\{/.test(l));
-    if (wsIdx >= 0 && (add.windows_sys_features || []).length) {
-      let closeIdx = -1;
-      for (let i = wsIdx; i < lines.length; i++) {
-        if (/\bsys-locale\b/.test(lines[i])) break;
-        if (lines[i].includes("]")) { closeIdx = i; break; }
-      }
-      if (closeIdx > wsIdx) {
-        const block = lines.slice(wsIdx, closeIdx + 1).join("\n");
-        const missing = add.windows_sys_features.filter((f) => !block.includes(`"${f}"`));
-        if (missing.length) {
-          const indentMatch = lines[closeIdx - 1].match(/^(\s*)/);
-          const ind = indentMatch ? indentMatch[1] : "    ";
-          const insert = missing.map((f) => `${ind}"${f}",`);
-          lines.splice(closeIdx, 0, ...insert);
-          stats.cargoFeatures += missing.length;
-          console.log(`  [cargo]  windows-sys 追加 features ${missing.length} 个: ${missing.join(", ")}`);
-        } else {
-          console.log(`  [cargo]  windows-sys features 已齐全，跳过`);
-        }
-      } else {
-        console.warn("  [警告] 未定位到 windows-sys features 数组结尾，跳过 features 追加");
-      }
-    } else if (wsIdx < 0) {
-      console.warn("  [警告] Cargo.toml 未找到 windows-sys，跳过 features 追加");
-    }
-
-    fs.writeFileSync(cargoPath, lines.join("\n"), "utf8");
-  } else {
-    console.warn("  [警告] 目标无 src-tauri/Cargo.toml，跳过");
-  }
-}
-
 console.log(
-  `\n  结构化合并完成: i18n ${stats.i18nKeys} key / 配置 ${stats.configLeaves} 叶子 / 依赖 ${stats.cargoDeps} 个 / features ${stats.cargoFeatures} 个`
+  `\n  结构化合并完成: i18n ${stats.i18nKeys} key / 配置 ${stats.configLeaves} 叶子`
 );

@@ -15,7 +15,6 @@ $structured = @(
   "src/i18n/locales/en.json",
   "src/i18n/locales/ja.json",
   "src/i18n/locales/zh-TW.json",
-  "src-tauri/Cargo.toml",
   "src-tauri/Cargo.lock",
   "src-tauri/tauri.conf.json",
   "src-tauri/tauri.windows.conf.json"
@@ -32,6 +31,7 @@ $topics = [ordered]@{
   "0220-ts-panels"       = @("src/components/")
   "0230-ts-misc"         = @("src/index.css", "src/types.ts", "src/config/", "src/contexts/", "vite.config.ts")
   "0240-ts-tests"        = @("tests/")
+  "0310-rust-cargo"     = @("src-tauri/Cargo.toml")
   "0300-misc"            = @(".gitignore", "pnpm-workspace.yaml")
 }
 
