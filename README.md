@@ -139,3 +139,78 @@ cd C:\Users\Ameng\Desktop\claude_woker\cc_work\cc-switch-magic
   本目录有 `.gitattributes` 强制字节保真，别删。
 - `apply.ps1` 会**先 `git checkout <Version>`** 再打补丁——因为官方仓可能停在 `main`（最新版）。
 - 本仓库**不含官方代码**，官方源码由 `apply.ps1` 按需从 `base.json` 里的 `upstream` 拉取。
+
+---
+
+## 八、一条命令 vs 手动五步
+
+### 日常用法：一条命令
+
+```powershell
+cd C:\Users\Ameng\Desktop\claude_woker\cc_work\cc-switch-magic
+.\magic.ps1 -Version v3.20.1     # 组装 + 验证 + 编译 → exe
+```
+
+`magic.ps1` 把下面五步 + 功能断言 + 编译全包了。**日常只需要这个。**
+
+### 拆解：`magic.ps1` 内部实际做的五步
+
+想完全掌控时，可手动执行：
+
+```powershell
+$OFF  = "C:\Users\Ameng\Desktop\claude_woker\cc_work\cc-switch-official"
+$DEST = "C:\Users\Ameng\Desktop\claude_woker\cc_work\cc-switch-build"
+$M    = "C:\Users\Ameng\Desktop\claude_woker\cc_work\cc-switch-magic"
+
+# ① 复制官方源码（官方目录永远不动）
+Copy-Item $OFF $DEST -Recurse -Force
+
+# ② 切到锁定版本
+cd $DEST; git checkout v3.20.1
+
+# ③ 套 overlay（58 个官方没有的新文件，整拷 → 永不冲突）
+Get-ChildItem "$M\overlay" -Recurse -File | ForEach-Object {
+  $rel = $_.FullName.Substring("$M\overlay".Length).TrimStart('\')
+  $d = Join-Path $DEST $rel
+  New-Item -ItemType Directory -Force -Path (Split-Path $d -Parent) | Out-Null
+  Copy-Item $_.FullName $d -Force
+}
+
+# ④ 结构化合并（i18n / 依赖 / 配置，按 key 合并 → 结构上不可能冲突）
+node "$M\scripts\merge-structured.mjs" "$M\structured" $DEST
+
+# ⑤ 打补丁（对官方文件逐行修改）
+Get-ChildItem "$M\patches\*.patch" | Sort-Object Name | ForEach-Object {
+  git apply --whitespace=nowarn $_.FullName
+}
+```
+
+### 三种改动方式，对应三档冲突风险
+
+| 方式 | 本项目数量 | 冲突风险 |
+|---|---|---|
+| **overlay** 整拷新文件 | 58 | **零**（官方没有这些路径） |
+| **结构化合并** i18n/配置/依赖 | 7 | **零**（按 key / 依赖名合并） |
+| **补丁** 逐行改官方文件 | 127 | 官方改了同一行才会撞 |
+
+### 补丁文件长什么样
+
+```
+--- a/src-tauri/src/commands/mod.rs      ← 改之前（官方）
++++ b/src-tauri/src/commands/mod.rs      ← 改之后（我们）
+@@ -26,7 +26,7 @@ mod proxy;
+ mod session_manager;                     ← 空格开头 = 上下文（定位用，不改）
+-mod stream_check;                        ← 减号 = 删掉官方这行
++pub(crate) mod stream_check;             ← 加号 = 换成这行
+```
+
+`git apply` 的动作就是：**找上下文 → 把减号行换成加号行**。
+127 个文件的上千处这种改动，合起来就是补丁层。
+
+### 组装完的产物（git 视角）
+
+```
+185 files changed, 30588 insertions(+), 1644 deletions(-)
+  修改官方文件: 127 个
+  新增文件:     58 个
+```
