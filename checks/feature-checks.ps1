@@ -103,6 +103,8 @@ Check "Cargo.toml features 含 Win32_Security_Cryptography" { Contains "src-taur
 Check "tauri.conf createUpdaterArtifacts=false" { Contains "src-tauri/tauri.conf.json" '"createUpdaterArtifacts":\s*false' }
 Check "应用名 = CC Switch Magic" { Contains "src-tauri/tauri.conf.json" "CC Switch Magic" }
 Check "窗口标题 = CC Switch Magic" { Contains "src-tauri/tauri.windows.conf.json" "CC Switch Magic" }
+Check "Cargo.toml 含 macos-private-api 特性（macOS 透明窗口必需）" { Contains "src-tauri/Cargo.toml" "macos-private-api" }
+Check "tauri.conf 开启 macOSPrivateApi" { Contains "src-tauri/tauri.conf.json" "macOSPrivateApi" }
 Check "窗口尺寸 920x650" { Contains "src-tauri/tauri.windows.conf.json" '"width":\s*920' }
 
 Write-Host "`n===== L3 功能断言 =====" -ForegroundColor Cyan

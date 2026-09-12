@@ -75,14 +75,6 @@ jobs:
           sudo apt-get install -y --no-install-recommends libsoup-3.0-dev \
             || sudo apt-get install -y --no-install-recommends libsoup2.4-dev
 
-      - name: 缓存 cargo registry
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-          key: cargo-${{ runner.os }}-${{ github.run_id }}
-          restore-keys: cargo-${{ runner.os }}-
 
       - name: ① 组装：官方源码 + 补丁
         shell: pwsh
@@ -91,21 +83,30 @@ jobs:
           # 直接具名调用（已验证）。不用 @a 数组 splat——它只按位置传参，
           # 会把版本号当命令名执行（报 "The module 'v3.20.1' could not be loaded"）
           if ([string]::IsNullOrWhiteSpace($v)) {
-            ./scripts/apply.ps1 -TargetDir "${{ runner.temp }}/cc-switch-build"
+            ./scripts/apply.ps1 -TargetDir "${{ github.workspace }}/build"
           } else {
-            ./scripts/apply.ps1 -TargetDir "${{ runner.temp }}/cc-switch-build" -Version $v
+            ./scripts/apply.ps1 -TargetDir "${{ github.workspace }}/build" -Version $v
           }
+
+      # 缓存 Rust 编译产物（关键优化）：必须放在「① 组装」之后，
+      # 因为 target 目录要先存在，rust-cache 才能把缓存恢复进去。
+      # 命中后可从「700+ crate 全量编译 ~20 分钟」降到「只编改动部分 ~3 分钟」。
+      - name: 缓存 Rust 编译产物
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "build/src-tauri -> target"
+          key: ${{ matrix.platform }}
 
       - name: ② 验证：功能断言（42 条）
         shell: pwsh
-        run: ./checks/feature-checks.ps1 -TargetDir "${{ runner.temp }}/cc-switch-build"
+        run: ./checks/feature-checks.ps1 -TargetDir "${{ github.workspace }}/build"
 
       - name: ③ 安装前端依赖
-        working-directory: ${{ runner.temp }}/cc-switch-build
+        working-directory: ${{ github.workspace }}/build
         run: pnpm install --frozen-lockfile
 
       - name: ④ 打包（release + 安装包）
-        working-directory: ${{ runner.temp }}/cc-switch-build
+        working-directory: ${{ github.workspace }}/build
         shell: bash
         run: |
           set -euxo pipefail
@@ -118,7 +119,7 @@ jobs:
       - name: ⑤ 收集并重命名（照官方命名规则）
         shell: pwsh
         run: |
-          $tree = "${{ runner.temp }}/cc-switch-build"
+          $tree = "${{ github.workspace }}/build"
           $out  = "${{ runner.temp }}/out"
           New-Item -ItemType Directory -Force -Path $out | Out-Null
 

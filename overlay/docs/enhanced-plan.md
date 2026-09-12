@@ -868,7 +868,7 @@ cc-switch/                     # fork 自 farion1231/cc-switch
 
 > **一键构建命令**（含停进程+清理+编译+启动）：
 > ```powershell
-> Stop-Process -Name cc-switch -Force -ErrorAction SilentlyContinue; Start-Sleep -Seconds 2; Remove-Item "<项目路径>\src-tauri\target\debug\cc-switch.exe" -Force -ErrorAction SilentlyContinue; Set-Location <项目路径>; pnpm build:renderer; Set-Location src-tauri; cargo build
+> Stop-Process -Name cc-switch -Force -ErrorAction SilentlyContinue; Start-Sleep -Seconds 2; Remove-Item "C:\Users\Ameng\Desktop\claude_woker\cc-switch\src-tauri\target\debug\cc-switch.exe" -Force -ErrorAction SilentlyContinue; Set-Location C:\Users\Ameng\Desktop\claude_woker\cc-switch; pnpm build:renderer; Set-Location src-tauri; cargo build
 > ```
 
 **脚本关键点(规避火绒 sysdiag LNK1105)**
