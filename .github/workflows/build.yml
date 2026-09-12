@@ -15,6 +15,11 @@ on:
         required: false
         default: false
         type: boolean
+      platforms:
+        description: "构建哪些平台：全部 / Windows / Linux / macOS（可选多个，逗号分隔）"
+        required: false
+        default: "全部"
+        type: string
   push:
     tags: ["magic-*"]
 
@@ -24,6 +29,8 @@ permissions:
 jobs:
   build:
     name: ${{ matrix.platform }}
+    # platforms 输入过滤（push tag 触发时 inputs 为空 → 全部构建）
+    if: ${{ inputs.platforms == '' || inputs.platforms == '全部' || contains(inputs.platforms, matrix.platform) }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 180
     strategy:
@@ -57,9 +64,15 @@ jobs:
       - name: 准备 Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: macOS 补 universal 目标
+      - name: macOS 补 universal 目标（Intel + Apple Silicon）
         if: runner.os == 'macOS'
-        run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
+        shell: bash
+        run: |
+          set -euxo pipefail
+          rustup target add aarch64-apple-darwin
+          rustup target add x86_64-apple-darwin
+          echo "== 已安装的 target =="
+          rustup target list --installed
 
       - name: Linux 系统依赖
         if: runner.os == 'Linux'
