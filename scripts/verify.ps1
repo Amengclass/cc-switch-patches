@@ -9,7 +9,7 @@
 #   .\verify.ps1 -ReferenceRepo <我们的仓库>                 # L3+L4（推荐，秒级）
 #   .\verify.ps1 -ReferenceRepo <我们的仓库> -WithBuild      # 追加 L1+L2（分钟级）
 param(
-  [Parameter(Mandatory=$true)][string]$ReferenceRepo,
+  [string]$ReferenceRepo,
   [string]$Version,
   [string]$OfficialDir,
   [string]$WorkDir = "$env:TEMP\cc-switch-verify",
@@ -33,12 +33,16 @@ if ($LASTEXITCODE -ne 0) {
   $exitCode = 2
 }
 
-# ---------- L4 还原比对 ----------
-Write-Host "`n----- L4: 组装树 vs 参考树 -----" -ForegroundColor Cyan
-node "$MagicDir\scripts\compare-trees.mjs" $ReferenceRepo $WorkDir
-if ($LASTEXITCODE -ne 0) {
-  Write-Host "[!] L4 未通过：组装树与参考树存在真实差异" -ForegroundColor Yellow
-  if ($exitCode -eq 0) { $exitCode = 1 }
+# ---------- L4 还原比对（仅当提供 -ReferenceRepo；升级官方新版时不需要）----------
+if ($ReferenceRepo) {
+  Write-Host "`n----- L4: 组装树 vs 参考树 -----" -ForegroundColor Cyan
+  node "$MagicDir\scripts\compare-trees.mjs" $ReferenceRepo $WorkDir
+  if ($LASTEXITCODE -ne 0) {
+    Write-Host "[!] L4 未通过：组装树与参考树存在真实差异" -ForegroundColor Yellow
+    if ($exitCode -eq 0) { $exitCode = 1 }
+  }
+} else {
+  Write-Host "`n----- L4: 跳过（未提供 -ReferenceRepo；升级官方时属正常）-----" -ForegroundColor DarkGray
 }
 
 # ---------- L3 功能断言 ----------
