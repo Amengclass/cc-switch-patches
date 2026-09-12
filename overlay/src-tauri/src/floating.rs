@@ -2329,3 +2329,31 @@ pub async fn floating_refresh_usage(
     }
     Ok(())
 }
+
+// ===================== 托盘集成（P2 收敛点）=====================
+// 官方 tray.rs 是高频改动文件（近 400 提交里改了 14 次）。把悬浮窗相关的
+// 托盘逻辑收敛到这里，官方文件里只留一行调用，减少升级官方时的冲突面。
+
+/// 托盘菜单「悬浮窗」勾选项。
+pub fn tray_menu_item(
+    app: &tauri::AppHandle,
+    label: &str,
+    checked: bool,
+) -> Result<tauri::menu::CheckMenuItem<tauri::Wry>, crate::error::AppError> {
+    tauri::menu::CheckMenuItem::with_id(app, "floating_window", label, true, checked, None::<&str>)
+        .map_err(|e| crate::error::AppError::Message(format!("创建悬浮窗菜单失败: {e}")))
+}
+
+/// 托盘菜单点击「悬浮窗」：翻转开关 → 应用 → 刷新勾选态。
+pub fn toggle_from_tray(app: &tauri::AppHandle) {
+    let enabled = crate::settings::get_settings().enable_floating_window;
+    let next = !enabled;
+    let mut settings = crate::settings::get_settings();
+    settings.enable_floating_window = next;
+    if let Err(e) = crate::settings::update_settings(settings) {
+        log::error!("切换悬浮窗设置失败: {e}");
+        return;
+    }
+    apply_floating_window_setting(app, next);
+    log::info!("[Tray] 悬浮窗已{}", if next { "开启" } else { "关闭" });
+}

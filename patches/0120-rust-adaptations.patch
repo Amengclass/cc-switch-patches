@@ -3820,7 +3820,7 @@ index 0310304..347b83c 100644
  
  /// 获取 Skill 同步方式配置
 diff --git a/src-tauri/src/tray.rs b/src-tauri/src/tray.rs
-index 0223617..24c7af0 100644
+index 0223617..11dbe9f 100644
 --- a/src-tauri/src/tray.rs
 +++ b/src-tauri/src/tray.rs
 @@ -11,7 +11,7 @@ use crate::app_config::AppType;
@@ -3952,20 +3952,16 @@ index 0223617..24c7af0 100644
          // 发射 provider-switched 事件（保持向后兼容）
          if let Err(e) = app.emit("provider-switched", event_data) {
              log::error!("发射 provider-switched 事件失败: {e}");
-@@ -904,7 +913,20 @@ pub fn create_tray_menu(
+@@ -904,7 +913,16 @@ pub fn create_tray_menu(
      )
      .map_err(|e| AppError::Message(format!("创建轻量模式菜单失败: {e}")))?;
  
 -    menu_builder = menu_builder.item(&lightweight_item).separator();
-+    let floating_window_item = CheckMenuItem::with_id(
++    let floating_window_item = crate::floating::tray_menu_item(
 +        app,
-+        "floating_window",
 +        tray_texts.floating_window,
-+        true,
 +        app_settings.enable_floating_window,
-+        None::<&str>,
-+    )
-+    .map_err(|e| AppError::Message(format!("创建悬浮窗菜单失败: {e}")))?;
++    )?;
 +
 +    menu_builder = menu_builder
 +        .item(&lightweight_item)
@@ -3974,21 +3970,13 @@ index 0223617..24c7af0 100644
  
      // 退出菜单（分隔符已在上面的 section 循环中添加）
      let quit_item = MenuItem::with_id(app, "quit", tray_texts.quit, true, None::<&str>)
-@@ -1034,6 +1056,18 @@ pub fn handle_tray_menu_event(app: &tauri::AppHandle, event_id: &str) {
+@@ -1034,6 +1052,10 @@ pub fn handle_tray_menu_event(app: &tauri::AppHandle, event_id: &str) {
                  log::error!("进入轻量模式失败: {e}");
              }
          }
 +        "floating_window" => {
-+            let enabled = crate::settings::get_settings().enable_floating_window;
-+            let mut settings = crate::settings::get_settings();
-+            settings.enable_floating_window = !enabled;
-+            if let Err(e) = crate::settings::update_settings(settings) {
-+                log::error!("切换悬浮窗设置失败: {e}");
-+            } else {
-+                crate::floating::apply_floating_window_setting(app, !enabled);
-+                refresh_tray_menu(app);
-+                log::info!("[Tray] 悬浮窗已{}", if enabled { "关闭" } else { "开启" });
-+            }
++            crate::floating::toggle_from_tray(app);
++            refresh_tray_menu(app);
 +        }
          "quit" => {
              log::info!("退出应用");

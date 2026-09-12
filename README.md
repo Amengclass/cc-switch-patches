@@ -10,7 +10,7 @@
 ```
 C:\Users\Ameng\Desktop\claude_woker\cc_work\
 ├── cc-switch-refactor\   ← 我们的源码（唯一真相；重构 / 改功能在这里做）
-├── cc-switch-magic\      ← 本目录：补丁层（从上面的源码抽出来）
+├── cc-switch-patches\      ← 本目录：补丁层（从上面的源码抽出来）
 ├── cc-switch-official\   ← 官方仓（只读，对照用）
 ├── cc-switch\            ← 已发布的成品版（GitHub 上那份，【不要动】）
 └── cc-switch-build\      ← 组装 + 编译产物（可随时删掉重新生成）
@@ -19,7 +19,7 @@ C:\Users\Ameng\Desktop\claude_woker\cc_work\
 | 目录 | 身份 | 能不能改 |
 |---|---|---|
 | `cc-switch-refactor` | **我们的源码**（当前 = 官方 v3.20.1 + 全部改动） | ✅ 改这个 |
-| `cc-switch-magic` | **补丁层**（overlay / patches / structured / scripts） | ✅ 只加脚本和补丁 |
+| `cc-switch-patches` | **补丁层**（overlay / patches / structured / scripts） | ✅ 只加脚本和补丁 |
 | `cc-switch-official` | 官方 `farion1231/cc-switch` 完整克隆 | ❌ 只读 |
 | `cc-switch` | **已发布成品**（`Amengclass/cc-switch`，`0c255bb3`） | ❌ 不动 |
 | `cc-switch-build` | 组装+编译的工作目录 | 随便，可删可重建 |
@@ -34,7 +34,7 @@ C:\Users\Ameng\Desktop\claude_woker\cc_work\
 ### 【A】官方发新版 → 出新的魔改版 exe
 
 ```powershell
-cd C:\Users\Ameng\Desktop\claude_woker\cc_work\cc-switch-magic
+cd C:\Users\Ameng\Desktop\claude_woker\cc_work\cc-switch-patches
 
 # ① 组装：拉官方 vX.Y.Z → 套 overlay + 结构化合并 + 打补丁
 .\scripts\apply.ps1 -TargetDir ..\cc-switch-build -Version v3.21.0
@@ -147,7 +147,7 @@ cd C:\Users\Ameng\Desktop\claude_woker\cc_work\cc-switch-magic
 ### 日常用法：一条命令
 
 ```powershell
-cd C:\Users\Ameng\Desktop\claude_woker\cc_work\cc-switch-magic
+cd C:\Users\Ameng\Desktop\claude_woker\cc_work\cc-switch-patches
 .\magic.ps1 -Version v3.20.1     # 组装 + 验证 + 编译 → exe
 ```
 
@@ -160,7 +160,7 @@ cd C:\Users\Ameng\Desktop\claude_woker\cc_work\cc-switch-magic
 ```powershell
 $OFF  = "C:\Users\Ameng\Desktop\claude_woker\cc_work\cc-switch-official"
 $DEST = "C:\Users\Ameng\Desktop\claude_woker\cc_work\cc-switch-build"
-$M    = "C:\Users\Ameng\Desktop\claude_woker\cc_work\cc-switch-magic"
+$M    = "C:\Users\Ameng\Desktop\claude_woker\cc_work\cc-switch-patches"
 
 # ① 复制官方源码（官方目录永远不动）
 Copy-Item $OFF $DEST -Recurse -Force

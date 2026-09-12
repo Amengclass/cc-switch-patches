@@ -513,14 +513,14 @@ index 764bfa2..0e9c139 100644
    });
  }
 diff --git a/src/hooks/useProviderActions.ts b/src/hooks/useProviderActions.ts
-index 76e03c4..8af2548 100644
+index 76e03c4..52f49fe 100644
 --- a/src/hooks/useProviderActions.ts
 +++ b/src/hooks/useProviderActions.ts
 @@ -9,6 +9,7 @@ import {
    openclawApi,
    type AppId,
  } from "@/lib/api";
-+import { updateRemoteProviderMeta } from "@/lib/api/remote";
++import { saveRemoteUsageScript } from "@/lib/api/remoteUsageScript";
  import type {
    Provider,
    UsageScript,
@@ -533,75 +533,29 @@ index 76e03c4..8af2548 100644
  ) {
    const { t } = useTranslation();
    const queryClient = useQueryClient();
-@@ -381,26 +384,54 @@ export function useProviderActions(
+@@ -380,6 +383,21 @@ export function useProviderActions(
+   // 保存用量脚本
    const saveUsageScript = useCallback(
      async (provider: Provider, script: UsageScript) => {
++      // 远端目标：直接写远端 SSOT，不写本地 DB
++      // （P2 收敛：整段实现见 lib/api/remoteUsageScript，官方本机逻辑一字未动）
++      if (remoteTargetId) {
++        await saveRemoteUsageScript({
++          provider,
++          script,
++          remoteTargetId,
++          remoteContainerId,
++          activeApp,
++          queryClient,
++          t,
++        });
++        return;
++      }
++
        try {
--        const updatedProvider: Provider = {
--          ...provider,
--          meta: {
--            ...provider.meta,
--            usage_script: script,
--          },
-+        const updatedMeta = {
-+          ...provider.meta,
-+          usage_script: script,
-         };
- 
--        if (activeApp === "pi") {
-+        if (remoteTargetId) {
-+          // 远端：直接写远端 SSOT，不写本地 DB
-+          await updateRemoteProviderMeta(
-+            remoteTargetId,
-+            activeApp,
-+            provider.id,
-+            updatedMeta as Record<string, unknown>,
-+            remoteContainerId,
-+          );
-+          await queryClient.invalidateQueries({
-+            queryKey: [
-+              "remoteProviders",
-+              remoteTargetId,
-+              remoteContainerId || "__host__",
-+              activeApp,
-+            ],
-+          });
-+        } else if (activeApp === "pi") {
-           await piApi.updateProviderUsageScript(provider.id, script);
-+          await queryClient.invalidateQueries({
-+            queryKey: ["providers", activeApp],
-+          });
-         } else {
-+          const updatedProvider: Provider = {
-+            ...provider,
-+            meta: updatedMeta,
-+          };
-           await providersApi.update(updatedProvider, activeApp);
-+          await queryClient.invalidateQueries({
-+            queryKey: ["providers", activeApp],
-+          });
-         }
-+        // 保存用量脚本后，失效该 provider 的用量查询缓存：
-+        // 远端目标失效远端隔离 key（与 useUsageQuery 一致），本机失效本机 key
-         await queryClient.invalidateQueries({
--          queryKey: ["providers", activeApp],
--        });
--        // 🔧 保存用量脚本后，也应该失效该 provider 的用量查询缓存
--        // 这样主页列表会使用新配置重新查询，而不是使用测试时的缓存
--        await queryClient.invalidateQueries({
--          queryKey: usageKeys.script(provider.id, activeApp),
-+          queryKey: remoteTargetId
-+            ? usageKeys.scriptRemote(
-+                remoteTargetId,
-+                activeApp,
-+                provider.id,
-+                remoteContainerId,
-+              )
-+            : usageKeys.script(provider.id, activeApp),
-         });
-         await queryClient.invalidateQueries({
-           queryKey: ["subscription", "quota", activeApp],
-@@ -420,7 +451,7 @@ export function useProviderActions(
+         const updatedProvider: Provider = {
+           ...provider,
+@@ -420,7 +438,7 @@ export function useProviderActions(
          toast.error(detail);
        }
      },

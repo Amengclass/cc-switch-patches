@@ -4,7 +4,7 @@ param(
   [Parameter(Mandatory=$true)][string]$OfficialDir,
   [Parameter(Mandatory=$true)][string]$OurDir,
   [Parameter(Mandatory=$true)][string]$OutDir,
-  [string]$BuildDir = "$env:TEMP\cc-switch-magic-build"
+  [string]$BuildDir = "$env:TEMP\cc-switch-patches-build"
 )
 
 $ErrorActionPreference = "Stop"

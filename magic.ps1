@@ -1,6 +1,6 @@
 # magic.ps1 —— 一键：组装 + 验证 + 编译
 #
-# 用法（在 cc-switch-magic 目录下）：
+# 用法（在 cc-switch-patches 目录下）：
 #   .\magic.ps1                    # 用官方【最新版】重新组装 + 编译出 exe
 #   .\magic.ps1 -Version v3.20.1   # 指定官方某个版本
 #   .\magic.ps1 -SkipBuild         # 只组装+验证，不编译（快，用来查补丁打不打得进）
@@ -77,7 +77,7 @@ if ($LASTEXITCODE -ne 0) {
   exit 4
 }
 
-$exe = Join-Path $TargetDir "src-tauri\target\debug\cc-switch.exe"
+$exe = (Get-ChildItem (Join-Path $TargetDir "src-tauri\target\debug") -Filter *.exe -ErrorAction SilentlyContinue | Select-Object -First 1).FullName
 Write-Host "`n===================================================" -ForegroundColor Green
 Write-Host "  ✓ 全部完成" -ForegroundColor Green
 Write-Host "===================================================" -ForegroundColor Green

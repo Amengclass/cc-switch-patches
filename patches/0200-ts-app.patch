@@ -1,5 +1,5 @@
 diff --git a/src/App.tsx b/src/App.tsx
-index d5c644b..f9e2812 100644
+index d5c644b..e836286 100644
 --- a/src/App.tsx
 +++ b/src/App.tsx
 @@ -1,4 +1,4 @@
@@ -1553,12 +1553,3 @@ index d5c644b..f9e2812 100644
        />
  
        {effectiveUsageProvider && (
-@@ -1783,6 +2811,8 @@ function App() {
-               void saveUsageScript(usageProvider, script);
-             }
-           }}
-+          remoteTargetId={remoteTargetId || undefined}
-+          remoteContainerId={remoteContainerId || undefined}
-         />
-       )}
- 
