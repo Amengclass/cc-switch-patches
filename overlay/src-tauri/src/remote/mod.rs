@@ -17,6 +17,7 @@ pub mod env_clean;
 pub mod gemini;
 pub mod grok;
 pub mod hermes;
+pub mod hooks;
 pub mod mcp;
 pub mod openclaw;
 pub mod opencode;

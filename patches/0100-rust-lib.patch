@@ -1,5 +1,5 @@
 diff --git a/src-tauri/src/lib.rs b/src-tauri/src/lib.rs
-index 36b76cb..825d2f4 100644
+index 36b76cb..552ad4d 100644
 --- a/src-tauri/src/lib.rs
 +++ b/src-tauri/src/lib.rs
 @@ -12,6 +12,8 @@ mod config;
@@ -11,8 +11,11 @@ index 36b76cb..825d2f4 100644
  mod gemini_config;
  mod gemini_mcp;
  mod grok_config;
-@@ -22,7 +24,7 @@ mod lightweight;
+@@ -20,9 +22,10 @@ mod init_status;
+ mod lightweight;
+ #[cfg(target_os = "linux")]
  mod linux_fix;
++mod magic;
  mod mcp;
  mod model_capabilities;
 -mod openclaw_config;
@@ -20,7 +23,7 @@ index 36b76cb..825d2f4 100644
  mod opencode_config;
  mod panic_hook;
  mod pi_config;
-@@ -30,6 +32,7 @@ mod prompt;
+@@ -30,6 +33,7 @@ mod prompt;
  mod prompt_files;
  mod provider;
  mod proxy;
@@ -28,82 +31,46 @@ index 36b76cb..825d2f4 100644
  mod services;
  mod session_manager;
  mod settings;
-@@ -408,6 +411,26 @@ pub fn run() {
+@@ -408,6 +412,9 @@ pub fn run() {
          .plugin(tauri_plugin_deep_link::init())
          // 拦截窗口关闭：根据设置决定是否最小化到托盘
          .on_window_event(|window, event| {
-+            // 右键菜单失去焦点 = 点击了菜单外部（小球/桌面/其他应用）→ 收起菜单。
-+            // 菜单打开时会 set_focus，失焦即“点击别处关闭”。
-+            if let tauri::WindowEvent::Focused(false) = event {
-+                if window.label() == crate::floating::MENU_LABEL {
-+                    crate::floating::hide_floating_menu_sync(window.app_handle());
-+                }
-+            }
-+
-+            // 悬浮球被拖动时记录新位置（防抖落盘到 settings）
-+            if let tauri::WindowEvent::Moved(position) = event {
-+                if window.label() == crate::floating::BALL_LABEL {
-+                    if let Ok(scale) = window.scale_factor() {
-+                        crate::floating::schedule_position_save(
-+                            position.x as f64 / scale,
-+                            position.y as f64 / scale,
-+                        );
-+                    }
-+                }
-+            }
++            // 增强层窗口事件（悬浮窗菜单失焦收起 / 球拖动落盘）—— 见 magic 模块
++            crate::magic::on_window_event(window, event);
 +
              if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                  // 数据库版本过新的恢复模式下没有托盘可唤回，关闭即退出，避免应用隐身后台
                  let in_db_recovery = crate::init_status::get_init_error()
-@@ -445,6 +468,15 @@ pub fn run() {
+@@ -445,6 +452,8 @@ pub fn run() {
          .plugin(
              tauri_plugin_window_state::Builder::default()
                  .with_state_flags(window_state_flags())
-+                // 悬浮窗（球/面板/菜单）尺寸和位置完全由 floating 模块自己管理：
-+                // 必须用 denylist 完全排除，否则 window-state 插件会把它恢复成
-+                // 历史保存的错误尺寸（例如球/菜单被恢复成 133px 宽，导致右缘与
-+                // 球不对齐、菜单溢出屏幕）。skip_initial_state 实测拦不住。
-+                .with_denylist(&[
-+                    crate::floating::BALL_LABEL,
-+                    crate::floating::PANEL_LABEL,
-+                    crate::floating::MENU_LABEL,
-+                ])
++                // 排除悬浮窗（球/面板/菜单）避免被恢复成历史错误尺寸——见 magic::DENIED_WINDOW_LABELS
++                .with_denylist(&crate::magic::DENIED_WINDOW_LABELS)
                  .build(),
          )
          .setup(|app| {
-@@ -1201,6 +1233,19 @@ pub fn run() {
+@@ -1201,6 +1210,9 @@ pub fn run() {
                  }
              }
  
-+            // 启动后预热用量缓存：悬浮球/悬浮面板/托盘首次展示即有余量数据。
-+            // 悬浮窗按设计只读缓存、从不主动发查询，主窗口又可能未挂载用量组件，
-+            // 因此启动时兜底查一次（复用托盘刷新逻辑，含 10 秒防抖），结果写入
-+            // UsageCache 后经 usage-cache-updated 事件推给悬浮窗。
-+            {
-+                let app_handle = app.handle().clone();
-+                tauri::async_runtime::spawn(async move {
-+                    // 稍等片刻，等网络/WebView/DB 就绪再查，减少启动竞态
-+                    tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
-+                    crate::tray::refresh_all_usage_in_tray(&app_handle).await;
-+                });
-+            }
++            // 启动后预热用量缓存（悬浮窗 / 托盘首次展示即有余量数据）—— 见 magic 模块
++            crate::magic::warm_usage_cache(app);
 +
              // 异常退出恢复 + 代理状态自动恢复
              let app_handle = app.handle().clone();
              tauri::async_runtime::spawn(async move {
-@@ -1365,6 +1410,11 @@ pub fn run() {
+@@ -1365,6 +1377,9 @@ pub fn run() {
                  }
              }
  
-+            // 悬浮窗：开启时创建悬浮球窗口。独立于主窗口，轻量模式销毁主窗口后仍可工作。
-+            if settings.enable_floating_window {
-+                crate::floating::ensure_floating_window(app.handle());
-+            }
++            // 悬浮窗：开启时创建悬浮球窗口（独立于主窗口，轻量模式仍可工作）—— 见 magic 模块
++            crate::magic::ensure_floating(app.handle(), settings.enable_floating_window);
 +
  
              Ok(())
          })
-@@ -1467,10 +1517,18 @@ pub fn run() {
+@@ -1467,10 +1482,18 @@ pub fn run() {
              commands::list_pi_prompt_templates,
              commands::upsert_pi_prompt_template,
              commands::delete_pi_prompt_template,
@@ -122,7 +89,7 @@ index 36b76cb..825d2f4 100644
              // Profile management (项目配置方案)
              commands::list_profiles,
              commands::create_profile,
-@@ -1623,6 +1681,71 @@ pub fn run() {
+@@ -1623,6 +1646,71 @@ pub fn run() {
              commands::probe_tool_installations,
              // Provider terminal
              commands::open_provider_terminal,
@@ -194,7 +161,7 @@ index 36b76cb..825d2f4 100644
              // Universal Provider management
              commands::get_universal_providers,
              commands::get_universal_provider,
-@@ -1666,6 +1789,27 @@ pub fn run() {
+@@ -1666,6 +1754,27 @@ pub fn run() {
              commands::scan_local_proxies,
              // Window theme control
              commands::set_window_theme,
@@ -222,7 +189,7 @@ index 36b76cb..825d2f4 100644
              // Generic managed auth commands
              commands::auth_start_login,
              commands::auth_poll_for_account,
-@@ -1880,6 +2024,9 @@ pub fn run() {
+@@ -1880,6 +1989,9 @@ pub fn run() {
  /// 确保 Claude Code/Codex/Gemini 的配置不会处于损坏状态。
  /// 使用 stop_with_restore_keep_state 保留 settings 表中的代理状态，下次启动时自动恢复。
  pub async fn cleanup_before_exit(app_handle: &tauri::AppHandle) {
@@ -232,7 +199,7 @@ index 36b76cb..825d2f4 100644
      if let Some(state) = app_handle.try_state::<store::AppState>() {
          let proxy_service = &state.proxy_service;
  
-@@ -1965,7 +2112,18 @@ async fn restore_proxy_state_on_startup(state: &store::AppState) {
+@@ -1965,7 +2077,18 @@ async fn restore_proxy_state_on_startup(state: &store::AppState) {
      let apps_to_restore = enabled_proxy_apps_on_startup(&state.db).await;
  
      if apps_to_restore.is_empty() {

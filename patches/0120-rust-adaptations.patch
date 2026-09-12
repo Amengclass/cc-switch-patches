@@ -2008,74 +2008,25 @@ index 9e985cc..b8d1f9f 100644
  #[allow(clippy::too_many_arguments)]
  pub async fn test_usage_script(
 diff --git a/src-tauri/src/services/proxy.rs b/src-tauri/src/services/proxy.rs
-index 98d05e9..ee90c06 100644
+index 98d05e9..a32f9b3 100644
 --- a/src-tauri/src/services/proxy.rs
 +++ b/src-tauri/src/services/proxy.rs
-@@ -1352,7 +1352,7 @@ impl ProxyService {
-             .map_err(|e| format!("清除 {app_type_str} 健康状态失败: {e}"))?;
- 
-         // 5) 若无其它接管，更新旧标志，并停止代理服务
--        // 检查是否还有其它 app 的 enabled = true
-+        // 检查是否还有其它 app 的 enabled = true（本机接管）
-         let any_enabled = self
-             .db
-             .is_live_takeover_active()
-@@ -1360,11 +1360,27 @@ impl ProxyService {
+@@ -1359,7 +1359,8 @@ impl ProxyService {
+             .await
              .map_err(|e| format!("检查接管状态失败: {e}"))?;
  
-         if !any_enabled {
--            let _ = self.db.set_live_takeover_active(false).await;
-+            // 远端可能仍有「远端接管」（route_proxy_apps / route_proxy_container_apps
-+            // 任一 true），其 live 依赖本机代理进程——此时不能停进程（否则远端指向死隧道）。
-+            let remote_has_route = self
-+                .db
-+                .list_remote_hosts()
-+                .map(|hs| {
-+                    hs.iter().any(|h| {
-+                        h.route_proxy_apps.values().any(|&v| v)
-+                            || h.route_proxy_container_apps
-+                                .values()
-+                                .any(|m| m.values().any(|&v| v))
-+                    })
-+                })
-+                .unwrap_or(false);
-+            if !remote_has_route {
-+                let _ = self.db.set_live_takeover_active(false).await;
+-        if !any_enabled {
++        // 本机无接管，也可能仍有远端接管意图（远端 live 依赖本机代理进程）——见 remote::hooks
++        if !any_enabled && !crate::remote::hooks::has_route_intent(&self.db) {
+             let _ = self.db.set_live_takeover_active(false).await;
  
--            if self.is_running().await {
--                // 此时没有任何 app 处于接管状态，停止服务即可
--                let _ = self.stop().await;
-+                if self.is_running().await {
-+                    // 此时没有任何 app 处于接管状态，停止服务即可
-+                    let _ = self.stop().await;
-+                }
-             }
-         }
- 
-@@ -1780,6 +1796,27 @@ impl ProxyService {
+             if self.is_running().await {
+@@ -1780,6 +1781,9 @@ impl ProxyService {
              .await
              .map_err(|e| format!("删除备份失败: {e}"))?;
  
-+        // 5.1 清除所有远端主机的「远端接管」意图（route_proxy_apps 与
-+        //     route_proxy_container_apps 清空）。
-+        //     远端 live 的实际重写由命令层异步 fire-and-forget 完成（见
-+        //     stop_proxy_with_restore 命令的 spawn）；即使失败，下次切换时
-+        //     effective_route_proxy 也会按「本机路由未运行」降级写直连自愈。
-+        match self.db.list_remote_hosts() {
-+            Ok(hosts) => {
-+                for mut h in hosts {
-+                    if !h.route_proxy_apps.is_empty() || !h.route_proxy_container_apps.is_empty() {
-+                        h.route_proxy_apps.clear();
-+                        h.route_proxy_container_apps.clear();
-+                        h.updated_at = chrono::Utc::now().timestamp_millis();
-+                        if let Err(e) = self.db.upsert_remote_host(&h) {
-+                            log::warn!("[remote] 清除主机 {} 远端接管意图失败: {e}", h.name);
-+                        }
-+                    }
-+                }
-+            }
-+            Err(e) => log::warn!("[remote] 读取远端主机列表失败（跳过意图清理）: {e}"),
-+        }
++        // 5.1 清除所有远端主机的「远端接管」意图 —— 见 remote::hooks
++        crate::remote::hooks::clear_route_intents(&self.db);
 +
          // 6. 重置健康状态（让健康徽章恢复为正常）
          self.db
