@@ -12,3 +12,6 @@ Thumbs.db
 
 # 日志
 *.log
+
+# 本会话的 worktree（不进版本库）
+.claude/
