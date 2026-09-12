@@ -88,9 +88,13 @@ jobs:
         shell: pwsh
         run: |
           $v = "${{ inputs.version }}"
-          $a = @("-TargetDir", "${{ runner.temp }}/cc-switch-build")
-          if (-not [string]::IsNullOrWhiteSpace($v)) { $a += @("-Version", $v) }
-          ./scripts/apply.ps1 @a
+          # 直接具名调用（已验证）。不用 @a 数组 splat——它只按位置传参，
+          # 会把版本号当命令名执行（报 "The module 'v3.20.1' could not be loaded"）
+          if ([string]::IsNullOrWhiteSpace($v)) {
+            ./scripts/apply.ps1 -TargetDir "${{ runner.temp }}/cc-switch-build"
+          } else {
+            ./scripts/apply.ps1 -TargetDir "${{ runner.temp }}/cc-switch-build" -Version $v
+          }
 
       - name: ② 验证：功能断言（42 条）
         shell: pwsh
