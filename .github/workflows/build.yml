@@ -1,7 +1,9 @@
 name: Build CC Switch Magic
 
-# 触发：仓库页面 → Actions → Build CC Switch Magic → Run workflow
-# 也可在推送 magic-* tag 时自动出包
+# 触发：
+#   ① 仓库页面 → Actions → Build CC Switch Magic → Run workflow（手填官方 tag）
+#   ② 推 tag 即出包 —— 官方 tag 形如 v3.20.3，我们的 tag 是 v3.20.3-Magic，
+#      官方版本号直接从 tag 名剥掉后缀得到，不用另外传参。
 on:
   workflow_dispatch:
     inputs:
@@ -21,21 +23,36 @@ on:
         default: "全部"
         type: string
   push:
-    tags: ["magic-*"]
+    tags: ["*-Magic", "*-magic", "magic-*"]
 
 permissions:
   contents: write
 
 jobs:
-  # 先算出「要构建哪些平台」的矩阵。
-  # 为什么单开一个 job：GitHub 的 job 级 if 里不能用 matrix，只能在矩阵展开前过滤。
-  # push tag 触发时 inputs 为空 → 构建全部平台。
+  # 先算出「构建哪些平台」的矩阵 + 「对应哪个官方版本」。
+  # 为什么单开一个 job：
+  #   · GitHub 的 job 级 if 里不能用 matrix，只能在矩阵展开前过滤；
+  #   · 版本号要能从 tag 名推出来，供下面所有步骤共用。
   plan:
-    name: 规划平台
+    name: 规划平台与版本
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.m.outputs.matrix }}
+      version: ${{ steps.v.outputs.version }}
     steps:
+      - id: v
+        shell: bash
+        run: |
+          set -euo pipefail
+          V='${{ inputs.version }}'
+          if [ -z "$V" ]; then
+            # 由 tag 触发：v3.20.3-Magic → v3.20.3（也兼容 magic-v3.20.3 旧写法）
+            REF='${{ github.ref_name }}'
+            V="${REF%-Magic}"; V="${V%-magic}"; V="${V#magic-}"
+          fi
+          if [ -z "$V" ]; then echo "::error::解析不出官方版本号（ref=${{ github.ref_name }}）"; exit 1; fi
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          echo "官方版本: $V"
       - id: m
         shell: bash
         run: |
@@ -94,7 +111,9 @@ jobs:
       - name: ① 组装：官方源码 + 补丁
         shell: pwsh
         run: |
-          $v = "${{ inputs.version }}"
+          # 版本号来自 plan job（手填或从 tag 名解析），不再直接读 inputs.version ——
+          # 推 tag 触发时 inputs 是空的，直接读会退回 base.json 的基线版本。
+          $v = "${{ needs.plan.outputs.version }}"
           # 直接具名调用（已验证）。不用 @a 数组 splat——它只按位置传参，
           # 会把版本号当命令名执行（报 "The module 'v3.20.1' could not be loaded"）
           if ([string]::IsNullOrWhiteSpace($v)) {
@@ -154,7 +173,7 @@ jobs:
           $out  = "${{ runner.temp }}/out"
           New-Item -ItemType Directory -Force -Path $out | Out-Null
 
-          $v = "${{ inputs.version }}"
+          $v = "${{ needs.plan.outputs.version }}"
           if ([string]::IsNullOrWhiteSpace($v)) {
             $v = (Get-Content "$tree/src-tauri/tauri.conf.json" -Raw | ConvertFrom-Json).version
           }
@@ -203,8 +222,9 @@ jobs:
 
   release:
     name: 发布 Release
-    needs: build
-    if: ${{ inputs.make_release || startsWith(github.ref, 'refs/tags/magic-') }}
+    needs: [plan, build]
+    # 手填 make_release，或推 tag 触发 —— 两种都出 Release
+    if: ${{ inputs.make_release || startsWith(github.ref, 'refs/tags/') }}
     runs-on: ubuntu-latest
     steps:
       - name: 下载全部产物
@@ -220,9 +240,16 @@ jobs:
         run: |
           set -euxo pipefail
           ls -lh all
-          TAG="magic-${{ inputs.version }}-$(date +%Y%m%d-%H%M)"
-          if [ -z "${{ inputs.version }}" ]; then TAG="magic-$(date +%Y%m%d-%H%M)"; fi
+          VER='${{ needs.plan.outputs.version }}'
+          if [[ '${{ github.ref }}' == refs/tags/* ]]; then
+            # 推 tag 触发：直接用那个 tag（形如 v3.20.3-Magic）
+            TAG='${{ github.ref_name }}'
+          else
+            # 手动触发：自己造一个 (版本 + 时间戳)，避免与已有 tag 撞
+            TAG="v${VER}-Magic-$(date +%Y%m%d-%H%M)"
+          fi
+          echo "Release tag: $TAG（官方 $VER）"
           gh release create "$TAG" all/* \
             --repo "${{ github.repository }}" \
-            --title "CC Switch Magic $TAG" \
-            --notes "由补丁层自动构建（官方 ${{ inputs.version }}）"
+            --title "CC Switch Magic v${VER}" \
+            --notes "由补丁层自动构建（官方 ${VER}）"
