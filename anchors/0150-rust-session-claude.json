@@ -1,0 +1,49 @@
+{
+  "$comment": "会话解析的「本机/远端共用」重构：把 load_messages / parse_session 拆成薄壳 + 纯解析函数，并新增 scan_sessions_fs（走 FileOps，本机与远端同一套逻辑）。关键设计：字符串场景直接调用官方的 is_agent_session / infer_session_id_from_filename（包一层 Path），不自己复制文件名判定 —— 否则官方以后新增排除条件（如 v3.20.3 的 journal.jsonl）我们会静默跟丢。",
+  "file": "src-tauri/src/session_manager/providers/claude.rs",
+  "topic": "会话解析本机/远端共用（薄壳 + 纯解析函数 + scan_sessions_fs）",
+  "edits": [
+    {
+      "why": "load_messages 拆成「读行」+「纯解析」；纯解析部分给远端共用（截断处同时开新函数）",
+      "find": "pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {\n    let file = File::open(path).map_err(|e| format!(\"Failed to open session file: {e}\"))?;\n    let reader = BufReader::new(file);\n    let mut messages = Vec::new();\n\n    for line in reader.lines() {\n        let line = match line {\n            Ok(value) => value,\n            Err(_) => continue,\n        };",
+      "replace": "pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {\n    let file = File::open(path).map_err(|e| format!(\"Failed to open session file: {e}\"))?;\n    let reader = BufReader::new(file);\n    let lines = reader.lines().map_while(Result::ok);\n    Ok(parse_messages_from_lines(lines))\n}\n\n/// 纯消息解析：给定 JSONL 各行，返回消息列表。\n/// **本机与远端共用**（FileOps 提供行数据，这里只做解析）。\npub fn parse_messages_from_lines(lines: impl IntoIterator<Item = String>) -> Vec<SessionMessage> {\n    let mut messages = Vec::new();\n\n    for line in lines {",
+      "expect": 1
+    },
+    {
+      "why": "纯解析函数现在返回 Vec 而不是 Result",
+      "find": "    Ok(messages)\n",
+      "replace": "    messages\n",
+      "expect": 1
+    },
+    {
+      "why": "parse_session 改成薄壳（读头尾行后交给纯解析函数）；纯解析函数给远端共用",
+      "find": "fn parse_session(path: &Path) -> Option<SessionMeta> {\n    if is_agent_session(path) {\n        return None;\n    }\n\n    let (head, tail) = read_head_tail_lines(path, 10, 30).ok()?;\n\n    let mut session_id: Option<String> = None;",
+      "replace": "fn parse_session(path: &Path) -> Option<SessionMeta> {\n    let (head, tail) = read_head_tail_lines(path, 10, 30).ok()?;\n    parse_session_meta_from_lines(&path.to_string_lossy(), &head, &tail)\n}\n\n/// 纯解析函数：给定文件路径字符串 + 头/尾行，提取会话元数据。\n/// **本机与远端共用**（FileOps 提供数据，这里只做解析，不碰文件系统）。\npub fn parse_session_meta_from_lines(\n    path: &str,\n    head: &[String],\n    tail: &[String],\n) -> Option<SessionMeta> {\n    // 直接用官方的判定函数（包一层 Path）：官方以后再加排除条件\n    // （如 v3.20.3 的 journal.jsonl）我们自动继承，不用各留一份\n    if is_agent_session(Path::new(path)) {\n        return None;\n    }\n\n    let mut session_id: Option<String> = None;",
+      "expect": 1
+    },
+    {
+      "why": "head 现在是 &[String]，去掉多余的引用层级",
+      "find": "    for line in &head {\n",
+      "replace": "    for line in head {\n",
+      "expect": 1
+    },
+    {
+      "why": "同上：路径现在是 &str，包一层 Path 复用官方的文件名推断",
+      "find": "infer_session_id_from_filename(path));",
+      "replace": "infer_session_id_from_filename(Path::new(path)));",
+      "expect": 1
+    },
+    {
+      "why": "同上：path 是 &str，不需要 to_string_lossy",
+      "find": "        source_path: Some(path.to_string_lossy().to_string()),",
+      "replace": "        source_path: Some(path.to_string()),",
+      "expect": 1
+    },
+    {
+      "why": "新增 scan_sessions_fs / collect_jsonl_files_fs：通过 FileOps 扫描（本机与远端共用）",
+      "find": "fn infer_session_id_from_filename(path: &Path) -> Option<String> {\n    path.file_stem()\n        .and_then(|stem| stem.to_str())\n        .map(|stem| stem.to_string())\n}",
+      "replace": "fn infer_session_id_from_filename(path: &Path) -> Option<String> {\n    path.file_stem()\n        .and_then(|stem| stem.to_str())\n        .map(|stem| stem.to_string())\n}\n\n/// 通过 FileOps 扫描会话（本机 LocalFileOps / 远端 RemoteSftpFileOps 共用）。\npub async fn scan_sessions_fs<F: crate::fsops::FileOps + Sync>(\n    fs: &F,\n    root: &str,\n) -> Vec<SessionMeta> {\n    use futures::{stream, StreamExt};\n    let mut files = Vec::new();\n    collect_jsonl_files_fs(fs, root, &mut files).await;\n\n    // 并发读每个文件的头尾：远端(宿主机 SFTP / 容器 exec)每次 read 都走一次网络往返，\n    // 串行扫描 N 个文件 = N×往返/文件，公网 RTT 下几十秒；并发后降到约 N/24×往返。\n    // SFTP 多请求复用同一条连接、容器 exec 每次独立 channel，并发安全。\n    const PARALLEL: usize = 24;\n    #[allow(clippy::type_complexity)]\n    let head_tails: Vec<(String, Option<(Vec<String>, Vec<String>)>)> = stream::iter(files)\n        .map(|path| async move {\n            let ht = fs.read_head_tail_lines(&path, 10, 30).await.ok();\n            (path, ht)\n        })\n        .buffer_unordered(PARALLEL)\n        .collect()\n        .await;\n\n    let mut sessions = Vec::new();\n    for (path, ht) in head_tails {\n        if let Some((head, tail)) = ht {\n            if let Some(meta) = parse_session_meta_from_lines(&path, &head, &tail) {\n                sessions.push(meta);\n            }\n        }\n    }\n    sessions\n}\n\nasync fn collect_jsonl_files_fs<F: crate::fsops::FileOps + Sync>(\n    fs: &F,\n    root: &str,\n    files: &mut Vec<String>,\n) {\n    if !fs.exists(root).await {\n        return;\n    }\n    let Ok(entries) = fs.read_dir(root).await else {\n        return;\n    };\n    let mut dirs = Vec::new();\n    for entry in entries {\n        if entry.is_dir {\n            dirs.push(entry.path);\n        } else if entry.name.ends_with(\".jsonl\") {\n            files.push(entry.path);\n        }\n    }\n    if dirs.is_empty() {\n        return;\n    }\n    // 一次性并发遍历所有子目录：远端每次 read_dir 都走网络往返，\n    // 串行 N 个目录 = N×RTT；并发后目录往返从 N 降到约 2（顶层 + 一层子目录）。\n    // Claude 会话结构仅两层（project-slug / *.jsonl），并发安全。\n    let sub_files: Vec<Vec<String>> = futures::future::join_all(dirs.into_iter().map(|dir| {\n        #[allow(clippy::redundant_locals)]\n        let fs = fs;\n        async move {\n            let mut sub = Vec::new();\n            collect_jsonl_files_fs(fs, &dir, &mut sub).await;\n            sub\n        }\n    }))\n    .await;\n    for sub in sub_files {\n        files.extend(sub);\n    }\n}",
+      "expect": 1
+    }
+  ]
+}

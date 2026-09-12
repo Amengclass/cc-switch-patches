@@ -1,17 +1,22 @@
-# verify.ps1 — 四层验证编排（升级后跑一次，确认「功能一个都没丢」）
+# verify.ps1 — 五层验证编排（升级后跑一次，确认「功能一个都没丢」）
 #
 #   L1 结构: 组装产物能否编译（可选，耗时，加 -WithBuild 开启）
 #   L2 逻辑: 单元测试（可选，加 -WithBuild 开启）
 #   L3 断言: 功能清单逐条核对（checks/feature-checks.ps1）
 #   L4 还原: 组装树 vs 参考树（我们已知可用的仓库）逐文件比对
+#   L5 门禁: 官方更新零丢失（升级官方新版时**必须**跑；靠 -UpgradeFrom/-UpgradeTo 触发）
 #
 # 用法:
-#   .\verify.ps1 -ReferenceRepo <我们的仓库>                 # L3+L4（推荐，秒级）
+#   .\verify.ps1 -ReferenceRepo <我们的仓库>                 # L3+L4（本仓库自检，秒级）
 #   .\verify.ps1 -ReferenceRepo <我们的仓库> -WithBuild      # 追加 L1+L2（分钟级）
+#   .\verify.ps1 -UpgradeFrom <官方旧版树> -UpgradeTo <官方新版树>   # 升级官方时：L3+L5
 param(
   [string]$ReferenceRepo,
   [string]$Version,
   [string]$OfficialDir,
+  [string]$UpgradeFrom,
+  [string]$UpgradeTo,
+  [string]$OurRepo,
   [string]$WorkDir = "$env:TEMP\cc-switch-verify",
   [switch]$WithBuild
 )
@@ -51,6 +56,31 @@ Write-Host "`n----- L3: 功能断言 -----" -ForegroundColor Cyan
 if ($LASTEXITCODE -ne 0) {
   Write-Host "[!] L3 未通过：有功能断言失败" -ForegroundColor Yellow
   if ($exitCode -eq 0) { $exitCode = 1 }
+}
+
+# ---------- L5 官方更新零丢失门禁（升级官方新版时必须跑）----------
+if ($UpgradeFrom -and $UpgradeTo) {
+  Write-Host "`n----- L5: 官方更新零丢失门禁 -----" -ForegroundColor Cyan
+  if (-not $OurRepo) { $OurRepo = Join-Path (Split-Path -Parent $MagicDir) "cc-switch-refactor" }
+  if (-not (Test-Path $OurRepo)) {
+    Write-Host "[!] 找不到我们的源码树（$OurRepo），跳过 L5；用 -OurRepo 指定" -ForegroundColor Yellow
+    if ($exitCode -eq 0) { $exitCode = 1 }
+  } else {
+    $l5 = @(
+      (Join-Path $MagicDir "scripts/check-upstream-sync.mjs"),
+      "--from", $UpgradeFrom, "--to", $UpgradeTo,
+      "--ours", $OurRepo, "--merged", $WorkDir
+    )
+    $waivers = Join-Path $MagicDir "upstream-waivers.json"
+    if (Test-Path $waivers) { $l5 += @("--waivers", $waivers) }
+    & node @l5
+    if ($LASTEXITCODE -ne 0) {
+      Write-Host "[!] L5 未通过：有官方更新被丢掉了 —— 不要整文件覆盖，按锚点/三方合并重贴" -ForegroundColor Yellow
+      if ($exitCode -eq 0) { $exitCode = 1 }
+    }
+  }
+} else {
+  Write-Host "`n----- L5: 跳过（未提供 -UpgradeFrom/-UpgradeTo；升级官方时请务必提供）-----" -ForegroundColor DarkGray
 }
 
 # ---------- L1/L2 编译与测试（可选）----------

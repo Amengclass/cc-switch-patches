@@ -1,0 +1,17 @@
+{
+  "$comment": "条件锚点：我们的 overlay 文件 floating.rs 调了官方的 tray::format_usage_suffix，而官方 v3.20.3 把这个函数的第 1 个参数从 &AppState 改成了 &UsageCache。判据用「官方 tray.rs 里有没有那段签名」而不是版本号 —— 内容判据跨版本自动正确。注意本文件必须排在 0320-tray-floating.json 之后（0900 > 0320），因为 0320 会给这个函数加 pub(crate)。",
+  "file": "src-tauri/src/floating.rs",
+  "topic": "适配官方 v3.20.3 起 format_usage_suffix 的签名变化",
+  "when": {
+    "file": "src-tauri/src/tray.rs",
+    "contains": "fn format_usage_suffix(\n    usage_cache: &UsageCache,"
+  },
+  "edits": [
+    {
+      "why": "官方改为接收 &UsageCache（AppState 上就有这个字段，直接取）",
+      "find": "                        let usage_summary = crate::tray::format_usage_suffix(\n                            state,\n",
+      "replace": "                        let usage_summary = crate::tray::format_usage_suffix(\n                            &state.usage_cache,\n",
+      "expect": 1
+    }
+  ]
+}

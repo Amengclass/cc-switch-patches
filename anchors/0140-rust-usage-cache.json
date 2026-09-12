@@ -1,0 +1,31 @@
+{
+  "$comment": "UsageCache 的 script_ts（脚本型用量时间戳，供悬浮窗显示「刚刚 / x分钟前」）。官方 v3.20.3 在同结构体加了 codex_oauth 字段、在 invalidate_all 加了清理，两边都是加性的、互不干扰 → 走锚点重放。",
+  "file": "src-tauri/src/services/usage_cache.rs",
+  "topic": "脚本型用量结果的时间戳（悬浮窗用）",
+  "edits": [
+    {
+      "why": "新增 script_ts 字段 + now_millis 工具函数",
+      "find": "    script: RwLock<HashMap<(AppType, String), UsageResult>>,\n}\n",
+      "replace": "    script: RwLock<HashMap<(AppType, String), UsageResult>>,\n    /// 脚本型用量结果的写入时间戳（毫秒），供悬浮窗显示「刚刚 / x分钟前」。\n    /// SubscriptionQuota 自带 queried_at，脚本型 UsageResult 没有，故单独记录。\n    script_ts: RwLock<HashMap<(AppType, String), i64>>,\n}\n\nfn now_millis() -> i64 {\n    std::time::SystemTime::now()\n        .duration_since(std::time::UNIX_EPOCH)\n        .map(|d| d.as_millis() as i64)\n        .unwrap_or(0)\n}\n",
+      "expect": 1
+    },
+    {
+      "why": "写入脚本型用量时一并记录时间戳（注意要 clone，因为原键值还要给 script 用）",
+      "find": "    pub fn put_script(&self, app_type: AppType, provider_id: String, result: UsageResult) {\n        if let Ok(mut w) = self.script.write() {\n            w.insert((app_type, provider_id), result);\n        }\n    }\n",
+      "replace": "    pub fn put_script(&self, app_type: AppType, provider_id: String, result: UsageResult) {\n        let ts = now_millis();\n        if let Ok(mut w) = self.script.write() {\n            w.insert((app_type.clone(), provider_id.clone()), result);\n        }\n        if let Ok(mut w) = self.script_ts.write() {\n            w.insert((app_type, provider_id), ts);\n        }\n    }\n",
+      "expect": 1
+    },
+    {
+      "why": "新增查询接口 script_queried_at（悬浮窗显示「刚刚 / x分钟前」）",
+      "find": "    pub fn invalidate_script(&self, app_type: &AppType, provider_id: &str) {\n",
+      "replace": "    /// 脚本型用量结果的查询时间戳（毫秒）。配合 SubscriptionQuota.queried_at，\n    /// 供悬浮窗显示「刚刚 / x分钟前」。\n    pub fn script_queried_at(&self, app_type: &AppType, provider_id: &str) -> Option<i64> {\n        self.script_ts\n            .read()\n            .ok()\n            .and_then(|r| r.get(&(app_type.clone(), provider_id.to_string())).copied())\n    }\n\n    pub fn invalidate_script(&self, app_type: &AppType, provider_id: &str) {\n",
+      "expect": 1
+    },
+    {
+      "why": "失效脚本快照时一并清掉时间戳，否则悬浮窗会显示过期时间",
+      "find": "        if let Ok(mut w) = self.script.write() {\n            w.remove(&key);\n        }\n",
+      "replace": "        if let Ok(mut w) = self.script.write() {\n            w.remove(&key);\n        }\n        if let Ok(mut w) = self.script_ts.write() {\n            w.remove(&key);\n        }\n",
+      "expect": 1
+    }
+  ]
+}

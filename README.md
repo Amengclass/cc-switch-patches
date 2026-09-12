@@ -113,17 +113,26 @@ git push origin magic-v3.20.1
 
 → [查看全部构建产物](https://github.com/Amengclass/cc-switch-patches/actions)
 
-## 🧩 补丁的三层结构
+## 🧩 补丁的分层结构
 
 | 层 | 内容 | 数量 | 冲突风险 |
 |---|---|---|---|
-| `overlay/` | 官方**没有**的文件，整份拷贝 | 59 | **零** |
-| `patches/` | 对官方文件的逐行改动，按主题拆分 | 11 | 官方改同一行才会撞 |
+| `overlay/` | 官方**没有**的文件，整份拷贝 | 60 | **零** |
 | `structured/` | i18n / 配置 / 依赖，按 key 合并 | 7 | **零** |
+| `anchors/` | 我方**加性**改动按「符号锚点」重放 | 6 份 / 35 条 | **零**（只要锚点还在） |
+| `patches/` | 对官方文件的逐行改动，按主题拆分 | 11 | 官方改同一行才会撞 |
 
 > **为什么这样拆**：官方最常改的就是 i18n（近 400 个提交里改了 79 次）和配置文件。
 > 走结构化合并后这类**永远不会冲突**；新增文件整份拷贝也**永不冲突**。
-> 只有「逐行改官方文件」才有冲突可能，而它们被拆成 11 个互不相干的小主题。
+>
+> **`anchors/` 是给「加性改动」准备的**：像「给函数加 `pub(crate)`」「加个结构体字段」
+> 「插一行调用」这种改动，其实**不依赖上下文**，只依赖符号名还在。
+> 写成锚点后，官方随便重构都不会撞（实测同一套锚点跨 v3.20.0 ~ v3.20.3 全部命中）。
+> 锚点里**不许出现版本号**——版本号会过期，符号名不会。遇到「官方改了接口签名、
+> 我们的 overlay 得跟着适配」时，用 `when` 条件锚点，判据是**另一个文件里有没有某段文本**。
+>
+> 剩下的才走 `patches/`（逐行补丁，带基线版本的上下文行）。
+> 所以**新功能的实现方式越「加性」，升级官方时越省事**。
 
 ## ➕ 如何增加新功能
 
@@ -193,16 +202,39 @@ git push
 t("myFeature.title")   // 然后在 src/i18n/locales/{zh,en,ja,zh-TW}.json 加 key
 ```
 
+**③ 加性改动写进 `anchors/`，别靠逐行补丁**
+
+「给函数加 `pub(crate)`」「加个结构体字段」「插一行调用」这类改动只依赖**符号名**，
+写成锚点后官方重构到旁边也不会撞（`patches/` 的行补丁则会，因为它带着基线版本的上下文行）。
+
+```jsonc
+{
+  "file": "src-tauri/src/tray.rs",
+  "edits": [
+    { "why": "悬浮窗要复用托盘函数", "find": "fn emoji_for_utilization(",
+      "replace": "pub(crate) fn emoji_for_utilization(", "expect": 1 }
+  ]
+}
+```
+
+两条铁律：**锚点里不许出现版本号**（版本号会过期，符号名不会）；
+**`expect` 必须写**（数量对不上就报错，绝不静默跳过）。
+遇到「官方改了接口签名、我们的 overlay 得跟着适配」，用 `when` 条件锚点 ——
+判据是**另一个文件里有没有某段文本**，不是版本号。
+
 ## 🛠️ 脚本清单
 
 | 脚本 | 作用 |
 |---|---|
 | `magic.ps1` | 一键：准备官方源码 → 组装 → 验证 → 编译 |
-| `scripts/apply.ps1` | 官方源码 → 套 overlay → 结构化合并 → 打补丁 |
+| `scripts/apply.ps1` | 官方源码 → 套 overlay → 结构化合并 → 打补丁 → 锚点重放 |
 | `scripts/build.ps1` | 前端打包 + Rust 编译 → exe |
-| `scripts/verify.ps1` | 四层验证编排（见下） |
+| `scripts/verify.ps1` | 五层验证编排（见下） |
 | `scripts/repack.ps1` | 改完功能后重新生成补丁层 |
+| `scripts/replay-anchors.mjs` | 锚点重放引擎（加性改动，幂等，支持 `when` 条件锚点） |
+| `scripts/check-upstream-sync.mjs` | **零丢失门禁**：证明官方新增的每一行都还在 |
 | `scripts/compare-trees.mjs` | 树比对（JSON/TOML 走语义比较） |
+| `scripts/fix-crlf-patches.mjs` | 防护：CRLF 文件的补丁换行（`git diff --output=` 出问题时兜底） |
 | `scripts/_proxy.ps1` | git 代理自动探测（本机有代理就走，CI 直连） |
 | `checks/feature-checks.ps1` | 42 条功能断言 |
 
@@ -214,20 +246,37 @@ t("myFeature.title")   // 然后在 src/i18n/locales/{zh,en,ja,zh-TW}.json 加 k
 | **L2 逻辑** | `cargo test` + `vitest` | 行为回归 |
 | **L3 断言** | `checks/feature-checks.ps1`（42 条） | **功能被静默吃掉**（不报编译错的那种） |
 | **L4 还原** | `scripts/compare-trees.mjs` | 组装结果 vs 参照源码的逐文件差异 |
+| **L5 零丢失** | `scripts/check-upstream-sync.mjs` | **官方的新增被我们丢掉**（升级官方时最危险的错误） |
 
-`verify.ps1 -ReferenceRepo <我们的源码>` 跑全部四层；
-不带 `-ReferenceRepo` 只跑 L1~L3（**升级官方新版时用这个**）。
+`verify.ps1 -ReferenceRepo <我们的源码>` 跑 L1~L4；
+升级官方时用 `verify.ps1 -UpgradeFrom <官方旧版树> -UpgradeTo <官方新版树>` 跑 L3+L5。
 
 ## ❓ FAQ
 
 <details>
 <summary><b>官方升级到新版本了，补丁还打得进去吗？</b></summary>
 
-大部分能。实测官方 v3.20.1 → v3.20.3（跨 2 个版本）：
-**11 个补丁里 8 个干净应用，2 个冲突**（涉及 3 个文件，其中一个只有 2 行）。
+实测官方 v3.20.1 → v3.20.3（跨 2 个版本）：**零冲突**，官方更新零丢失。
 
-冲突时 `apply.ps1` 会**只报出冲突的那个主题**，其余补丁照常应用。
-解完冲突后 `repack` 重新生成即可。
+流程是固定的三条：
+
+```powershell
+# 1) 组装：拉官方新版 → 套 overlay → 结构化合并 → 打补丁 → 锚点重放
+.\scripts\apply.ps1 -TargetDir <新目录> -Version v3.20.3
+# 2) 零丢失门禁：证明官方新增的每一行都还在
+node .\scripts\check-upstream-sync.mjs --from <官方旧版树> --to <官方新版树> `
+     --ours <我们的源码> --merged <组装结果> --waivers .\upstream-waivers.json
+# 3) 编译
+.\scripts\build.ps1 -TargetDir <新目录>
+```
+
+`apply.ps1` 会**逐个文件**应用补丁，所以一个文件冲突不会连累同主题的其它几十个文件；
+`anchors/` 里那些加性改动则完全不受影响，自动重放。
+
+**万一还是冲突**（官方和我们改了同一行语义）：**不要整个文件取一边** ——
+那会把官方在这个文件里的更新静默丢掉。正解是按锚点重贴，或用
+`git merge-file` 做三方合并（base=官方旧版, ours=我们, theirs=官方新版），
+最后跑 L5 门禁证明没丢东西。
 </details>
 
 <details>
@@ -256,11 +305,13 @@ t("myFeature.title")   // 然后在 src/i18n/locales/{zh,en,ja,zh-TW}.json 加 k
 
 ```text
 cc-switch-patches/
-├── overlay/                      # 官方没有的文件（59 个）→ 整份拷贝
-├── patches/                      # 对官方文件的改动（11 个主题补丁）
+├── overlay/                      # 官方没有的文件（60 个）→ 整份拷贝
 ├── structured/                   # i18n / 配置 / 依赖 → 按 key 合并
+├── anchors/                      # 加性改动 → 按符号锚点重放（6 份 / 35 条）
+├── patches/                      # 对官方文件的逐行改动（11 个主题补丁）
 ├── checks/feature-checks.ps1     # 42 条功能断言
-├── scripts/                      # 组装 / 编译 / 验证 / 重抽取
+├── scripts/                      # 组装 / 编译 / 验证 / 重抽取 / 门禁
+├── upstream-waivers.json         # L5 门禁的显式豁免表（每条须写明等价改写）
 ├── .github/workflows/build.yml   # 全平台自动构建
 ├── magic.ps1                     # 一键入口
 ├── base.json                     # 基线锁定（官方仓库 / tag / commit）

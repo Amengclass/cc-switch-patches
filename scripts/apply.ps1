@@ -1,6 +1,6 @@
 # apply.ps1 — 把「官方源码 + 我们的补丁层」组装成一个可构建的源码树
 #
-# 流程：官方源码 → 套 overlay（整拷）→ 结构化合并（i18n/配置/依赖）→ 打补丁（按主题有序）
+# 流程：官方源码 → 套 overlay（整拷）→ 结构化合并（i18n/配置/依赖）→ 打补丁（按主题有序）→ 锚点重放（加性改动）
 #
 # 用法示例：
 #   .\apply.ps1 -TargetDir D:\build\cc-switch -Version v3.20.1     # 自动拉官方 tag 到 TargetDir
@@ -89,26 +89,77 @@ if (Test-Path $prettierBin) {
 # ---------- 4) 打补丁 ----------
 Write-Host "`n[4/4] 应用补丁（按主题有序）" -ForegroundColor Cyan
 Push-Location $TargetDir
-$ok = 0; $failed = @()
+
+# 由「锚点」接管的文件：它们的改动只依赖符号锚点、与官方版本无关，
+# 统一交给第 5 步锚点重放（版本无关 + 幂等），不再走行补丁。
+$anchorFiles = @{}
+Get-ChildItem (Join-Path $MagicDir "anchors\*.json") -ErrorAction SilentlyContinue | ForEach-Object {
+  $spec = Get-Content $_.FullName -Raw | ConvertFrom-Json
+  if ($spec.file) { $anchorFiles[$spec.file] = $_.Name }
+}
+
+$ok = 0; $anchored = 0; $failedFiles = @(); $failedPatches = @{}
 Get-ChildItem (Join-Path $MagicDir "patches\*.patch") | Sort-Object Name | ForEach-Object {
-  $r = git apply --whitespace=nowarn $_.FullName 2>&1
-  if ($LASTEXITCODE -eq 0) {
-    Write-Host "  [OK]   $($_.Name)" -ForegroundColor Green
-    $ok++
+  $patch = $_.FullName
+  # 逐个文件应用：git apply 默认对整份补丁原子生效，一个文件冲突会连累同主题其它几十个文件。
+  # 用 --include 拆成按文件应用后，冲突被隔离在单个文件里。
+  $paths = Select-String -Path $patch -Pattern '^\+\+\+ b/(.+)$' |
+             ForEach-Object { $_.Matches[0].Groups[1].Value } | Sort-Object -Unique
+  $patchFail = @()
+  foreach ($p in $paths) {
+    if ($anchorFiles.ContainsKey($p)) {
+      $anchored++
+      continue
+    }
+    # 必须显式关掉 autocrlf：目标目录不带 .git 时会退回全局设置（Windows 上常是 true），
+    # git apply 会把补丁里的 LF 全部写成 CRLF —— 补丁层是字节保真的，不能让 git 改换行。
+    $r = git -c core.autocrlf=false apply --include="$p" --whitespace=nowarn $patch 2>&1
+    if ($LASTEXITCODE -eq 0) {
+      $ok++
+    } else {
+      $patchFail += $p
+      $failedFiles += $p
+      Write-Host "  [FAIL] $p" -ForegroundColor Red
+      Write-Host "         $(($r | Select-Object -First 2) -join "`n         ")" -ForegroundColor DarkRed
+    }
+  }
+  if ($patchFail.Count -eq 0) {
+    Write-Host "  [OK]   $($_.Name)  ($($paths.Count) 文件)" -ForegroundColor Green
   } else {
-    Write-Host "  [FAIL] $($_.Name)" -ForegroundColor Red
-    Write-Host "         $(($r | Select-Object -First 3) -join "`n         ")" -ForegroundColor DarkRed
-    $failed += $_.Name
+    $failedPatches[$_.Name] = $patchFail
+    Write-Host "  [PART] $($_.Name)  $($paths.Count - $patchFail.Count)/$($paths.Count) 文件成功" -ForegroundColor Yellow
   }
 }
 Pop-Location
 
+# ---------- 5) 锚点重放（加性改动的抗重构形态）----------
+# 官方重构会让行补丁的上下文失配 → 那些补丁整个 FAIL。但我们的很多改动是**加性**的
+# （加 pub(crate)、加结构体字段、加一行调用、加个菜单项）—— 只依赖锚点还在，不依赖上下文。
+# 锚点重放是幂等的：行补丁已经改过的地方会自动跳过，所以可以无条件跑在 patches 之后。
+Write-Host "`n[5/5] 锚点重放（加性改动）" -ForegroundColor Cyan
+node (Join-Path $MagicDir "scripts/replay-anchors.mjs") $TargetDir
+$anchorFailed = ($LASTEXITCODE -ne 0)
+if ($anchorFailed) {
+  Write-Host "  [!] 有锚点未命中 —— 官方大概率动了锚点所在位置" -ForegroundColor Yellow
+  Write-Host "      正解：按锚点人工重贴（禁止整文件覆盖，那会丢掉官方更新）" -ForegroundColor Yellow
+}
+
 Write-Host ""
-if ($failed.Count -eq 0) {
-  Write-Host "=== 完成：$ok 个补丁全部干净应用 ===" -ForegroundColor Green
+if ($failedFiles.Count -eq 0 -and -not $anchorFailed) {
+  Write-Host "=== 完成：行补丁 $ok 个文件 + 锚点接管 $anchored 个文件，全部命中 ===" -ForegroundColor Green
 } else {
-  Write-Host "=== 完成：$ok 成功 / $($failed.Count) 失败 ===" -ForegroundColor Yellow
-  Write-Host "  冲突补丁：$($failed -join ', ')" -ForegroundColor Yellow
-  Write-Host "  提示：冲突只影响上述主题，其余补丁已应用；解冲突后重新生成对应补丁即可。" -ForegroundColor Yellow
+  if ($anchored -gt 0) {
+    Write-Host "  （另有 $anchored 个文件由锚点接管，见第 5 步）" -ForegroundColor DarkGray
+  }
+  if ($failedFiles.Count -gt 0) {
+    Write-Host "=== 完成：$ok 个文件成功 / $($failedFiles.Count) 个冲突 ===" -ForegroundColor Yellow
+    Write-Host "  冲突文件：" -ForegroundColor Yellow
+    $failedFiles | Sort-Object -Unique | ForEach-Object { Write-Host "    - $_" -ForegroundColor Yellow }
+  }
+  Write-Host "  提示：冲突已隔离在单个文件，同主题其它文件不受影响。" -ForegroundColor Yellow
+  Write-Host "  下一步：不要整文件覆盖！" -ForegroundColor Yellow
+  Write-Host "    1) 加性改动  → 写进 anchors/*.json，锚点重放自动搞定（本次锚点已跑）" -ForegroundColor Yellow
+  Write-Host "    2) 重构改动  → 用 git merge-file 做三方合并（base=官方旧版, ours=我们, theirs=官方新版）" -ForegroundColor Yellow
+  Write-Host "    3) 跑 scripts/check-upstream-sync.mjs 证明官方更新零丢失" -ForegroundColor Yellow
   exit 2
 }

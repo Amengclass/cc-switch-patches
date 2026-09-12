@@ -1,0 +1,19 @@
+{
+  "$comment": "UpdateContext.tsx 的我方改动是纯加性的（给日志加 [Update] 前缀 + 加一行诊断日志），走锚点重放而非行补丁。官方 v3.20.3 在同文件改用 extractErrorMessage，两边不冲突。",
+  "file": "src/contexts/UpdateContext.tsx",
+  "topic": "更新检查的日志前缀与诊断行",
+  "edits": [
+    {
+      "why": "区分本应用与其它来源的 console 输出",
+      "find": "console.error(\"检查更新失败:\", err);",
+      "replace": "console.error(\"[Update] 检查更新失败:\", err);",
+      "expect": 1
+    },
+    {
+      "why": "诊断用：记录 checkForUpdate 的返回状态",
+      "find": "      const result = await checkForUpdate({ timeout: 30000 });\n",
+      "replace": "      const result = await checkForUpdate({ timeout: 30000 });\n      console.log(\"[Update] checkForUpdate result:\", result);\n",
+      "expect": 1
+    }
+  ]
+}

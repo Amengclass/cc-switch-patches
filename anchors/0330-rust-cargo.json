@@ -1,0 +1,37 @@
+{
+  "$comment": "Cargo.toml 全是我方的加性依赖/包名/feature，走锚点重放。注意：**绝不动 version 行** —— 让官方的版本号自然生效，否则每次升级都要手工改。",
+  "file": "src-tauri/Cargo.toml",
+  "topic": "包名、tauri feature、远程连接所需依赖、windows-sys feature",
+  "edits": [
+    {
+      "why": "应用改名 CC Switch Magic（exe 也随包名变成 cc-switch-magic.exe）",
+      "find": "[package]\nname = \"cc-switch\"\n",
+      "replace": "[package]\nname = \"cc-switch-magic\"\n",
+      "expect": 1
+    },
+    {
+      "why": "macOS 悬浮窗的透明窗口需要 macos-private-api",
+      "find": "\"protocol-asset\", \"image-png\"] }",
+      "replace": "\"protocol-asset\", \"image-png\", \"macos-private-api\"] }",
+      "expect": 1
+    },
+    {
+      "why": "自解压/更新包处理",
+      "find": "flate2 = \"1\"\n",
+      "replace": "flate2 = \"1\"\ntar = \"0.4\"\n",
+      "expect": 1
+    },
+    {
+      "why": "SSH 远程主机管理（russh + SFTP）与凭据存取（keyring）",
+      "find": "sys-locale = \"0.3\"\n",
+      "replace": "sys-locale = \"0.3\"\nrussh = \"0.62.5\"\nrussh-sftp = \"2.3.0\"\nkeyring = \"3.6.3\"\n",
+      "expect": 1
+    },
+    {
+      "why": "远程密码用 DPAPI 加密存储需要这些 windows-sys feature",
+      "find": "    \"Win32_UI_Shell\",\n",
+      "replace": "    \"Win32_UI_Shell\",\n    \"Win32_Security_Cryptography\",\n    \"Win32_System_Memory\",\n    \"Win32_Foundation\",\n    \"Win32_UI_WindowsAndMessaging\",\n    \"Win32_UI_Input_KeyboardAndMouse\",\n",
+      "expect": 1
+    }
+  ]
+}

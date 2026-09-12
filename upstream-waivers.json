@@ -1,0 +1,17 @@
+{
+  "$comment": "check-upstream-sync.mjs 的显式豁免表。每条必须写明『官方这一行被等价改写成什么』—— 不允许静默放行。只在『我们重构了官方同一处代码、语义等价』时使用。",
+  "src-tauri/src/session_manager/providers/claude.rs": [
+    {
+      "line": ".map(|name| name.starts_with(\"agent-\") || name == \"journal.jsonl\")",
+      "why": "等价改写：我们把 is_agent_session(&Path) 重构成 is_agent_session_str(&str)（为了本机/远端共用解析逻辑），官方这次新增的 journal.jsonl 条件已原样保留在新函数体内：name.starts_with(\"agent-\") || name == \"journal.jsonl\""
+    },
+    {
+      "line": "assert!(is_agent_session(&path));",
+      "why": "等价改写：官方新增测试随函数改名改为 assert!(is_agent_session_str(&path.to_string_lossy()))"
+    },
+    {
+      "line": "assert!(!is_agent_session(&path));",
+      "why": "等价改写：同上（取反断言）"
+    }
+  ]
+}

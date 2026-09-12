@@ -1,0 +1,103 @@
+{
+  "$comment": "加性改动的『锚点重放』规则。查找串必须在官方文件里唯一（用 expect 断言）；官方随便重构，只要锚点（函数名/字段名/固定语句）还在，改动就能贴上去。找不到 = 大声报错，绝不静默跳过。",
+  "file": "src-tauri/src/tray.rs",
+  "topic": "悬浮窗：复用托盘格式化函数 + 托盘菜单项 + 最近活跃 app 记录",
+  "edits": [
+    {
+      "why": "悬浮窗要复用托盘的格式化/统计函数，必须能跨模块访问",
+      "find": "fn emoji_for_utilization(",
+      "replace": "pub(crate) fn emoji_for_utilization(",
+      "expect": 1
+    },
+    {
+      "why": "同上",
+      "find": "fn format_subscription_summary(",
+      "replace": "pub(crate) fn format_subscription_summary(",
+      "expect": 1
+    },
+    {
+      "why": "同上",
+      "find": "fn labeled_tier_parts(",
+      "replace": "pub(crate) fn labeled_tier_parts(",
+      "expect": 1
+    },
+    {
+      "why": "同上",
+      "find": "fn tier_pct(",
+      "replace": "pub(crate) fn tier_pct(",
+      "expect": 1
+    },
+    {
+      "why": "同上",
+      "find": "fn format_script_summary(",
+      "replace": "pub(crate) fn format_script_summary(",
+      "expect": 1
+    },
+    {
+      "why": "同上",
+      "find": "fn provider_uses_official_subscription(",
+      "replace": "pub(crate) fn provider_uses_official_subscription(",
+      "expect": 1
+    },
+    {
+      "why": "同上",
+      "find": "fn format_usage_suffix(",
+      "replace": "pub(crate) fn format_usage_suffix(",
+      "expect": 1
+    },
+    {
+      "why": "托盘里要显示官方订阅模板类型，悬浮窗也要用",
+      "find": "const TEMPLATE_TYPE_OFFICIAL_SUBSCRIPTION: &str",
+      "replace": "pub(crate) const TEMPLATE_TYPE_OFFICIAL_SUBSCRIPTION: &str",
+      "expect": 1
+    },
+    {
+      "why": "托盘菜单要加『悬浮窗』一项，文案跟随托盘语言",
+      "find": "    pub lightweight_mode: &'static str,\n",
+      "replace": "    pub lightweight_mode: &'static str,\n    pub floating_window: &'static str,\n",
+      "expect": 1
+    },
+    {
+      "why": "英文文案",
+      "find": "lightweight_mode: \"Lightweight Mode\",",
+      "replace": "lightweight_mode: \"Lightweight Mode\",\n                floating_window: \"Floating Widget\",",
+      "expect": 1
+    },
+    {
+      "why": "日文文案",
+      "find": "lightweight_mode: \"軽量モード\",",
+      "replace": "lightweight_mode: \"軽量モード\",\n                floating_window: \"フローティングコンポーネント\",",
+      "expect": 1
+    },
+    {
+      "why": "繁中文案",
+      "find": "lightweight_mode: \"輕量模式\",",
+      "replace": "lightweight_mode: \"輕量模式\",\n                floating_window: \"懸浮窗\",",
+      "expect": 1
+    },
+    {
+      "why": "简中文案",
+      "find": "lightweight_mode: \"轻量模式\",",
+      "replace": "lightweight_mode: \"轻量模式\",\n                floating_window: \"悬浮窗\",",
+      "expect": 1
+    },
+    {
+      "why": "切换供应商/自动切换成功后，后端记录最近活跃 app（悬浮球跟随靠它）",
+      "find": "        if let Err(e) = app.emit(\"proxy-flags-changed\", event_data.clone()) {\n            log::error!(\"发射 proxy-flags-changed 事件失败: {e}\");\n        }\n",
+      "replace": "        if let Err(e) = app.emit(\"proxy-flags-changed\", event_data.clone()) {\n            log::error!(\"发射 proxy-flags-changed 事件失败: {e}\");\n        }\n        // 后端同步记录最近活跃 app（悬浮球跟随靠它）\n        crate::floating::record_active_app_sync(app, app_type_str);\n",
+      "expect": 2
+    },
+    {
+      "why": "托盘菜单里插入『悬浮窗』开关项",
+      "find": "    menu_builder = menu_builder.item(&lightweight_item).separator();\n",
+      "replace": "    let floating_window_item = crate::floating::tray_menu_item(\n        app,\n        tray_texts.floating_window,\n        app_settings.enable_floating_window,\n    )?;\n\n    menu_builder = menu_builder\n        .item(&lightweight_item)\n        .item(&floating_window_item)\n        .separator();\n",
+      "expect": 1
+    },
+    {
+      "why": "托盘菜单事件：处理『悬浮窗』点击",
+      "find": "        \"quit\" => {\n",
+      "replace": "        \"floating_window\" => {\n            crate::floating::toggle_from_tray(app);\n            refresh_tray_menu(app);\n        }\n        \"quit\" => {\n",
+      "expect": 1
+    }
+  ]
+}
