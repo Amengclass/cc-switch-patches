@@ -14,6 +14,8 @@ param(
 
 $ErrorActionPreference = "Stop"
 if (-not $MagicDir) { $MagicDir = Split-Path -Parent (Split-Path -Parent $PSCommandPath) }
+. (Join-Path $MagicDir "scripts\_proxy.ps1")
+$gitProxyArgs = Get-GitProxyArgs
 $base = Get-Content (Join-Path $MagicDir "base.json") -Raw | ConvertFrom-Json
 $upstream = $base.upstream
 if (-not $Version) { $Version = $base.base_tag }
@@ -41,7 +43,7 @@ if ($OfficialDir) {
 } else {
   Write-Host "`n[1/4] 克隆官方 $Version" -ForegroundColor Cyan
   if (Test-Path $TargetDir) { Remove-Item -LiteralPath $TargetDir -Recurse -Force }
-  git -c http.proxy=http://127.0.0.1:7897 -c https.proxy=http://127.0.0.1:7897 `
+  git @gitProxyArgs `
       clone --depth 1 --branch $Version $upstream $TargetDir
 }
 

@@ -18,6 +18,8 @@ $MagicDir = Split-Path -Parent $PSCommandPath
 $CcwRoot  = Split-Path -Parent $MagicDir
 if (-not $TargetDir)   { $TargetDir   = Join-Path $CcwRoot "cc-switch-build" }
 if (-not $OfficialDir) { $OfficialDir = Join-Path $CcwRoot "cc-switch-official" }
+. (Join-Path $MagicDir "scripts\_proxy.ps1")
+$gitProxyArgs = Get-GitProxyArgs
 
 function Step($n, $t) { Write-Host "`n[$n] $t" -ForegroundColor Cyan }
 
@@ -29,13 +31,13 @@ Write-Host "===================================================" -ForegroundColo
 Step "0/3" "准备官方源码"
 if ($ForceDownload -or -not (Test-Path $OfficialDir)) {
   Write-Host "  克隆官方仓库 → $OfficialDir"
-  git -c http.proxy=http://127.0.0.1:7897 -c https.proxy=http://127.0.0.1:7897 `
+  git @gitProxyArgs `
       clone https://github.com/farion1231/cc-switch.git $OfficialDir
 } else {
   Write-Host "  已有: $OfficialDir"
   # 顺手同步一下 tag（失败不阻断）
   Write-Host "  同步官方 tag…"
-  git -C $OfficialDir -c http.proxy=http://127.0.0.1:7897 -c https.proxy=http://127.0.0.1:7897 `
+  git -C $OfficialDir @gitProxyArgs `
       fetch --tags 2>&1 | Select-Object -Last 2
 }
 

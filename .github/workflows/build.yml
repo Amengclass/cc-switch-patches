@@ -1,0 +1,100 @@
+name: Build CC Switch Magic
+
+# 手动触发：仓库页面 → Actions → Build CC Switch Magic → Run workflow → 填版本号
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "官方 tag（如 v3.20.1）。留空 = base.json 里锁定的版本"
+        required: false
+        default: ""
+        type: string
+      make_release:
+        description: "构建成功后创建 GitHub Release 并附上 exe"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: 检出补丁层
+        uses: actions/checkout@v4
+
+      - name: 准备 pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: 准备 Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: 准备 Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: 缓存 cargo 产物
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ${{ runner.temp }}/cc-switch-build/src-tauri/target
+          key: cargo-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: |
+            cargo-${{ runner.os }}-
+
+      - name: ① 组装：官方源码 + 补丁
+        shell: pwsh
+        run: |
+          $v = "${{ inputs.version }}"
+          if ([string]::IsNullOrWhiteSpace($v)) {
+            ./scripts/apply.ps1 -TargetDir "${{ runner.temp }}/cc-switch-build"
+          } else {
+            ./scripts/apply.ps1 -TargetDir "${{ runner.temp }}/cc-switch-build" -Version $v
+          }
+
+      - name: ② 验证：功能断言（42 条）
+        shell: pwsh
+        run: ./checks/feature-checks.ps1 -TargetDir "${{ runner.temp }}/cc-switch-build"
+
+      - name: ③ 构建 exe
+        shell: pwsh
+        run: |
+          cd "${{ runner.temp }}/cc-switch-build"
+          pnpm install --frozen-lockfile
+          pnpm build:renderer
+          cd src-tauri
+          cargo build --features tauri/custom-protocol
+
+      - name: ④ 收集产物
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem "${{ runner.temp }}/cc-switch-build/src-tauri/target/debug" -Filter *.exe | Select-Object -First 1
+          Write-Host "产物: $($exe.FullName)  $([math]::Round($exe.Length/1MB,1)) MB"
+          New-Item -ItemType Directory -Force -Path "${{ runner.temp }}/out" | Out-Null
+          Copy-Item $exe.FullName "${{ runner.temp }}/out/" -Force
+
+      - name: 上传 exe（Artifact）
+        uses: actions/upload-artifact@v4
+        with:
+          name: cc-switch-magic-windows
+          path: ${{ runner.temp }}/out/*.exe
+          if-no-files-found: error
+
+      - name: 创建 Release（可选）
+        if: ${{ inputs.make_release }}
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "magic-${{ inputs.version }}-$(Get-Date -Format yyyyMMdd-HHmm)"
+          if ([string]::IsNullOrWhiteSpace("${{ inputs.version }}")) { $tag = "magic-$(Get-Date -Format yyyyMMdd-HHmm)" }
+          gh release create $tag "${{ runner.temp }}/out/*.exe" --title "CC Switch Magic $tag" --notes "由补丁层自动构建（官方 ${{ inputs.version }}）"
