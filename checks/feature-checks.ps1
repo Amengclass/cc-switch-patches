@@ -107,4 +107,4 @@ foreach ($r in $results) {
   if ($r.StartsWith("  [FAIL]")) { Write-Host $r -ForegroundColor Red } else { Write-Host $r -ForegroundColor DarkGray }
 }
 Write-Host "`n  通过 $pass / 失败 $fail" -ForegroundColor $(if ($fail -eq 0) { "Green" } else { "Red" })
-if ($fail -gt 0) { exit 1 }
+if ($fail -gt 0) { exit 1 } else { exit 0 }
