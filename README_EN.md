@@ -55,10 +55,15 @@ Official + our features   ← only this patched tree gets compiled
 
 ```
 1. Open the repo → Actions → "Build CC Switch Magic"
-2. Click "Run workflow" and enter an official tag (e.g. v3.20.1; empty = version pinned in base.json)
-3. Wait 20–40 minutes
+2. Click "Run workflow" and fill in the inputs:
+     version   = official tag (e.g. v3.20.1; empty = the version pinned in base.json)
+     platforms = which platforms to build: 全部 (all) / Windows / Linux / macOS (comma-separated)
+     make_release = optional; when checked it also creates a Release
+3. Click the green "Run workflow" and wait 20–40 minutes
 4. Open the run → scroll to Artifacts → download
 ```
+
+> To verify a single platform, set `platforms` to e.g. `macOS` — the others are skipped, saving time.
 
 Or push a tag to trigger it locally:
 

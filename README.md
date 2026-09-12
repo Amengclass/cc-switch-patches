@@ -54,10 +54,15 @@
 
 ```
 1. 打开 仓库页面 → Actions → 「Build CC Switch Magic」
-2. 点「Run workflow」，填官方版本号（如 v3.20.1；留空 = base.json 锁定版）
-3. 等 20~40 分钟
+2. 点「Run workflow」，填两个输入：
+     version   = 官方版本号（如 v3.20.1；留空 = base.json 锁定版）
+     platforms = 要构建哪些平台：全部 / Windows / Linux / macOS（可逗号分隔多个）
+     make_release = 可选，勾了会顺手创建 Release
+3. 点绿色「Run workflow」，等 20~40 分钟
 4. 进运行详情 → 页面底部 Artifacts → 下载
 ```
+
+> 只验证某个平台时把 `platforms` 填成 `macOS` 之类即可 —— 其余平台会被跳过，省时间。
 
 或在本地推 tag 自动触发：
 
