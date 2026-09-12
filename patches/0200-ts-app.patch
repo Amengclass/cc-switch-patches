@@ -1,5 +1,5 @@
 diff --git a/src/App.tsx b/src/App.tsx
-index d5c644b..e836286 100644
+index d5c644b..a7c3395 100644
 --- a/src/App.tsx
 +++ b/src/App.tsx
 @@ -1,4 +1,4 @@
@@ -24,7 +24,15 @@ index d5c644b..e836286 100644
    Loader2,
    RefreshCw,
  } from "lucide-react";
-@@ -48,7 +50,10 @@ import { useProxyStatus } from "@/hooks/useProxyStatus";
+@@ -41,6 +43,7 @@ import {
+ } from "@/lib/api";
+ import { checkAllEnvConflicts, checkEnvConflicts } from "@/lib/api/env";
+ import { useProviderActions } from "@/hooks/useProviderActions";
++import { useRemoteTarget } from "@/hooks/useRemoteTarget";
+ import { openclawKeys, useOpenClawHealth } from "@/hooks/useOpenClaw";
+ import { hermesKeys, useOpenHermesWebUI } from "@/hooks/useHermes";
+ import { hermesApi } from "@/lib/api/hermes";
+@@ -48,7 +51,10 @@ import { useProxyStatus } from "@/hooks/useProxyStatus";
  import { useUsageCacheBridge } from "@/hooks/useUsageCacheBridge";
  import { useTauriEvent } from "@/hooks/useTauriEvent";
  import { useLastValidValue } from "@/hooks/useLastValidValue";
@@ -36,7 +44,7 @@ index d5c644b..e836286 100644
  import {
    extractErrorMessage,
    translatePiProviderMutationError,
-@@ -63,16 +68,40 @@ import {
+@@ -63,16 +69,35 @@ import {
    DRAG_REGION_STYLE,
  } from "@/lib/platform";
  import { AppSwitcher } from "@/components/AppSwitcher";
@@ -44,12 +52,7 @@ index d5c644b..e836286 100644
 +import { InstallCommandPopover } from "@/components/remote/InstallCommandPopover";
 +import { APP_INSTALL_CMDS } from "@/config/appConfig";
 +import {
-+  checkLocalCliInstalled,
-+  checkRemoteCliInstalled,
-+  getRemoteCurrentProvider,
-+  listDockerContainers,
-+  listRemoteHosts,
-+  probeHostsOnline,
++
 +  getRemoteOpenClawDefaultModel,
 +  setRemoteOpenClawDefaultModel,
 +  removeRemoteProviderFromLive,
@@ -62,7 +65,7 @@ index d5c644b..e836286 100644
 +  useRemoteProvidersQuery,
 +  useSwitchRemoteProviderMutation,
 +} from "@/lib/query/remoteMutations";
-+import type { RemoteHost } from "@/types/remote";
++
  import { ProfileSwitcher } from "@/components/profiles/ProfileSwitcher";
  import { ProviderList } from "@/components/providers/ProviderList";
  import { AddProviderDialog } from "@/components/providers/AddProviderDialog";
@@ -78,7 +81,7 @@ index d5c644b..e836286 100644
  import { FailoverToggle } from "@/components/proxy/FailoverToggle";
  import { RoutingActivationBrand } from "@/components/proxy/RoutingActivationBrand";
  import UsageScriptModal from "@/components/UsageScriptModal";
-@@ -93,6 +122,8 @@ import { DeepLinkImportDialog } from "@/components/DeepLinkImportDialog";
+@@ -93,6 +118,8 @@ import { DeepLinkImportDialog } from "@/components/DeepLinkImportDialog";
  import { FirstRunNoticeDialog } from "@/components/FirstRunNoticeDialog";
  import { AgentsPanel } from "@/components/agents/AgentsPanel";
  import { UniversalProviderPanel } from "@/components/universal";
@@ -87,7 +90,7 @@ index d5c644b..e836286 100644
  import { McpIcon } from "@/components/BrandIcons";
  import { Button } from "@/components/ui/button";
  import { SessionManagerPage } from "@/components/sessions/SessionManagerPage";
-@@ -124,6 +155,7 @@ type View =
+@@ -124,6 +151,7 @@ type View =
    | "universal"
    | "sessions"
    | "workspace"
@@ -95,7 +98,7 @@ index d5c644b..e836286 100644
    | "openclawEnv"
    | "openclawTools"
    | "openclawAgents"
-@@ -159,6 +191,7 @@ const VALID_VIEWS: View[] = [
+@@ -159,6 +187,7 @@ const VALID_VIEWS: View[] = [
    "universal",
    "sessions",
    "workspace",
@@ -103,7 +106,7 @@ index d5c644b..e836286 100644
    "openclawEnv",
    "openclawTools",
    "openclawAgents",
-@@ -166,6 +199,10 @@ const VALID_VIEWS: View[] = [
+@@ -166,6 +195,10 @@ const VALID_VIEWS: View[] = [
  ];
  
  const getInitialView = (): View => {
@@ -114,7 +117,7 @@ index d5c644b..e836286 100644
    const saved = localStorage.getItem(VIEW_STORAGE_KEY) as View | null;
    if (saved && VALID_VIEWS.includes(saved)) {
      return saved;
-@@ -180,6 +217,15 @@ function App() {
+@@ -180,6 +213,15 @@ function App() {
    const [activeApp, setActiveApp] = useState<AppId>(getInitialApp);
    const sharedFeatureApp: AppId =
      activeApp === "claude-desktop" ? "claude" : activeApp;
@@ -130,317 +133,55 @@ index d5c644b..e836286 100644
    const [currentView, setCurrentView] = useState<View>(getInitialView);
    const [skillsDiscoverySource, setSkillsDiscoverySource] =
      useState<SkillsPageSource>("repos");
-@@ -197,6 +243,309 @@ function App() {
+@@ -197,6 +239,47 @@ function App() {
        hasSkills: false,
      });
  
-+  // ===== 批量应用 Provider 面板（入口A：目标选择器栏；入口B：远程主机管理页）=====
-+  const [batchApplyOpen, setBatchApplyOpen] = useState(false);
-+  const [batchApplyApp, setBatchApplyApp] = useState<string>(sharedFeatureApp);
-+
-+  // ===== 目标选择器（本机 / 远程服务器）=====
-+  const [servers, setServers] = useState<RemoteHost[]>([]);
-+  const [remoteTargetId, setRemoteTargetId] = useState<string>(
-+    () => localStorage.getItem("cc-switch-remote-target") ?? "",
-+  );
-+  const [remoteCurrentProviderId, setRemoteCurrentProviderId] = useState<
-+    string | null
-+  >(null);
-+  const [remoteInstalled, setRemoteInstalled] = useState<boolean | null>(null);
-+  const [localInstalled, setLocalInstalled] = useState<boolean | null>(null);
-+  // 目标细化到 Docker 容器：选中服务器后可再选容器，所有远程操作作用于容器内。
-+  // 按主机记忆容器选择：切回远端时恢复上次选的容器。
-+  const [containers, setContainers] = useState<string[]>([]);
-+  const [containersLoading, setContainersLoading] = useState(false);
-+  const [remoteContainerId, setRemoteContainerId] = useState<string>(() => {
-+    const target = localStorage.getItem("cc-switch-remote-target") ?? "";
-+    if (!target) return "";
-+    return localStorage.getItem(`cc-switch-remote-container:${target}`) ?? "";
-+  });
-+  // 主机在线状态（host_id → 是否在线）：目标选择器下拉打开时批量实时探测。
-+  // 不缓存：状态必须真实反映"此刻"（缓存会让用户看到假在线却连不进去）。
-+  const [hostsOnline, setHostsOnline] = useState<Record<string, boolean>>({});
-+  // 当前目标是否被探明离线（软信号：探活结果；重试可清除重新探测）
-+  const targetKnownOffline = remoteTargetId
-+    ? hostsOnline[remoteTargetId] === false
-+    : false;
-+  // 重试：清除当前目标的离线标记 → 查询重新启用 → 真正重新探测/连接
-+  const retryRemoteTarget = useCallback(() => {
-+    if (!remoteTargetId) return;
-+    setHostsOnline((prev) => {
-+      if (prev[remoteTargetId] !== false) return prev;
-+      const next = { ...prev };
-+      delete next[remoteTargetId];
-+      return next;
-+    });
-+  }, [remoteTargetId]);
-+  const probeHosts = useCallback(async () => {
-+    if (servers.length === 0) return;
-+    // 每次打开下拉都重新实时检测：先清空旧状态（全部转圈）
-+    setHostsOnline({});
-+    // 每台单独探测、就绪即更新：在线机器先返回先变绿，
-+    // 离线机器最后（5 秒超时）才变灰——不互相拖累（后端批量接口是等最慢的才一起返回）
-+    await Promise.allSettled(
-+      servers.map(async (s) => {
-+        try {
-+          const ok = await probeHostsOnline([s.id]);
-+          setHostsOnline((prev) => ({ ...prev, ...ok }));
-+        } catch {
-+          // 单台探测失败不影响其他台
-+        }
-+      }),
-+    );
-+  }, [servers]);
-+  // 设置开关：远端非 additive 面板是否每次自动读入当前 live 配置（default 卡）
-+  const [autoImportDefault, setAutoImportDefault] = useState<boolean>(
-+    () => localStorage.getItem("cc-switch-remote-auto-import-default") !== "0",
-+  );
-+
-+  // ===== 远端功能总开关：关 = 还原原生 cc-switch（隐藏所有远端入口）=====
-+  // 默认开启（不存在该 key 时视为开），仅在设置页主动关闭才隐藏远端。
-+  const [remoteFeatureEnabled, setRemoteFeatureEnabled] = useState<boolean>(
-+    () => localStorage.getItem("cc-switch-remote-feature-enabled") !== "0",
-+  );
-+
-+  // claude-desktop 没有远端概念（远端只有 claude/codex/gemini/grokbuild/openclaw/
-+  // openclaw/hermes），其配置本就回并到 claude：在 claude-desktop 标签下完全隐藏
-+  // 远端入口（目标选择器远端项、批量应用、远程主机导航、远端状态栏），还原本机体验。
-+  const remoteAvailableForApp =
-+    remoteFeatureEnabled && activeApp !== "claude-desktop";
-+
-+  const handleRemoteFeatureEnabledChange = useCallback(
-+    (next: boolean) => {
-+      setRemoteFeatureEnabled(next);
-+      localStorage.setItem(
-+        "cc-switch-remote-feature-enabled",
-+        next ? "1" : "0",
-+      );
-+      // 关闭时若正停留在远端视图/选中远端目标，立刻还原成本机视图
-+      if (!next) {
-+        setCurrentView((v) => (v === "remote" ? "providers" : v));
-+        setRemoteTargetId("");
-+        setRemoteContainerId("");
-+        setContainers([]);
-+        setHostsOnline({});
-+      }
-+    },
-+    [setCurrentView],
-+  );
-+
-+  // 开关切换后使远端面板查询失效（refetch 用新值），并持久化
-+  const handleAutoImportDefaultChange = useCallback(
-+    (next: boolean) => {
-+      setAutoImportDefault(next);
-+      localStorage.setItem(
-+        "cc-switch-remote-auto-import-default",
-+        next ? "1" : "0",
-+      );
-+      queryClient.invalidateQueries({ queryKey: ["remoteProviders"] });
-+    },
-+    [queryClient],
-+  );
-+
-+  useEffect(() => {
-+    localStorage.setItem("cc-switch-remote-target", remoteTargetId);
-+  }, [remoteTargetId]);
-+
-+  // 按主机保存容器选择：切走时保存当前容器（含切到本机的场景）
-+  const prevTargetRef = useRef(remoteTargetId);
-+  const prevContainerRef = useRef(remoteContainerId);
-+  useEffect(() => {
-+    const prev = prevTargetRef.current;
-+    const prevContainer = prevContainerRef.current;
-+    // 切走了 → 用 ref 保存上一次的容器（不依赖当前已清空的 remoteContainerId）
-+    if (prev && prev !== remoteTargetId) {
-+      localStorage.setItem(
-+        `cc-switch-remote-container:${prev}`,
-+        prevContainer,
-+      );
-+    }
-+    // 保存当前主机的容器选择（选中主机时）
-+    if (remoteTargetId) {
-+      localStorage.setItem(
-+        `cc-switch-remote-container:${remoteTargetId}`,
-+        remoteContainerId,
-+      );
-+    }
-+    prevTargetRef.current = remoteTargetId;
-+    prevContainerRef.current = remoteContainerId;
-+  }, [remoteTargetId, remoteContainerId]);
-+
-+  // 远端目标下没有 claude-desktop 应用：切到远端时若当前 tab 是
-+  // claude-desktop，自动切回 claude（sharedFeatureApp 本就映射 claude）。
-+  useEffect(() => {
-+    if (remoteTargetId && activeApp === "claude-desktop") {
-+      setActiveApp("claude");
-+    }
-+  }, [remoteTargetId, activeApp]);
-+
-+  // 每次切换视图时刷新服务器列表（远程页面增删后回到主界面能同步）；
-+  // 若当前选中的目标已被删除，自动重置回「本机」。
-+  useEffect(() => {
-+    checkLocalCliInstalled(sharedFeatureApp)
-+      .then(setLocalInstalled)
-+      .catch(() => setLocalInstalled(null));
-+  }, [sharedFeatureApp]);
-+
-+  useEffect(() => {
-+    // 远端功能关闭：不加载远端主机列表（还原原生，不与任何主机建连）
-+    if (!remoteFeatureEnabled) {
-+      setServers([]);
-+      setRemoteTargetId("");
-+      setRemoteContainerId("");
-+      setContainers([]);
-+      setHostsOnline({});
-+      return;
-+    }
-+    listRemoteHosts()
-+      .then((list) => {
-+        // 禁用的主机从目标选择/操作中排除（不显示、不可选、探活跳过）；
-+        // 恢复需到远程主机管理页「启用」。
-+        const enabled = list.filter((s) => !s.disabled);
-+        setServers(enabled);
-+        setRemoteTargetId((prev) =>
-+          prev && !enabled.some((s) => s.id === prev) ? "" : prev,
-+        );
-+      })
-+      .catch(() => {});
-+    // 注：切回主界面时刷新远端当前供应商 + 安装状态的工作，由下方依赖
-+    // `[remoteTargetId, remoteContainerId]` 的 effect 统一负责（它拿到最新容器）。
-+    // 这里不重复刷新，避免两个 effect 用不同 container 并行覆盖 setRemoteInstalled。
-+  }, [currentView, remoteFeatureEnabled]);
-+
-+  // 选中服务器时：读取远端当前生效的供应商（按 base_url 匹配本地供应商）
-+  // 并检测远端 Claude Code 安装状态（用于主面板横幅徽标）。
-+  // remote 视图（远程主机管理面板）不针对当前目标，跳过探测。
-+  useEffect(() => {
-+    if (currentView === "remote" || !remoteTargetId) {
-+      setRemoteCurrentProviderId(null);
-+      setRemoteInstalled(null);
-+      setContainers([]);
-+      // 不清 remoteContainerId：用户可能切回同一台服务器需要恢复之前的容器选择
-+      return;
-+    }
-+    // 目标选择器已探明该主机离线：跳过连接型调用（不发起建连），直接置空
-+    if (targetKnownOffline) {
-+      setRemoteCurrentProviderId(null);
-+      setRemoteInstalled(null);
-+      setContainers([]);
-+      return;
-+    }
-+    let active = true;
-+    const container = remoteContainerId || undefined;
-+    getRemoteCurrentProvider(remoteTargetId, sharedFeatureApp, container)
-+      .then((id) => {
-+        if (active) setRemoteCurrentProviderId(id);
-+      })
-+      .catch(() => {
-+        if (active) setRemoteCurrentProviderId(null);
-+      });
-+    checkRemoteCliInstalled(remoteTargetId, sharedFeatureApp, container)
-+      .then((s) => {
-+        if (active) setRemoteInstalled(s);
-+      })
-+      .catch(() => {
-+        if (active) setRemoteInstalled(null);
-+      });
-+    return () => {
-+      active = false;
-+    };
-+  }, [
++  // ===== 远端目标（本机 / 服务器 / 容器）：状态 / 拉取 / 探活 / 持久化 =====
++  // 整块收敛在 hooks/useRemoteTarget（P2 收敛点），官方 App.tsx 里只留这一次调用。
++  const {
++    batchApplyOpen,
++    setBatchApplyOpen,
++    batchApplyApp,
++    setBatchApplyApp,
++    servers,
++    setServers,
 +    remoteTargetId,
++    setRemoteTargetId,
++    remoteCurrentProviderId,
++    setRemoteCurrentProviderId,
++
++    containers,
++    setContainers,
++    containersLoading,
 +    remoteContainerId,
-+    currentView,
-+    sharedFeatureApp,
++    setRemoteContainerId,
++    hostsOnline,
 +    targetKnownOffline,
-+  ]);
-+
-+  // 容器列表只与主机相关（与 app/容器无关）：独立 effect，仅换主机时重拉，
-+  // 切 app / 切容器不白跑（D 修复）。
-+  useEffect(() => {
-+    if (!remoteTargetId || targetKnownOffline) {
-+      setContainers([]);
-+      // 不清 remoteContainerId：切回远端服务器时需要恢复之前的容器选择
-+      // localStorage 已保存，重新拉取容器列表后由 setRemoteContainerId(prev => ...)
-+      // 校验是否在列表中，不在才清空
-+      return;
-+    }
-+    // 切主机后先清空旧容器列表再拉取：effect 在渲染之后才跑，若不清空，
-+    // 拉取期间的渲染窗口会显示上一台主机的容器（下拉串台）。
-+    setContainers([]);
-+    setContainersLoading(true);
-+    let active = true;
-+    listDockerContainers(remoteTargetId)
-+      .then((list) => {
-+        if (active) {
-+          setContainers(list);
-+          setContainersLoading(false);
-+          // 容器列表加载完毕后，若已选容器不在当前主机列表中才清空
-+          // （不在加载前清空，否则 localStorage 记忆的容器会在拉取期间被误删）
-+          setRemoteContainerId((prev) =>
-+            prev && !list.includes(prev) ? "" : prev,
-+          );
-+        }
-+      })
-+      .catch(() => {
-+        if (active) {
-+          setContainers([]);
-+          setContainersLoading(false);
-+        }
-+      });
-+    return () => {
-+      active = false;
-+    };
-+  }, [remoteTargetId, targetKnownOffline]);
-+
-+  const activeRemoteHost = servers.find((s) => s.id === remoteTargetId) ?? null;
-+  // 当前目标（本机/服务器）的 Claude Code 安装状态
-+  const currentInstalled = remoteTargetId ? remoteInstalled : localInstalled;
-+
-+  // 刷新当前 app 的 CLI 安装状态：本机与当前远端目标共用同一策略。
-+  // 依赖必须含 remoteContainerId：否则切容器后 useCallback 缓存旧闭包，
-+  // 点刷新会用上一次的 container 检测，导致宿主机/容器状态串扰。
-+  const refreshInstallStatus = useCallback(() => {
-+    checkLocalCliInstalled(sharedFeatureApp)
-+      .then(setLocalInstalled)
-+      .catch(() => setLocalInstalled(null));
-+    if (remoteTargetId) {
-+      const container = remoteContainerId || undefined;
-+      checkRemoteCliInstalled(remoteTargetId, sharedFeatureApp, container)
-+        .then(setRemoteInstalled)
-+        .catch(() => setRemoteInstalled(null));
-+      getRemoteCurrentProvider(remoteTargetId, sharedFeatureApp, container)
-+        .then(setRemoteCurrentProviderId)
-+        .catch(() => setRemoteCurrentProviderId(null));
-+      listDockerContainers(remoteTargetId)
-+        .then(setContainers)
-+        .catch(() => setContainers([]));
-+    }
-+  }, [remoteTargetId, remoteContainerId, sharedFeatureApp]);
-+
-+  // 窗口重新聚焦时自动刷新（如装完 Claude Code 切回应用即更新）
-+  useEffect(() => {
-+    let unlisten: (() => void) | undefined;
-+    (async () => {
-+      try {
-+        unlisten = await getCurrentWindow().onFocusChanged(
-+          ({ payload: focused }) => {
-+            if (focused) refreshInstallStatus();
-+          },
-+        );
-+      } catch (e) {
-+        console.error("[App] Failed to listen window focus", e);
-+      }
-+    })();
-+    return () => {
-+      unlisten?.();
-+    };
-+  }, [refreshInstallStatus]);
++    retryRemoteTarget,
++    probeHosts,
++    autoImportDefault,
++    handleAutoImportDefaultChange,
++    remoteFeatureEnabled,
++    handleRemoteFeatureEnabledChange,
++    remoteAvailableForApp,
++    activeRemoteHost,
++    currentInstalled,
++    refreshInstallStatus,
++  } = useRemoteTarget({
++    activeApp,
++    sharedFeatureApp,
++    currentView,
++    setActiveApp,
++    queryClient,
++    onRemoteFeatureDisabled: () =>
++      setCurrentView((v) => (v === "remote" ? "providers" : v)),
++  });
 +
    useEffect(() => {
      localStorage.setItem(VIEW_STORAGE_KEY, currentView);
    }, [currentView]);
-@@ -263,12 +612,22 @@ function App() {
+@@ -263,12 +346,22 @@ function App() {
    const [promptPrimaryAction, setPromptPrimaryAction] =
      useState<PromptPrimaryAction>("prompt");
    const mcpPanelRef = useRef<any>(null);
@@ -464,7 +205,7 @@ index d5c644b..e836286 100644
    const addActionButtonClass =
      "bg-orange-500 hover:bg-orange-600 dark:bg-orange-500 dark:hover:bg-orange-600 text-white shadow-lg shadow-orange-500/30 dark:shadow-orange-500/40 rounded-full w-8 h-8";
  
-@@ -278,11 +637,33 @@ function App() {
+@@ -278,11 +371,33 @@ function App() {
      status: proxyStatus,
    } = useProxyStatus();
    const proxyAppId = isProxyAppId(activeApp) ? activeApp : null;
@@ -498,7 +239,7 @@ index d5c644b..e836286 100644
    const activeProviderId = useMemo(() => {
      if (!proxyAppId) return undefined;
      const target = proxyStatus?.active_targets?.find(
-@@ -291,12 +672,73 @@ function App() {
+@@ -291,12 +406,73 @@ function App() {
      return target?.provider_id;
    }, [proxyStatus?.active_targets, proxyAppId]);
  
@@ -575,7 +316,7 @@ index d5c644b..e836286 100644
    const isOpenClawView =
      activeApp === "openclaw" &&
      (currentView === "providers" ||
-@@ -307,7 +749,8 @@ function App() {
+@@ -307,7 +483,8 @@ function App() {
        currentView === "openclawAgents");
    const { data: openclawHealthWarnings = [] } =
      useOpenClawHealth(isOpenClawView);
@@ -585,7 +326,7 @@ index d5c644b..e836286 100644
    const hasSessionSupport =
      sharedFeatureApp === "claude" ||
      sharedFeatureApp === "codex" ||
-@@ -317,7 +760,6 @@ function App() {
+@@ -317,7 +494,6 @@ function App() {
      sharedFeatureApp === "gemini" ||
      sharedFeatureApp === "hermes" ||
      sharedFeatureApp === "pi";
@@ -593,7 +334,7 @@ index d5c644b..e836286 100644
  
    const {
      addProvider,
-@@ -330,38 +772,100 @@ function App() {
+@@ -330,38 +506,100 @@ function App() {
      activeApp,
      currentAppUsesProxy && isProxyRunning,
      isProxyRunning && isCurrentAppTakeoverActive,
@@ -721,7 +462,7 @@ index d5c644b..e836286 100644
    const disableOmoMutation = useDisableCurrentOmo();
    const handleDisableOmo = () => {
      disableOmoMutation.mutate(undefined, {
-@@ -686,6 +1190,12 @@ function App() {
+@@ -686,6 +924,12 @@ function App() {
      };
    }, []);
  
@@ -734,7 +475,7 @@ index d5c644b..e836286 100644
    const [launchDashboardOpen, setLaunchDashboardOpen] = useState(false);
    const openHermesWebUI = useOpenHermesWebUI(() =>
      setLaunchDashboardOpen(true),
-@@ -704,6 +1214,66 @@ function App() {
+@@ -704,6 +948,66 @@ function App() {
      }
    };
  
@@ -801,7 +542,7 @@ index d5c644b..e836286 100644
    const handleEditProvider = async ({
      provider,
      originalId,
-@@ -711,6 +1281,39 @@ function App() {
+@@ -711,6 +1015,39 @@ function App() {
      provider: Provider;
      originalId?: string;
    }) => {
@@ -841,7 +582,7 @@ index d5c644b..e836286 100644
      await updateProvider(provider, originalId);
      setEditingProvider(null);
    };
-@@ -719,6 +1322,49 @@ function App() {
+@@ -719,6 +1056,49 @@ function App() {
      if (!confirmAction) return;
      const { provider, action } = confirmAction;
  
@@ -891,7 +632,7 @@ index d5c644b..e836286 100644
      if (action === "remove") {
        // Remove from live config only (for additive mode apps like OpenCode/OpenClaw)
        // Does NOT delete from database - provider remains in the list
-@@ -796,6 +1442,41 @@ function App() {
+@@ -796,6 +1176,41 @@ function App() {
      const newSortIndex =
        provider.sortIndex !== undefined ? provider.sortIndex + 1 : undefined;
  
@@ -933,7 +674,7 @@ index d5c644b..e836286 100644
      const duplicatedProvider: Omit<Provider, "id" | "createdAt"> & {
        providerKey?: string;
        addToLive?: boolean;
-@@ -1014,6 +1695,10 @@ function App() {
+@@ -1014,6 +1429,10 @@ function App() {
                onOpenChange={() => setCurrentView("providers")}
                onImportSuccess={handleImportSuccess}
                defaultTab={settingsDefaultTab}
@@ -944,7 +685,7 @@ index d5c644b..e836286 100644
              />
            );
          case "prompts":
-@@ -1023,6 +1708,8 @@ function App() {
+@@ -1023,6 +1442,8 @@ function App() {
                open={true}
                onOpenChange={() => setCurrentView("providers")}
                appId={sharedFeatureApp}
@@ -953,7 +694,7 @@ index d5c644b..e836286 100644
                onInteractionBlockedChange={setPromptManagementBusy}
                onNavigationBlockedChange={setPromptNavigationBusy}
                onPrimaryActionChange={setPromptPrimaryAction}
-@@ -1035,22 +1722,22 @@ function App() {
+@@ -1035,22 +1456,22 @@ function App() {
              <UnifiedSkillsPanel
                ref={unifiedSkillsPanelRef}
                onOpenDiscovery={handleOpenSkillsDiscovery}
@@ -982,7 +723,7 @@ index d5c644b..e836286 100644
              />
            );
          case "mcp":
-@@ -1058,6 +1745,8 @@ function App() {
+@@ -1058,6 +1479,8 @@ function App() {
              <UnifiedMcpPanel
                ref={mcpPanelRef}
                onOpenChange={() => setCurrentView("providers")}
@@ -991,7 +732,7 @@ index d5c644b..e836286 100644
                onInteractionBlockedChange={setMcpManagementBusy}
              />
            );
-@@ -1071,22 +1760,46 @@ function App() {
+@@ -1071,22 +1494,46 @@ function App() {
                <UniversalProviderPanel />
              </div>
            );
@@ -1042,7 +783,7 @@ index d5c644b..e836286 100644
          default:
            return (
              <div className="px-6 flex flex-col flex-1 min-h-0 overflow-hidden">
-@@ -1102,19 +1815,67 @@ function App() {
+@@ -1102,19 +1549,67 @@ function App() {
                    >
                      <ProviderList
                        providers={providers}
@@ -1102,7 +843,7 @@ index d5c644b..e836286 100644
 +                              ? extractErrorMessage(remoteProvidersQuery.error)
 +                              : undefined
 +                          : undefined
-+                      }
+                       }
 +                      onRetryRemote={
 +                        remoteTargetId
 +                          ? () => {
@@ -1111,13 +852,13 @@ index d5c644b..e836286 100644
 +                              void remoteProvidersQuery.refetch();
 +                            }
 +                          : undefined
-                       }
++                      }
 +                      activeProviderId={activeProviderId}
 +                      onSwitch={handleProviderSwitch}
                        onEdit={(provider) => {
                          setEditingProvider(provider);
                        }}
-@@ -1146,11 +1907,17 @@ function App() {
+@@ -1146,11 +1641,17 @@ function App() {
                        }
                        onCreate={() => setIsAddOpen(true)}
                        onSetAsDefault={
@@ -1140,7 +881,7 @@ index d5c644b..e836286 100644
                        }
                      />
                    </motion.div>
-@@ -1313,6 +2080,8 @@ function App() {
+@@ -1313,6 +1814,8 @@ function App() {
                      })}
                    {currentView === "sessions" && t("sessionManager.title")}
                    {currentView === "workspace" && t("workspace.title")}
@@ -1149,7 +890,7 @@ index d5c644b..e836286 100644
                    {currentView === "openclawEnv" && t("openclaw.env.title")}
                    {currentView === "openclawTools" && t("openclaw.tools.title")}
                    {currentView === "openclawAgents" &&
-@@ -1341,12 +2110,15 @@ function App() {
+@@ -1341,12 +1844,15 @@ function App() {
                  >
                    <Settings className="w-4 h-4" />
                  </Button>
@@ -1171,7 +912,7 @@ index d5c644b..e836286 100644
                  {isCurrentAppTakeoverActive && (
                    <Button
                      variant="ghost"
-@@ -1374,7 +2146,57 @@ function App() {
+@@ -1374,7 +1880,57 @@ function App() {
                    className="flex shrink-0 items-center gap-1.5"
                    style={{ WebkitAppRegion: "no-drag" } as any}
                  >
@@ -1230,7 +971,7 @@ index d5c644b..e836286 100644
                      <ClaudeDesktopRouteToggle />
                    ) : proxyAppId ? (
                      <>
-@@ -1405,6 +2227,7 @@ function App() {
+@@ -1405,6 +1961,7 @@ function App() {
                    activeApp={activeApp}
                    onSwitch={setActiveApp}
                    visibleApps={visibleApps}
@@ -1238,7 +979,7 @@ index d5c644b..e836286 100644
                  />
                )}
              </div>
-@@ -1454,6 +2277,28 @@ function App() {
+@@ -1454,6 +2011,28 @@ function App() {
                      </Button>
                    </>
                  )}
@@ -1267,7 +1008,7 @@ index d5c644b..e836286 100644
                  {currentView === "skills" && (
                    <>
                      <Button
-@@ -1481,18 +2326,19 @@ function App() {
+@@ -1481,18 +2060,19 @@ function App() {
                          ? t("skills.checkingUpdates")
                          : t("skills.checkUpdates")}
                      </Button>
@@ -1299,7 +1040,7 @@ index d5c644b..e836286 100644
                      <Button
                        variant="ghost"
                        size="sm"
-@@ -1609,20 +2455,40 @@ function App() {
+@@ -1609,20 +2189,40 @@ function App() {
                                >
                                  <LayoutDashboard className="w-4 h-4" />
                                </Button>
@@ -1344,7 +1085,7 @@ index d5c644b..e836286 100644
                                <Button
                                  variant="ghost"
                                  size="sm"
-@@ -1668,6 +2534,28 @@ function App() {
+@@ -1668,6 +2268,28 @@ function App() {
                                >
                                  <History className="w-4 h-4" />
                                </Button>
@@ -1373,7 +1114,7 @@ index d5c644b..e836286 100644
                              </>
                            ) : (
                              <>
-@@ -1710,7 +2598,7 @@ function App() {
+@@ -1710,7 +2332,7 @@ function App() {
                                >
                                  <History className="flex-shrink-0 w-4 h-4" />
                                </Button>
@@ -1382,7 +1123,7 @@ index d5c644b..e836286 100644
                                  <Button
                                    variant="ghost"
                                    size="sm"
-@@ -1721,6 +2609,19 @@ function App() {
+@@ -1721,6 +2343,19 @@ function App() {
                                    <McpIcon size={16} />
                                  </Button>
                                )}
@@ -1402,7 +1143,7 @@ index d5c644b..e836286 100644
                              </>
                            )}
                          </motion.div>
-@@ -1748,14 +2649,130 @@ function App() {
+@@ -1748,14 +2383,130 @@ function App() {
          {isOpenClawView && openclawHealthWarnings.length > 0 && (
            <OpenClawHealthBanner warnings={openclawHealthWarnings} />
          )}
@@ -1535,7 +1276,7 @@ index d5c644b..e836286 100644
        />
  
        <EditProviderDialog
-@@ -1769,6 +2786,17 @@ function App() {
+@@ -1769,6 +2520,17 @@ function App() {
          onSubmit={handleEditProvider}
          appId={activeApp}
          isProxyTakeover={isCurrentAppTakeoverActive}

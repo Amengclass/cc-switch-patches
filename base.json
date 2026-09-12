@@ -2,7 +2,7 @@
   "upstream": "https://github.com/farion1231/cc-switch.git",
   "base_tag": "v3.20.1",
   "base_commit": "3217f72596f2d1c0f879f0a05f83803825d9809f",
-  "overlay_count": 59,
+  "overlay_count": 60,
   "patch_count": 11,
   "structured": {
     "i18n_locales": [

@@ -10,6 +10,23 @@ index 71fdda8..736e34f 100644
  }));
  
  const managedProvider = (
+diff --git a/tests/components/ProviderList.test.tsx b/tests/components/ProviderList.test.tsx
+index 1369074..5af65e7 100644
+--- a/tests/components/ProviderList.test.tsx
++++ b/tests/components/ProviderList.test.tsx
+@@ -262,9 +262,12 @@ describe("ProviderList Component", () => {
+     expect(handleDelete).toHaveBeenCalledWith(providerA);
+ 
+     // Verify useDragSort call parameters
++    // （后两个参数是远端目标 remoteTargetId / remoteContainerId；本机场景为 undefined）
+     expect(useDragSortMock).toHaveBeenCalledWith(
+       { a: providerA, b: providerB },
+       "claude",
++      undefined,
++      undefined,
+     );
+   });
+ 
 diff --git a/tests/components/SkillsPageInstall.test.tsx b/tests/components/SkillsPageInstall.test.tsx
 index 2ea0501..dd452ab 100644
 --- a/tests/components/SkillsPageInstall.test.tsx
@@ -153,6 +170,40 @@ index 2fcb24a..b5a6626 100644
      expect(screen.getByRole("button", { name: "Claude" })).toBeInTheDocument();
    });
  });
+diff --git a/tests/hooks/useDragSort.test.tsx b/tests/hooks/useDragSort.test.tsx
+index e3bdf68..b44a869 100644
+--- a/tests/hooks/useDragSort.test.tsx
++++ b/tests/hooks/useDragSort.test.tsx
+@@ -86,10 +86,11 @@ describe("useDragSort", () => {
+     ]);
+   });
+ 
+-  it("should call API and invalidate query cache after successful drag", async () => {
++  it("should call API and update query cache optimistically after successful drag", async () => {
+     updateSortOrderMock.mockResolvedValue(true);
+     const { wrapper, queryClient } = createWrapper();
+     const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
++    const setDataSpy = vi.spyOn(queryClient, "setQueryData");
+ 
+     const { result } = renderHook(() => useDragSort(mockProviders, "claude"), {
+       wrapper,
+@@ -111,8 +112,15 @@ describe("useDragSort", () => {
+       ],
+       "claude",
+     );
++    // 本机排序已改为「乐观更新」直接改缓存（避免 invalidateQueries 重拉导致列表闪回），
++    // 因此断言 setQueryData 而不是 invalidateQueries(["providers"])。
++    expect(setDataSpy).toHaveBeenCalledWith(
++      ["providers", "claude"],
++      expect.any(Function),
++    );
++    // 路由类 app（claude 属于）仍需让故障转移队列失效
+     expect(invalidateSpy).toHaveBeenCalledWith({
+-      queryKey: ["providers", "claude"],
++      queryKey: ["failoverQueue", "claude"],
+     });
+     expect(toastSuccessMock).toHaveBeenCalledTimes(1);
+     expect(toastErrorMock).not.toHaveBeenCalled();
 diff --git a/tests/hooks/useMcpBulkToggle.test.tsx b/tests/hooks/useMcpBulkToggle.test.tsx
 index 2529c14..2dc4faf 100644
 --- a/tests/hooks/useMcpBulkToggle.test.tsx
