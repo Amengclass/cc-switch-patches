@@ -120,24 +120,22 @@ jobs:
         working-directory: ${{ github.workspace }}/build
         run: pnpm install --frozen-lockfile
 
+      # 关键：working-directory 必须是组装出来的 build/ ——
+      # rust-toolchain.toml 在那里（钉了具体 channel，如 1.95），
+      # 构建也在那里跑。在补丁层仓库根跑的话，rustup 读不到该文件，
+      # 会把 target 装到 stable 上，而构建用的是 1.95 → 装了却没用上。
       - name: macOS 补 universal 目标（Intel + Apple Silicon）
         if: runner.os == 'macOS'
         shell: bash
+        working-directory: ${{ github.workspace }}/build
         run: |
           set -euxo pipefail
-          # 仓库里的 rust-toolchain.toml 钉了某个 channel（如 1.95），
-          # 而 dtolnay/rust-toolchain@stable 装的是 stable —— 两套工具链。
-          # 不知道构建最终用哪套，所以两套都装，避免「装了但没用上」。
-          CH="$(sed -n 's/.*channel *= *"\(.*\)".*/\1/p' rust-toolchain.toml | head -1)"
-          echo "rust-toolchain.toml 钉的工具链: ${CH:-（无）}"
-          for T in "$CH" stable; do
-            [ -z "$T" ] && continue
-            echo "== 为 $T 安装 target =="
-            rustup target add --toolchain "$T" aarch64-apple-darwin || true
-            rustup target add --toolchain "$T" x86_64-apple-darwin || true
-            rustup target list --installed --toolchain "$T" || true
-          done
-
+          echo "== 本目录的工具链（读 rust-toolchain.toml）=="
+          rustup show active-toolchain || true
+          rustup target add aarch64-apple-darwin
+          rustup target add x86_64-apple-darwin
+          echo "== 已安装的 target =="
+          rustup target list --installed
       - name: ④ 打包（release + 安装包）
         working-directory: ${{ github.workspace }}/build
         shell: bash
