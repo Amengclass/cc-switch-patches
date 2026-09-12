@@ -227,13 +227,17 @@ jobs:
     if: ${{ inputs.make_release || startsWith(github.ref, 'refs/tags/') }}
     runs-on: ubuntu-latest
     steps:
+      # 需要 checkout：发布说明模板 .github/release-notes.md 在仓库里
+      - name: 检出补丁层
+        uses: actions/checkout@v4
+
       - name: 下载全部产物
         uses: actions/download-artifact@v4
         with:
           path: all
           merge-multiple: true
 
-      - name: 创建 Release
+      - name: 创建 / 更新 Release
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -241,15 +245,29 @@ jobs:
           set -euxo pipefail
           ls -lh all
           VER='${{ needs.plan.outputs.version }}'
+          SHA='${{ github.sha }}'
+          RUN_URL='${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}'
           if [[ '${{ github.ref }}' == refs/tags/* ]]; then
             # 推 tag 触发：直接用那个 tag（形如 v3.20.3-Magic）
             TAG='${{ github.ref_name }}'
           else
             # 手动触发：自己造一个 (版本 + 时间戳)，避免与已有 tag 撞
-            TAG="v${VER}-Magic-$(date +%Y%m%d-%H%M)"
+            TAG="${VER}-Magic-$(date +%Y%m%d-%H%M)"
           fi
           echo "Release tag: $TAG（官方 $VER）"
-          gh release create "$TAG" all/* \
-            --repo "${{ github.repository }}" \
-            --title "CC Switch Magic v${VER}" \
-            --notes "由补丁层自动构建（官方 ${VER}）"
+
+          # 发布说明 = 仓库里的模板 + 占位符替换。
+          # （模板里有反引号和竖线，直接写 heredoc 会被 YAML 缩进和 shell 展开坑到）
+          sed "s|__VER__|${VER}|g; s|__SHA__|${SHA:0:7}|g; s|__RUN__|${RUN_URL}|g" \
+            .github/release-notes.md > notes.md
+          echo "--- 发布说明前 5 行 ---"; head -5 notes.md
+
+          TITLE="CC Switch Magic ${VER}"   # VER 自带 v，别再拼一个 v
+          if gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            echo "Release 已存在 → 更新标题/说明并覆盖产物"
+            gh release edit "$TAG" --repo "${{ github.repository }}" --title "$TITLE" --notes-file notes.md
+            gh release upload "$TAG" all/* --repo "${{ github.repository }}" --clobber
+          else
+            gh release create "$TAG" all/* --repo "${{ github.repository }}" \
+              --title "$TITLE" --notes-file notes.md
+          fi
