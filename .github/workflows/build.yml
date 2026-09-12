@@ -76,16 +76,6 @@ jobs:
       - name: 准备 Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: macOS 补 universal 目标（Intel + Apple Silicon）
-        if: runner.os == 'macOS'
-        shell: bash
-        run: |
-          set -euxo pipefail
-          rustup target add aarch64-apple-darwin
-          rustup target add x86_64-apple-darwin
-          echo "== 已安装的 target =="
-          rustup target list --installed
-
       - name: Linux 系统依赖
         if: runner.os == 'Linux'
         shell: bash
@@ -129,6 +119,24 @@ jobs:
       - name: ③ 安装前端依赖
         working-directory: ${{ github.workspace }}/build
         run: pnpm install --frozen-lockfile
+
+      - name: macOS 补 universal 目标（Intel + Apple Silicon）
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euxo pipefail
+          # 仓库里的 rust-toolchain.toml 钉了某个 channel（如 1.95），
+          # 而 dtolnay/rust-toolchain@stable 装的是 stable —— 两套工具链。
+          # 不知道构建最终用哪套，所以两套都装，避免「装了但没用上」。
+          CH="$(sed -n 's/.*channel *= *"\(.*\)".*/\1/p' rust-toolchain.toml | head -1)"
+          echo "rust-toolchain.toml 钉的工具链: ${CH:-（无）}"
+          for T in "$CH" stable; do
+            [ -z "$T" ] && continue
+            echo "== 为 $T 安装 target =="
+            rustup target add --toolchain "$T" aarch64-apple-darwin || true
+            rustup target add --toolchain "$T" x86_64-apple-darwin || true
+            rustup target list --installed --toolchain "$T" || true
+          done
 
       - name: ④ 打包（release + 安装包）
         working-directory: ${{ github.workspace }}/build
