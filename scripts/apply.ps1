@@ -5,11 +5,15 @@
 # 用法示例：
 #   .\apply.ps1 -TargetDir D:\build\cc-switch -Version v3.20.1     # 自动拉官方 tag 到 TargetDir
 #   .\apply.ps1 -TargetDir D:\build\cc-switch -OfficialDir C:\off  # 用已克隆的官方源码做底
+#   .\apply.ps1 -TargetDir C:\my-fork -SkipPrepare                 # 组装进「已有的官方检出」（保留 .git）
 param(
   [Parameter(Mandatory=$true)][string]$TargetDir,
   [string]$Version,
   [string]$OfficialDir,
-  [string]$MagicDir
+  [string]$MagicDir,
+  # 跳过第 1 步「准备官方源码」——目标目录已经是官方该版本的检出（比如你自己的 fork 分支）。
+  # 不加这个开关时，第 1 步会**删掉整个目录**（含 .git！），所以往 fork 里组装必须带上它。
+  [switch]$SkipPrepare
 )
 
 $ErrorActionPreference = "Stop"
@@ -25,7 +29,20 @@ Write-Host "  官方: $upstream @ $Version"
 Write-Host "  目标: $TargetDir"
 
 # ---------- 1) 准备官方源码 ----------
-if ($OfficialDir) {
+if ($SkipPrepare) {
+  Write-Host "`n[1/4] 跳过准备官方基线（-SkipPrepare；目标目录须已是官方该版本的检出）" -ForegroundColor Cyan
+  Push-Location $TargetDir
+  $cur = git rev-parse --abbrev-ref HEAD 2>$null
+  Write-Host "  当前检出: $cur  $(git describe --tags --always 2>$null)"
+  Pop-Location
+  if ($Version) {
+    # 只是提醒：不强制切换，避免把用户的 fork 分支弄乱
+    $atTag = git -C $TargetDir describe --tags --exact-match 2>$null
+    if ($atTag -and $atTag -ne $Version) {
+      Write-Host "  [!] 目标目录当前在 $atTag，但你指定了 $Version —— 请自行确认基线一致" -ForegroundColor Yellow
+    }
+  }
+} elseif ($OfficialDir) {
   Write-Host "`n[1/4] 准备官方基线（来源: $OfficialDir）" -ForegroundColor Cyan
   if (Test-Path $TargetDir) { Remove-Item -LiteralPath $TargetDir -Recurse -Force }
   Copy-Item $OfficialDir $TargetDir -Recurse -Force
