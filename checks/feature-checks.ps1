@@ -101,6 +101,8 @@ Check "Cargo.toml 含 keyring 依赖" { Contains "src-tauri/Cargo.toml" "keyring
 Check "Cargo.toml 含 tar 依赖" { Contains "src-tauri/Cargo.toml" "tar\s*=" }
 Check "Cargo.toml features 含 Win32_Security_Cryptography" { Contains "src-tauri/Cargo.toml" "Win32_Security_Cryptography" }
 Check "tauri.conf createUpdaterArtifacts=false" { Contains "src-tauri/tauri.conf.json" '"createUpdaterArtifacts":\s*false' }
+Check "应用名 = CC Switch Magic" { Contains "src-tauri/tauri.conf.json" "CC Switch Magic" }
+Check "窗口标题 = CC Switch Magic" { Contains "src-tauri/tauri.windows.conf.json" "CC Switch Magic" }
 Check "窗口尺寸 920x650" { Contains "src-tauri/tauri.windows.conf.json" '"width":\s*920' }
 
 Write-Host "`n===== L3 功能断言 =====" -ForegroundColor Cyan

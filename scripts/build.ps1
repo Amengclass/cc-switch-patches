@@ -35,8 +35,8 @@ if ($LASTEXITCODE -ne 0) { Pop-Location; throw "前端构建失败" }
 # 3) Rust
 Write-Host "`n[3/3] 构建 Rust" -ForegroundColor Cyan
 Push-Location "src-tauri"
-# 规避火绒 sysdiag 文件锁（LNK1105）：并发降为 2、关调试符号、链接加 /DEBUG:NONE
-$env:CARGO_BUILD_JOBS = "2"
+# 关调试符号、链接加 /DEBUG:NONE（减小产物体积；并发用默认）
+# CARGO_BUILD_JOBS 不设 → 用默认（= 逻辑核数）
 if (-not $env:RUSTFLAGS) { $env:RUSTFLAGS = "-C link-arg=/DEBUG:NONE" }
 if (-not $env:CARGO_PROFILE_DEV_DEBUG) { $env:CARGO_PROFILE_DEV_DEBUG = "0" }
 
