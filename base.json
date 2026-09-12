@@ -1,0 +1,14 @@
+{
+  "upstream": "https://github.com/farion1231/cc-switch.git",
+  "base_tag": "v3.20.1",
+  "base_commit": "3217f72596f2d1c0f879f0a05f83803825d9809f",
+  "overlay_count": 55,
+  "patch_count": 10,
+  "structured": {
+    "i18n_locales": ["zh", "en", "ja", "zh-TW"],
+    "config_overrides": "src-tauri/tauri.conf.json, src-tauri/tauri.windows.conf.json",
+    "cargo_additions": ["tar", "russh", "russh-sftp", "keyring"]
+  },
+  "deleted_files": ["session-manager.md"],
+  "last_verified": null
+}

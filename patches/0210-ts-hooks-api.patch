@@ -1,0 +1,1531 @@
+diff --git a/src/hooks/useDragSort.ts b/src/hooks/useDragSort.ts
+index 2983c06..7f5c45e 100644
+--- a/src/hooks/useDragSort.ts
++++ b/src/hooks/useDragSort.ts
+@@ -12,9 +12,15 @@ import { toast } from "sonner";
+ import { useTranslation } from "react-i18next";
+ import type { Provider } from "@/types";
+ import { providersApi, type AppId } from "@/lib/api";
++import { updateRemoteProviderSortOrder } from "@/lib/api/remote";
+ import { isProxyAppId } from "@/config/appConfig";
+ 
+-export function useDragSort(providers: Record<string, Provider>, appId: AppId) {
++export function useDragSort(
++  providers: Record<string, Provider>,
++  appId: AppId,
++  remoteTargetId?: string,
++  remoteContainerId?: string,
++) {
+   const queryClient = useQueryClient();
+   const { t, i18n } = useTranslation();
+ 
+@@ -76,10 +82,52 @@ export function useDragSort(providers: Record<string, Provider>, appId: AppId) {
+       }));
+ 
+       try {
+-        await providersApi.updateSortOrder(updates, appId);
+-        await queryClient.invalidateQueries({
+-          queryKey: ["providers", appId],
+-        });
++        if (remoteTargetId) {
++          await updateRemoteProviderSortOrder(
++            remoteTargetId,
++            appId,
++            updates,
++            remoteContainerId,
++          );
++          // 乐观更新：直接修改缓存，避免 invalidateQueries 导致的闪回
++          const remoteKey = [
++            "remoteProviders",
++            remoteTargetId,
++            remoteContainerId || "__host__",
++            appId,
++          ];
++          queryClient.setQueryData(remoteKey, (old: any) => {
++            if (!old) return old;
++            const sortMap = new Map(updates.map((u) => [u.id, u.sortIndex]));
++            return {
++              ...old,
++              providers: Object.fromEntries(
++                Object.entries(old.providers).map(([id, p]: [string, any]) => [
++                  id,
++                  sortMap.has(id) ? { ...p, sortIndex: sortMap.get(id) } : p,
++                ]),
++              ),
++            };
++          });
++        } else {
++          await providersApi.updateSortOrder(updates, appId);
++          // 乐观更新：直接修改缓存。本机缓存结构是 { providers, currentProviderId }
++          //（见 useProvidersQuery），providers 是 Record；与远端分支同构。
++          const localKey = ["providers", appId];
++          queryClient.setQueryData(localKey, (old: any) => {
++            if (!old) return old;
++            const sortMap = new Map(updates.map((u) => [u.id, u.sortIndex]));
++            return {
++              ...old,
++              providers: Object.fromEntries(
++                Object.entries(old.providers).map(([id, p]: [string, any]) => [
++                  id,
++                  sortMap.has(id) ? { ...p, sortIndex: sortMap.get(id) } : p,
++                ]),
++              ),
++            };
++          });
++        }
+ 
+         // Routing apps derive failover order from sort_index.
+         if (isProxyAppId(appId)) {
+diff --git a/src/hooks/useMcp.ts b/src/hooks/useMcp.ts
+index 3e49227..adac720 100644
+--- a/src/hooks/useMcp.ts
++++ b/src/hooks/useMcp.ts
+@@ -1,36 +1,63 @@
+ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+ import { mcpApi } from "@/lib/api/mcp";
++import {
++  bulkToggleRemoteMcpApp,
++  deleteRemoteMcpServer,
++  importRemoteMcpFromApps,
++  readRemoteMcpServers,
++  toggleRemoteMcpApp,
++  upsertRemoteMcpServer,
++} from "@/lib/api/remote";
+ import type { McpServer } from "@/types";
+ import type { AppId } from "@/lib/api/types";
+ import { runSequentialBulkAction } from "@/lib/utils/sequentialBulkAction";
+ 
++const allMcpKey = (remoteTargetId?: string, remoteContainerId?: string) =>
++  remoteTargetId
++    ? ["mcp", "remote", remoteTargetId, remoteContainerId ?? "__host__"]
++    : ["mcp", "all"];
++
+ /**
+- * 查询所有 MCP 服务器（统一管理）
++ * 查询所有 MCP 服务器（统一管理）。
++ * 选中远端/容器目标时，直接读取该目标 ~/.claude.json 的 mcpServers。
+  */
+-export function useAllMcpServers() {
++export function useAllMcpServers(
++  remoteTargetId?: string,
++  remoteContainerId?: string,
++) {
+   return useQuery({
+-    queryKey: ["mcp", "all"],
+-    queryFn: () => mcpApi.getAllServers(),
++    queryKey: allMcpKey(remoteTargetId, remoteContainerId),
++    queryFn: async () => {
++      if (!remoteTargetId) {
++        return mcpApi.getAllServers();
++      }
++      // 远端返回完整 McpServer 数组 → 转 map（id -> McpServer）
++      const list = await readRemoteMcpServers(
++        remoteTargetId,
++        remoteContainerId,
++      );
++      const map: Record<string, McpServer> = {};
++      for (const server of list) {
++        map[server.id] = server;
++      }
++      return map;
++    },
+   });
+ }
+ 
+ /**
+- * 添加或更新 MCP 服务器
++ * Toggle multiple MCP servers for one app.
++ *
++ * - 本机:串行写整文件 live 配置(`runSequentialBulkAction`)避免互相覆盖。
++ * - 远端:单次 invoke 后端 bulk 命令(一次 SSH 连接内改完 SSOT + live)。
++ * - 乐观更新:点击瞬间翻转缓存,失败回滚,settle 后权威校准。
+  */
+-export function useUpsertMcpServer() {
+-  const queryClient = useQueryClient();
+-  return useMutation({
+-    mutationFn: (server: McpServer) => mcpApi.upsertUnifiedServer(server),
+-    // The database is updated before live configs are synchronized, so an
+-    // error can still leave a persisted change that the list must reflect.
+-    onSettled: () =>
+-      queryClient.invalidateQueries({ queryKey: ["mcp", "all"] }),
+-  });
+-}
+-
+-/** Toggle multiple MCP servers serially to avoid lost whole-file writes. */
+-export function useBulkToggleMcpApp() {
++export function useBulkToggleMcpApp(
++  remoteTargetId?: string,
++  remoteContainerId?: string,
++) {
+   const queryClient = useQueryClient();
++  const queryKey = allMcpKey(remoteTargetId, remoteContainerId);
+   return useMutation({
+     mutationFn: ({
+       serverIds,
+@@ -41,21 +68,82 @@ export function useBulkToggleMcpApp() {
+       app: AppId;
+       enabled: boolean;
+     }) =>
+-      runSequentialBulkAction(serverIds, (serverId) =>
+-        mcpApi.toggleApp(serverId, app, enabled),
+-      ),
++      remoteTargetId
++        ? bulkToggleRemoteMcpApp(
++            remoteTargetId,
++            serverIds,
++            app,
++            enabled,
++            remoteContainerId,
++          )
++        : runSequentialBulkAction(serverIds, (serverId) =>
++            mcpApi.toggleApp(serverId, app, enabled),
++          ),
++    // 乐观更新
++    onMutate: async ({ serverIds, app, enabled }) => {
++      await queryClient.cancelQueries({ queryKey });
++      const previous =
++        queryClient.getQueryData<Record<string, McpServer>>(queryKey);
++      queryClient.setQueryData<Record<string, McpServer>>(queryKey, (old) => {
++        if (!old) return old;
++        const target = new Set(serverIds);
++        const next: Record<string, McpServer> = {};
++        for (const [id, server] of Object.entries(old)) {
++          next[id] = target.has(id)
++            ? { ...server, apps: { ...server.apps, [app]: enabled } }
++            : server;
++        }
++        return next;
++      });
++      return { previous };
++    },
++    onError: (_error, _vars, context) => {
++      if (context?.previous) {
++        queryClient.setQueryData(queryKey, context.previous);
++      }
++    },
++    onSettled: () => queryClient.invalidateQueries({ queryKey }),
++  });
++}
++
++/**
++ * 添加或更新 MCP 服务器。
++ * 选中远端/容器目标时，直接写该目标 ~/.claude.json 的 mcpServers。
++ */
++export function useUpsertMcpServer(
++  remoteTargetId?: string,
++  remoteContainerId?: string,
++) {
++  const queryClient = useQueryClient();
++  return useMutation({
++    mutationFn: async (server: McpServer) => {
++      if (remoteTargetId) {
++        return upsertRemoteMcpServer(remoteTargetId, server, remoteContainerId);
++      }
++      await mcpApi.upsertUnifiedServer(server);
++      return true;
++    },
++    // 后端可能已持久化但 live 配置写入失败，成功或失败都要刷新
++    // （返回 promise 让 React Query 等 invalidate 完成，期间 mutation 保持 pending）
+     onSettled: () =>
+-      queryClient.invalidateQueries({ queryKey: ["mcp", "all"] }),
++      queryClient.invalidateQueries({
++        queryKey: allMcpKey(remoteTargetId, remoteContainerId),
++      }),
+   });
+ }
+ 
+ /**
+- * 切换 MCP 服务器在特定应用的启用状态
++ * 切换 MCP 服务器在特定应用的启用状态。
++ * 注意：远端/容器模式只操作 ~/.claude.json（Claude 应用），其他应用不在目标写入，
++ * 因此这里仅本地模式支持多应用切换；远端模式静默成功（结构一致，无副作用）。
+  */
+-export function useToggleMcpApp() {
++export function useToggleMcpApp(
++  remoteTargetId?: string,
++  remoteContainerId?: string,
++) {
+   const queryClient = useQueryClient();
+   return useMutation({
+-    mutationFn: ({
++    mutationFn: async ({
+       serverId,
+       app,
+       enabled,
+@@ -63,38 +151,73 @@ export function useToggleMcpApp() {
+       serverId: string;
+       app: AppId;
+       enabled: boolean;
+-    }) => mcpApi.toggleApp(serverId, app, enabled),
+-    // The backend may update the database before a live-config write fails.
+-    // Always refresh so the UI reflects the persisted state after an error.
++    }) => {
++      if (remoteTargetId) {
++        // 远端：改 SSOT apps + 同步/移除该 app 的 live 配置
++        return toggleRemoteMcpApp(
++          remoteTargetId,
++          serverId,
++          app,
++          enabled,
++          remoteContainerId,
++        );
++      }
++      await mcpApi.toggleApp(serverId, app, enabled);
++      return true;
++    },
++    // 后端可能已持久化但 live 配置写入失败，成功或失败都要刷新
++    // （返回 promise 让 React Query 等 invalidate 完成，期间 mutation 保持 pending）
+     onSettled: () =>
+-      queryClient.invalidateQueries({ queryKey: ["mcp", "all"] }),
++      queryClient.invalidateQueries({
++        queryKey: allMcpKey(remoteTargetId, remoteContainerId),
++      }),
+   });
+ }
+ 
+ /**
+- * 删除 MCP 服务器
++ * 删除 MCP 服务器。
++ * 选中远端/容器目标时，从该目标 ~/.claude.json 的 mcpServers 删除。
+  */
+-export function useDeleteMcpServer() {
++export function useDeleteMcpServer(
++  remoteTargetId?: string,
++  remoteContainerId?: string,
++) {
+   const queryClient = useQueryClient();
+   return useMutation({
+-    mutationFn: (id: string) => mcpApi.deleteUnifiedServer(id),
+-    // Deletion reaches the database before live-config cleanup, so refresh
+-    // after both success and failure to avoid operating on a removed entry.
++    mutationFn: (id: string) =>
++      remoteTargetId
++        ? deleteRemoteMcpServer(remoteTargetId, id, remoteContainerId)
++        : mcpApi.deleteUnifiedServer(id),
++    // 后端可能已持久化但 live 配置写入失败，成功或失败都要刷新
++    // （返回 promise 让 React Query 等 invalidate 完成，期间 mutation 保持 pending）
+     onSettled: () =>
+-      queryClient.invalidateQueries({ queryKey: ["mcp", "all"] }),
++      queryClient.invalidateQueries({
++        queryKey: allMcpKey(remoteTargetId, remoteContainerId),
++      }),
+   });
+ }
+ 
+ /**
+- * 从所有应用导入 MCP 服务器
++ * 从所有应用导入 MCP 服务器。
++ * 远端/容器模式无本地 DB，不支持导入，直接返回 0。
+  */
+-export function useImportMcpFromApps() {
++export function useImportMcpFromApps(
++  remoteTargetId?: string,
++  remoteContainerId?: string,
++) {
+   const queryClient = useQueryClient();
+   return useMutation({
+-    mutationFn: () => mcpApi.importFromApps(),
++    mutationFn: () => {
++      if (remoteTargetId) {
++        return importRemoteMcpFromApps(remoteTargetId, remoteContainerId);
++      }
++      return mcpApi.importFromApps();
++    },
+     // 后端是 best-effort 导入：部分应用失败会返回错误，但其余应用的
+     // 服务器已经入库，失败时也要刷新列表。
+     onSettled: () =>
+-      queryClient.invalidateQueries({ queryKey: ["mcp", "all"] }),
++      queryClient.invalidateQueries({
++        queryKey: allMcpKey(remoteTargetId, remoteContainerId),
++      }),
+   });
+ }
+diff --git a/src/hooks/useOpenClaw.ts b/src/hooks/useOpenClaw.ts
+index 764bfa2..0e9c139 100644
+--- a/src/hooks/useOpenClaw.ts
++++ b/src/hooks/useOpenClaw.ts
+@@ -1,6 +1,14 @@
+ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+ import { openclawApi } from "@/lib/api/openclaw";
+ import { providersApi } from "@/lib/api/providers";
++import {
++  getRemoteOpenClawEnv,
++  setRemoteOpenClawEnv,
++  getRemoteOpenClawTools,
++  setRemoteOpenClawTools,
++  getRemoteOpenClawAgentsDefaults,
++  setRemoteOpenClawAgentsDefaults,
++} from "@/lib/api/remote";
+ import type {
+   OpenClawEnvConfig,
+   OpenClawToolsConfig,
+@@ -52,10 +60,15 @@ export function useOpenClawDefaultModel(enabled: boolean) {
+ /**
+  * Query env section of openclaw.json.
+  */
+-export function useOpenClawEnv() {
++export function useOpenClawEnv(remoteTargetId?: string, remoteContainerId?: string) {
+   return useQuery({
+-    queryKey: openclawKeys.env,
+-    queryFn: () => openclawApi.getEnv(),
++    queryKey: remoteTargetId
++      ? ["openclaw", "env", remoteTargetId, remoteContainerId]
++      : openclawKeys.env,
++    queryFn: () =>
++      remoteTargetId
++        ? getRemoteOpenClawEnv(remoteTargetId, remoteContainerId)
++        : openclawApi.getEnv(),
+     staleTime: 30_000,
+   });
+ }
+@@ -63,10 +76,15 @@ export function useOpenClawEnv() {
+ /**
+  * Query tools section of openclaw.json.
+  */
+-export function useOpenClawTools() {
++export function useOpenClawTools(remoteTargetId?: string, remoteContainerId?: string) {
+   return useQuery({
+-    queryKey: openclawKeys.tools,
+-    queryFn: () => openclawApi.getTools(),
++    queryKey: remoteTargetId
++      ? ["openclaw", "tools", remoteTargetId, remoteContainerId]
++      : openclawKeys.tools,
++    queryFn: () =>
++      remoteTargetId
++        ? getRemoteOpenClawTools(remoteTargetId, remoteContainerId)
++        : openclawApi.getTools(),
+     staleTime: 30_000,
+   });
+ }
+@@ -74,10 +92,15 @@ export function useOpenClawTools() {
+ /**
+  * Query agents.defaults section of openclaw.json.
+  */
+-export function useOpenClawAgentsDefaults() {
++export function useOpenClawAgentsDefaults(remoteTargetId?: string, remoteContainerId?: string) {
+   return useQuery({
+-    queryKey: openclawKeys.agentsDefaults,
+-    queryFn: () => openclawApi.getAgentsDefaults(),
++    queryKey: remoteTargetId
++      ? ["openclaw", "agentsDefaults", remoteTargetId, remoteContainerId]
++      : openclawKeys.agentsDefaults,
++    queryFn: () =>
++      remoteTargetId
++        ? getRemoteOpenClawAgentsDefaults(remoteTargetId, remoteContainerId)
++        : openclawApi.getAgentsDefaults(),
+     staleTime: 30_000,
+   });
+ }
+@@ -99,13 +122,25 @@ export function useOpenClawHealth(enabled: boolean) {
+  * Save env config. Invalidates env query on success.
+  * Toast notifications are handled by the component.
+  */
+-export function useSaveOpenClawEnv() {
++export function useSaveOpenClawEnv(remoteTargetId?: string, remoteContainerId?: string) {
+   const queryClient = useQueryClient();
+   return useMutation({
+-    mutationFn: (env: OpenClawEnvConfig) => openclawApi.setEnv(env),
++    mutationFn: async (env: OpenClawEnvConfig) => {
++      if (remoteTargetId) {
++        await setRemoteOpenClawEnv(remoteTargetId, env, remoteContainerId);
++      } else {
++        await openclawApi.setEnv(env);
++      }
++    },
+     onSuccess: () => {
+-      queryClient.invalidateQueries({ queryKey: openclawKeys.env });
+-      queryClient.invalidateQueries({ queryKey: openclawKeys.health });
++      if (remoteTargetId) {
++        queryClient.invalidateQueries({
++          queryKey: ["openclaw", "env", remoteTargetId, remoteContainerId],
++        });
++      } else {
++        queryClient.invalidateQueries({ queryKey: openclawKeys.env });
++        queryClient.invalidateQueries({ queryKey: openclawKeys.health });
++      }
+     },
+   });
+ }
+@@ -114,13 +149,25 @@ export function useSaveOpenClawEnv() {
+  * Save tools config. Invalidates tools query on success.
+  * Toast notifications are handled by the component.
+  */
+-export function useSaveOpenClawTools() {
++export function useSaveOpenClawTools(remoteTargetId?: string, remoteContainerId?: string) {
+   const queryClient = useQueryClient();
+   return useMutation({
+-    mutationFn: (tools: OpenClawToolsConfig) => openclawApi.setTools(tools),
++    mutationFn: async (tools: OpenClawToolsConfig) => {
++      if (remoteTargetId) {
++        await setRemoteOpenClawTools(remoteTargetId, tools, remoteContainerId);
++      } else {
++        await openclawApi.setTools(tools);
++      }
++    },
+     onSuccess: () => {
+-      queryClient.invalidateQueries({ queryKey: openclawKeys.tools });
+-      queryClient.invalidateQueries({ queryKey: openclawKeys.health });
++      if (remoteTargetId) {
++        queryClient.invalidateQueries({
++          queryKey: ["openclaw", "tools", remoteTargetId, remoteContainerId],
++        });
++      } else {
++        queryClient.invalidateQueries({ queryKey: openclawKeys.tools });
++        queryClient.invalidateQueries({ queryKey: openclawKeys.health });
++      }
+     },
+   });
+ }
+@@ -130,15 +177,29 @@ export function useSaveOpenClawTools() {
+  * queries on success (since changing agents.defaults may affect the default model).
+  * Toast notifications are handled by the component.
+  */
+-export function useSaveOpenClawAgentsDefaults() {
++export function useSaveOpenClawAgentsDefaults(remoteTargetId?: string, remoteContainerId?: string) {
+   const queryClient = useQueryClient();
+   return useMutation({
+-    mutationFn: (defaults: OpenClawAgentsDefaults) =>
+-      openclawApi.setAgentsDefaults(defaults),
++    mutationFn: async (defaults: OpenClawAgentsDefaults) => {
++      if (remoteTargetId) {
++        await setRemoteOpenClawAgentsDefaults(remoteTargetId, defaults, remoteContainerId);
++      } else {
++        await openclawApi.setAgentsDefaults(defaults);
++      }
++    },
+     onSuccess: () => {
+-      queryClient.invalidateQueries({ queryKey: openclawKeys.agentsDefaults });
+-      queryClient.invalidateQueries({ queryKey: openclawKeys.defaultModel });
+-      queryClient.invalidateQueries({ queryKey: openclawKeys.health });
++      if (remoteTargetId) {
++        queryClient.invalidateQueries({
++          queryKey: ["openclaw", "agentsDefaults", remoteTargetId, remoteContainerId],
++        });
++        queryClient.invalidateQueries({
++          queryKey: ["openclaw", "defaultModel", remoteTargetId, remoteContainerId],
++        });
++      } else {
++        queryClient.invalidateQueries({ queryKey: openclawKeys.agentsDefaults });
++        queryClient.invalidateQueries({ queryKey: openclawKeys.defaultModel });
++        queryClient.invalidateQueries({ queryKey: openclawKeys.health });
++      }
+     },
+   });
+ }
+diff --git a/src/hooks/useProviderActions.ts b/src/hooks/useProviderActions.ts
+index 76e03c4..8af2548 100644
+--- a/src/hooks/useProviderActions.ts
++++ b/src/hooks/useProviderActions.ts
+@@ -9,6 +9,7 @@ import {
+   openclawApi,
+   type AppId,
+ } from "@/lib/api";
++import { updateRemoteProviderMeta } from "@/lib/api/remote";
+ import type {
+   Provider,
+   UsageScript,
+@@ -45,6 +46,8 @@ export function useProviderActions(
+   activeApp: AppId,
+   isProxyRunning?: boolean,
+   isProxyTakeover?: boolean,
++  remoteTargetId?: string,
++  remoteContainerId?: string,
+ ) {
+   const { t } = useTranslation();
+   const queryClient = useQueryClient();
+@@ -381,26 +384,54 @@ export function useProviderActions(
+   const saveUsageScript = useCallback(
+     async (provider: Provider, script: UsageScript) => {
+       try {
+-        const updatedProvider: Provider = {
+-          ...provider,
+-          meta: {
+-            ...provider.meta,
+-            usage_script: script,
+-          },
++        const updatedMeta = {
++          ...provider.meta,
++          usage_script: script,
+         };
+ 
+-        if (activeApp === "pi") {
++        if (remoteTargetId) {
++          // 远端：直接写远端 SSOT，不写本地 DB
++          await updateRemoteProviderMeta(
++            remoteTargetId,
++            activeApp,
++            provider.id,
++            updatedMeta as Record<string, unknown>,
++            remoteContainerId,
++          );
++          await queryClient.invalidateQueries({
++            queryKey: [
++              "remoteProviders",
++              remoteTargetId,
++              remoteContainerId || "__host__",
++              activeApp,
++            ],
++          });
++        } else if (activeApp === "pi") {
+           await piApi.updateProviderUsageScript(provider.id, script);
++          await queryClient.invalidateQueries({
++            queryKey: ["providers", activeApp],
++          });
+         } else {
++          const updatedProvider: Provider = {
++            ...provider,
++            meta: updatedMeta,
++          };
+           await providersApi.update(updatedProvider, activeApp);
++          await queryClient.invalidateQueries({
++            queryKey: ["providers", activeApp],
++          });
+         }
++        // 保存用量脚本后，失效该 provider 的用量查询缓存：
++        // 远端目标失效远端隔离 key（与 useUsageQuery 一致），本机失效本机 key
+         await queryClient.invalidateQueries({
+-          queryKey: ["providers", activeApp],
+-        });
+-        // 🔧 保存用量脚本后，也应该失效该 provider 的用量查询缓存
+-        // 这样主页列表会使用新配置重新查询，而不是使用测试时的缓存
+-        await queryClient.invalidateQueries({
+-          queryKey: usageKeys.script(provider.id, activeApp),
++          queryKey: remoteTargetId
++            ? usageKeys.scriptRemote(
++                remoteTargetId,
++                activeApp,
++                provider.id,
++                remoteContainerId,
++              )
++            : usageKeys.script(provider.id, activeApp),
+         });
+         await queryClient.invalidateQueries({
+           queryKey: ["subscription", "quota", activeApp],
+@@ -420,7 +451,7 @@ export function useProviderActions(
+         toast.error(detail);
+       }
+     },
+-    [activeApp, queryClient, t],
++    [activeApp, queryClient, t, remoteTargetId, remoteContainerId],
+   );
+ 
+   // Set provider as default model (OpenClaw only)
+diff --git a/src/hooks/useProxyStatus.ts b/src/hooks/useProxyStatus.ts
+index c4fc588..cb2776e 100644
+--- a/src/hooks/useProxyStatus.ts
++++ b/src/hooks/useProxyStatus.ts
+@@ -13,6 +13,7 @@ import {
+ } from "@/lib/query/proxy";
+ import { extractErrorMessage } from "@/utils/errorUtils";
+ import { getAppLabel } from "@/config/appConfig";
++import type { ProxyTakeoverStatus } from "@/types/proxy";
+ 
+ /**
+  * 代理服务状态管理
+@@ -116,6 +117,24 @@ export function useProxyStatus() {
+   const setTakeoverForAppMutation = useMutation({
+     mutationFn: ({ appType, enabled }: { appType: string; enabled: boolean }) =>
+       proxyApi.setProxyTakeoverForApp(appType, enabled),
++    // 乐观更新：点击瞬间即把目标值写入 takeoverStatus 缓存。
++    // 不这么做的话，悬浮球/面板要等 mutation 返回（后端写 live 配置，数百 ms）
++    // → invalidate → refetch → state 更新 → 才推送快照，用户感知为「开关点了半天
++    // 悬浮窗才变色」。这里立即反映意图，失败再回滚。
++    onMutate: async ({ appType, enabled }) => {
++      await queryClient.cancelQueries({ queryKey: proxyKeys.takeoverStatus });
++      const previous =
++        queryClient.getQueryData<ProxyTakeoverStatus>(
++          proxyKeys.takeoverStatus,
++        );
++      if (previous) {
++        queryClient.setQueryData<ProxyTakeoverStatus>(
++          proxyKeys.takeoverStatus,
++          { ...previous, [appType]: enabled },
++        );
++      }
++      return { previous };
++    },
+     onSuccess: (_data, variables) => {
+       const appLabel = getAppLabel(variables.appType);
+ 
+@@ -134,7 +153,18 @@ export function useProxyStatus() {
+       queryClient.invalidateQueries({ queryKey: proxyKeys.status });
+       queryClient.invalidateQueries({ queryKey: proxyKeys.takeoverStatus });
+     },
+-    onError: (error: Error) => {
++    onError: (
++      error: Error,
++      _variables,
++      context: { previous?: ProxyTakeoverStatus } | undefined,
++    ) => {
++      // 回滚乐观更新，避免「界面显示已接管但实际失败」
++      if (context?.previous) {
++        queryClient.setQueryData(
++          proxyKeys.takeoverStatus,
++          context.previous,
++        );
++      }
+       const detail =
+         extractErrorMessage(error) ||
+         t("common.unknown", { defaultValue: "未知错误" });
+diff --git a/src/hooks/useSettingsForm.ts b/src/hooks/useSettingsForm.ts
+index 5300b33..decdb78 100644
+--- a/src/hooks/useSettingsForm.ts
++++ b/src/hooks/useSettingsForm.ts
+@@ -51,6 +51,10 @@ const sanitizeDir = (value?: string | null): string | undefined => {
+   return trimmed.length > 0 ? trimmed : undefined;
+ };
+ 
++// 悬浮窗不透明度取值范围 0.2~1.0（与后端/滑块一致），收敛异常值
++const clampOpacity = (v: number): number =>
++  Math.min(1, Math.max(0.2, Math.round(v * 100) / 100));
++
+ export interface UseSettingsFormResult {
+   settings: SettingsFormState | null;
+   isLoading: boolean;
+@@ -116,6 +120,8 @@ export function useSettingsForm(): UseSettingsFormResult {
+         data.enableClaudePluginIntegration ?? false,
+       silentStartup: data.silentStartup ?? false,
+       skipClaudeOnboarding: data.skipClaudeOnboarding ?? false,
++      enableFloatingWindow: data.enableFloatingWindow ?? false,
++      floatingOpacity: clampOpacity(data.floatingOpacity ?? 0.97),
+       preserveCodexOfficialAuthOnSwitch:
+         data.preserveCodexOfficialAuthOnSwitch ?? false,
+       unifyCodexSessionHistory: data.unifyCodexSessionHistory ?? false,
+@@ -145,6 +151,7 @@ export function useSettingsForm(): UseSettingsFormResult {
+             useAppWindowControls: false,
+             enableClaudePluginIntegration: false,
+             skipClaudeOnboarding: false,
++            enableFloatingWindow: false,
+             preserveCodexOfficialAuthOnSwitch: false,
+             unifyCodexSessionHistory: false,
+             language: readPersistedLanguage(),
+@@ -184,6 +191,7 @@ export function useSettingsForm(): UseSettingsFormResult {
+           serverData.enableClaudePluginIntegration ?? false,
+         silentStartup: serverData.silentStartup ?? false,
+         skipClaudeOnboarding: serverData.skipClaudeOnboarding ?? false,
++        enableFloatingWindow: serverData.enableFloatingWindow ?? false,
+         preserveCodexOfficialAuthOnSwitch:
+           serverData.preserveCodexOfficialAuthOnSwitch ?? false,
+         unifyCodexSessionHistory: serverData.unifyCodexSessionHistory ?? false,
+diff --git a/src/hooks/useSkills.ts b/src/hooks/useSkills.ts
+index f411833..d3a62fb 100644
+--- a/src/hooks/useSkills.ts
++++ b/src/hooks/useSkills.ts
+@@ -14,18 +14,100 @@ import {
+   type SkillsShSearchResult,
+ } from "@/lib/api/skills";
+ import type { AppId } from "@/lib/api/types";
++import {
++  bulkToggleRemoteSkillApp,
++  deleteRemoteSkill,
++  installRemoteSkillFromDir,
++  installRemoteSkillFromDiscoverable,
++  installRemoteSkillsFromZip,
++  listRemoteSkills,
++  scanRemoteUnmanagedSkills,
++  toggleRemoteSkillApp,
++  updateRemoteSkill,
++  checkRemoteSkillUpdates,
++} from "@/lib/api/remote";
+ import { mergeImportedSkills } from "@/hooks/useSkills.helpers";
+ import { runSequentialBulkAction } from "@/lib/utils/sequentialBulkAction";
+ 
++/** 把远端技能目录项适配成 InstalledSkill。 */
++function remoteToInstalled(entry: {
++  id?: string;
++  name: string;
++  directory: string;
++  path?: string;
++  description?: string;
++  apps?: {
++    claude?: boolean;
++    codex?: boolean;
++    gemini?: boolean;
++    grokbuild?: boolean;
++    opencode?: boolean;
++    openclaw?: boolean;
++    hermes?: boolean;
++    pi?: boolean;
++  };
++  installedAt?: number;
++  updatedAt?: number;
++  repoOwner?: string;
++  repoName?: string;
++  repoBranch?: string;
++  readmeUrl?: string;
++  contentHash?: string;
++}): InstalledSkill {
++  return {
++    id: entry.id || entry.name,
++    name: entry.name,
++    description: entry.description,
++    directory: entry.directory,
++    apps: {
++      claude: entry.apps?.claude ?? true,
++      codex: entry.apps?.codex ?? false,
++      gemini: entry.apps?.gemini ?? false,
++      grokbuild: entry.apps?.grokbuild ?? false,
++      opencode: entry.apps?.opencode ?? false,
++      openclaw: entry.apps?.openclaw ?? false,
++      hermes: entry.apps?.hermes ?? false,
++      pi: entry.apps?.pi ?? false,
++    },
++    installedAt: entry.installedAt ?? 0,
++    updatedAt: entry.updatedAt ?? 0,
++    repoOwner: entry.repoOwner,
++    repoName: entry.repoName,
++    repoBranch: entry.repoBranch,
++    readmeUrl: entry.readmeUrl,
++    contentHash: entry.contentHash,
++  };
++}
++
+ /**
+  * 查询所有已安装的 Skills
+  * 使用 staleTime: Infinity 和 placeholderData: keepPreviousData
+  * 实现首次进入使用缓存，只有刷新时才重新获取
+  */
+-export function useInstalledSkills() {
++export function useInstalledSkills(
++  remoteTargetId?: string,
++  remoteContainerId?: string,
++) {
+   return useQuery({
+-    queryKey: ["skills", "installed"],
+-    queryFn: () => skillsApi.getInstalled(),
++    queryKey: remoteTargetId
++      ? [
++          "skills",
++          "installed",
++          "remote",
++          remoteTargetId,
++          remoteContainerId ?? "__host__",
++        ]
++      : ["skills", "installed"],
++    queryFn: async () => {
++      if (remoteTargetId) {
++        const entries = await listRemoteSkills(
++          remoteTargetId,
++          remoteContainerId,
++        );
++        return entries.map(remoteToInstalled);
++      }
++      return skillsApi.getInstalled();
++    },
+     staleTime: Infinity,
+     placeholderData: keepPreviousData,
+   });
+@@ -100,23 +182,81 @@ export function useInstallSkill() {
+   });
+ }
+ 
++/**
++ * 远端：从「发现技能」列表把一个技能安装到远端目标。
++ *
++ * 发现列表仍来自本机仓库；安装时本机下载仓库 zip → 上传远端 SSOT →
++ * 写 skills.json + 建链接。语义与本机 install 对齐。
++ */
++export function useInstallRemoteSkillFromDiscoverable(
++  remoteTargetId?: string,
++  remoteContainerId?: string,
++  appId?: AppId,
++) {
++  const queryClient = useQueryClient();
++  const installedKey = remoteTargetId
++    ? [
++        "skills",
++        "installed",
++        "remote",
++        remoteTargetId,
++        remoteContainerId ?? "__host__",
++      ]
++    : ["skills", "installed"];
++  return useMutation({
++    mutationFn: ({ skill }: { skill: DiscoverableSkill }) => {
++      if (!remoteTargetId) {
++        return Promise.reject(new Error("未选择远端目标"));
++      }
++      return installRemoteSkillFromDiscoverable(
++        remoteTargetId,
++        skill,
++        remoteContainerId,
++        appId ?? "claude",
++      ).then((r) => remoteToInstalled({ ...r, path: "" }));
++    },
++    onSuccess: (installedSkill) => {
++      queryClient.setQueryData<InstalledSkill[]>(installedKey, (oldData) => {
++        if (!oldData) return [installedSkill];
++        return [...oldData, installedSkill];
++      });
++    },
++  });
++}
++
+ /**
+  * 卸载 Skill
+  * 成功后直接移除已安装缓存，并在结束后收敛备份与未管理列表
+  */
+-export function useUninstallSkill() {
++export function useUninstallSkill(
++  remoteTargetId?: string,
++  remoteContainerId?: string,
++) {
+   const queryClient = useQueryClient();
++  const installedKey = remoteTargetId
++    ? [
++        "skills",
++        "installed",
++        "remote",
++        remoteTargetId,
++        remoteContainerId ?? "__host__",
++      ]
++    : ["skills", "installed"];
+   return useMutation({
+-    mutationFn: (id: string) => skillsApi.uninstallUnified(id),
++    mutationFn: async (id: string) => {
++      if (remoteTargetId) {
++        await deleteRemoteSkill(remoteTargetId, id, remoteContainerId);
++        return { backupPath: undefined };
++      }
++      const result = await skillsApi.uninstallUnified(id);
++      return result;
++    },
+     onSuccess: (_result, id) => {
+       // 直接更新 installed 缓存，移除该 skill
+-      queryClient.setQueryData<InstalledSkill[]>(
+-        ["skills", "installed"],
+-        (oldData) => {
+-          if (!oldData) return oldData;
+-          return oldData.filter((s) => s.id !== id);
+-        },
+-      );
++      queryClient.setQueryData<InstalledSkill[]>(installedKey, (oldData) => {
++        if (!oldData) return oldData;
++        return oldData.filter((s) => s.id !== id);
++      });
+ 
+       // A completed update check may still contain this Skill. Remove it so
+       // Update All cannot target an ID that was just uninstalled.
+@@ -174,9 +314,27 @@ export function useToggleSkillApp() {
+   });
+ }
+ 
+-/** Toggle multiple Skills serially because each operation writes app files. */
+-export function useBulkToggleSkillApp() {
++/**
++ * Toggle multiple Skills for one app.
++ *
++ * - 本机:串行写整文件 live 配置(`runSequentialBulkAction`)避免互相覆盖。
++ * - 远端:单次 invoke 后端 bulk 命令(一次连接内改 skills.json + 全部链接)。
++ * - 乐观更新:点击瞬间翻转缓存,失败回滚,settle 后权威校准。
++ */
++export function useBulkToggleSkillApp(
++  remoteTargetId?: string,
++  remoteContainerId?: string,
++) {
+   const queryClient = useQueryClient();
++  const installedKey = remoteTargetId
++    ? [
++        "skills",
++        "installed",
++        "remote",
++        remoteTargetId,
++        remoteContainerId ?? "__host__",
++      ]
++    : ["skills", "installed"];
+   return useMutation({
+     mutationFn: ({
+       ids,
+@@ -187,11 +345,78 @@ export function useBulkToggleSkillApp() {
+       app: AppId;
+       enabled: boolean;
+     }) =>
+-      runSequentialBulkAction(ids, (id) =>
+-        skillsApi.toggleApp(id, app, enabled),
+-      ),
+-    onSettled: () =>
+-      queryClient.invalidateQueries({ queryKey: ["skills", "installed"] }),
++      remoteTargetId
++        ? bulkToggleRemoteSkillApp(
++            remoteTargetId,
++            ids,
++            app,
++            enabled,
++            remoteContainerId,
++          )
++        : runSequentialBulkAction(ids, (id) =>
++            skillsApi.toggleApp(id, app, enabled),
++          ),
++    // 乐观更新
++    onMutate: async ({ ids, app, enabled }) => {
++      await queryClient.cancelQueries({ queryKey: installedKey });
++      const previous = queryClient.getQueryData<InstalledSkill[]>(installedKey);
++      queryClient.setQueryData<InstalledSkill[]>(installedKey, (old) => {
++        if (!old) return old;
++        const target = new Set(ids);
++        return old.map((skill) =>
++          target.has(skill.id)
++            ? { ...skill, apps: { ...skill.apps, [app]: enabled } }
++            : skill,
++        );
++      });
++      return { previous };
++    },
++    onError: (_error, _vars, context) => {
++      if (context?.previous) {
++        queryClient.setQueryData(installedKey, context.previous);
++      }
++    },
++    onSettled: () => queryClient.invalidateQueries({ queryKey: installedKey }),
++  });
++}
++
++/** 切换远端技能在某应用的启用状态（更新 skills.json + symlink）。 */
++export function useToggleRemoteSkillApp(
++  remoteTargetId?: string,
++  remoteContainerId?: string,
++) {
++  const queryClient = useQueryClient();
++  const installedKey = remoteTargetId
++    ? [
++        "skills",
++        "installed",
++        "remote",
++        remoteTargetId,
++        remoteContainerId ?? "__host__",
++      ]
++    : ["skills", "installed"];
++  return useMutation({
++    mutationFn: ({
++      id,
++      app,
++      enabled,
++    }: {
++      id: string;
++      app: AppId;
++      enabled: boolean;
++    }) => {
++      if (!remoteTargetId) return Promise.resolve(false);
++      return toggleRemoteSkillApp(
++        remoteTargetId,
++        id,
++        app,
++        enabled,
++        remoteContainerId,
++      );
++    },
++    onSuccess: () => {
++      queryClient.invalidateQueries({ queryKey: installedKey });
++    },
+   });
+ }
+ 
+@@ -214,19 +439,88 @@ export function useScanUnmanagedSkills(options?: { enabled?: boolean }) {
+ }
+ 
+ /**
+- * 从应用目录导入 Skills
+- * 成功后先合并缓存，并在结束后刷新所有可能受影响的列表
++ * 远端未管理技能查询。queryKey 精确到 host + container，切换目标互不干扰，
++ * 只反映「当前选择的那一个目标」上可导入的技能数（对齐本机 useScanUnmanagedSkills）。
++ * 传 { enabled: true } 时在当前目标下主动扫一次，供「导入」按钮绿点使用。
+  */
+-export function useImportSkillsFromApps() {
++export function useRemoteUnmanagedSkillsQuery(
++  hostId?: string,
++  container?: string,
++  options?: { enabled?: boolean },
++) {
++  const containerKey = container ?? "__host__";
++  return useQuery({
++    queryKey: ["skills", "unmanaged-remote", hostId, containerKey],
++    queryFn: () =>
++      scanRemoteUnmanagedSkills(
++        hostId!,
++        containerKey === "__host__" ? undefined : containerKey,
++      ),
++    enabled: Boolean(hostId) && (options?.enabled ?? false),
++    staleTime: 30 * 1000,
++    placeholderData: keepPreviousData,
++  });
++}
++
++/**
++ * 从应用目录导入 Skills。
++ * 远端模式：逐个上传选中的本地技能目录到远端 ~/.claude/skills/。
++ * 本机模式：调用本机 importFromApps API。
++ * 成功后先合并缓存，并在结束后刷新所有可能受影响的列表。
++ */
++export function useImportSkillsFromApps(
++  remoteTargetId?: string,
++  remoteContainerId?: string,
++) {
+   const queryClient = useQueryClient();
++  const installedKey = remoteTargetId
++    ? [
++        "skills",
++        "installed",
++        "remote",
++        remoteTargetId,
++        remoteContainerId ?? "__host__",
++      ]
++    : ["skills", "installed"];
+   return useMutation({
+-    mutationFn: (imports: ImportSkillSelection[]) =>
+-      skillsApi.importFromApps(imports),
++    mutationFn: async (imports: ImportSkillSelection[]) => {
++      if (remoteTargetId) {
++        const installed: InstalledSkill[] = [];
++        const errors: string[] = [];
++        for (const imp of imports) {
++          const fullPath = imp.path || imp.directory;
++          try {
++            const name = await installRemoteSkillFromDir(
++              remoteTargetId,
++              fullPath,
++              remoteContainerId,
++            );
++            installed.push(
++              remoteToInstalled({ name, directory: name, path: fullPath }),
++            );
++          } catch (e) {
++            const errMsg = String(e);
++            errors.push(`${imp.directory}: ${errMsg}`);
++            console.warn("[remote-import] 跳过", imp.directory, errMsg);
++          }
++        }
++        if (errors.length > 0 && installed.length === 0) {
++          throw new Error(errors.join("; "));
++        }
++        return installed;
++      }
++      return skillsApi.importFromApps(imports);
++    },
+     onSuccess: (importedSkills) => {
+-      queryClient.setQueryData<InstalledSkill[]>(
+-        ["skills", "installed"],
+-        (oldData) => mergeImportedSkills(oldData, importedSkills),
++      queryClient.setQueryData<InstalledSkill[]>(installedKey, (oldData) =>
++        mergeImportedSkills(oldData, importedSkills),
+       );
++      // 远端导入后重新拉取，获得 SKILL.md 解析出的 displayName / description
++      if (remoteTargetId) {
++        queryClient.invalidateQueries({ queryKey: installedKey });
++      }
++      // 刷新 unmanaged 列表（已被导入的应该移除）
++      queryClient.invalidateQueries({ queryKey: ["skills", "unmanaged"] });
+     },
+     // Import may persist Skills or auto-discovered repositories before a
+     // later item fails, so refresh every affected authoritative collection.
+@@ -285,20 +579,44 @@ export function useRemoveSkillRepo() {
+  * 从 ZIP 文件安装 Skills
+  * 成功后先合并缓存，并在结束后刷新权威列表
+  */
+-export function useInstallSkillsFromZip() {
++export function useInstallSkillsFromZip(
++  remoteTargetId?: string,
++  remoteContainerId?: string,
++) {
+   const queryClient = useQueryClient();
+   return useMutation({
+-    mutationFn: ({
++    mutationFn: async ({
+       filePath,
+       currentApp,
+     }: {
+       filePath: string;
+       currentApp: AppId;
+-    }) => skillsApi.installFromZip(filePath, currentApp),
++    }) => {
++      if (remoteTargetId) {
++        const records = await installRemoteSkillsFromZip(
++          remoteTargetId,
++          filePath,
++          remoteContainerId,
++          currentApp,
++        );
++        // 返回完整数据（含 description），与本机行为一致
++        return records.map((r) => remoteToInstalled({ ...r, path: "" }));
++      }
++      return skillsApi.installFromZip(filePath, currentApp);
++    },
+     onSuccess: (installedSkills) => {
+-      queryClient.setQueryData<InstalledSkill[]>(
+-        ["skills", "installed"],
+-        (oldData) => mergeImportedSkills(oldData, installedSkills),
++      const key = remoteTargetId
++        ? [
++            "skills",
++            "installed",
++            "remote",
++            remoteTargetId,
++            remoteContainerId ?? "__host__",
++          ]
++        : ["skills", "installed"];
++      // 即时更新 UI（本地 + 远端统一策略，数据已完整含 description，按 id 去重）
++      queryClient.setQueryData<InstalledSkill[]>(key, (oldData) =>
++        mergeImportedSkills(oldData, installedSkills),
+       );
+     },
+     // A ZIP can install multiple Skills before a later item or config sync
+@@ -316,10 +634,19 @@ export function useInstallSkillsFromZip() {
+ /**
+  * 检查 Skills 更新（手动触发）
+  */
+-export function useCheckSkillUpdates() {
++/**
++ * 检查 Skill 更新。传 hostId 时为「远端目标」：queryFn 走 checkRemoteSkillUpdates，
++ * 否则为本机 skillsApi.checkUpdates。queryKey 含 host + container 维度，互不干扰；
++ * enabled:false，由手动 refetch（checkUpdates()）触发。
++ */
++export function useCheckSkillUpdates(hostId?: string, container?: string) {
+   return useQuery({
+-    queryKey: ["skills", "updates"],
+-    queryFn: () => skillsApi.checkUpdates(),
++    queryKey: hostId
++      ? ["skills", "updates", "remote", hostId, container ?? "__host__"]
++      : ["skills", "updates"],
++    queryFn: hostId
++      ? () => checkRemoteSkillUpdates(hostId, container || undefined)
++      : () => skillsApi.checkUpdates(),
+     enabled: false,
+     staleTime: 5 * 60 * 1000,
+   });
+@@ -357,6 +684,62 @@ export function useUpdateSkill() {
+   });
+ }
+ 
++/**
++ * 更新远端某个 Skill（对齐本机 useUpdateSkill）：从该 Skill 的仓库重新下载替换远端 SSOT。
++ * 成功后更新远端「已安装」缓存 + 从远端「更新列表」移除该 Skill，并刷新未管理技能圆点缓存。
++ */
++export function useUpdateRemoteSkill(
++  remoteTargetId?: string,
++  remoteContainerId?: string,
++) {
++  const queryClient = useQueryClient();
++  const containerKey = remoteContainerId ?? "__host__";
++  const installedKey = [
++    "skills",
++    "installed",
++    "remote",
++    remoteTargetId,
++    containerKey,
++  ];
++  const updatesKey = [
++    "skills",
++    "updates",
++    "remote",
++    remoteTargetId,
++    containerKey,
++  ];
++  const unmanagedRemoteKey = [
++    "skills",
++    "unmanaged-remote",
++    remoteTargetId,
++    containerKey,
++  ];
++  return useMutation({
++    mutationFn: (skillId: string) =>
++      updateRemoteSkill(
++        remoteTargetId!,
++        skillId,
++        remoteContainerId || undefined,
++      ),
++    onSuccess: (updatedSkill) => {
++      queryClient.setQueryData<InstalledSkill[]>(installedKey, (oldData) => {
++        if (!oldData) return [updatedSkill];
++        return oldData.map((s) =>
++          s.id === updatedSkill.id ? { ...s, ...updatedSkill } : s,
++        );
++      });
++      queryClient.setQueryData<unknown[]>(updatesKey, (oldData) => {
++        if (!oldData) return oldData;
++        return oldData.filter(
++          (u) => (u as { id?: string }).id !== updatedSkill.id,
++        );
++      });
++      // 更新后当前目标的「可导入」圆点应归零（该 Skill 已是最新，受管理）。
++      queryClient.invalidateQueries({ queryKey: unmanagedRemoteKey });
++    },
++  });
++}
++
+ // ========== skills.sh 搜索 ==========
+ 
+ /**
+diff --git a/src/lib/api/connectivity-check.ts b/src/lib/api/connectivity-check.ts
+index 43e56f8..fde84d2 100644
+--- a/src/lib/api/connectivity-check.ts
++++ b/src/lib/api/connectivity-check.ts
+@@ -37,6 +37,24 @@ export async function streamCheckProvider(
+   return invoke("stream_check_provider", { appType, providerId });
+ }
+ 
++/**
++ * 远端目标下的连通性检查（单个供应商）：provider 定义从远端 SSOT 读取，
++ * 但连通性检查在本机执行（测本机到 API 的网络，与本机场景一致）。
++ */
++export async function streamCheckRemoteProvider(
++  hostId: string,
++  container: string | undefined,
++  appType: AppId,
++  providerId: string,
++): Promise<StreamCheckResult> {
++  return invoke("stream_check_remote_provider", {
++    hostId,
++    container: container ?? null,
++    app: appType,
++    providerId,
++  });
++}
++
+ /**
+  * 批量连通性检查
+  */
+diff --git a/src/lib/api/providers.ts b/src/lib/api/providers.ts
+index 5f2e182..be83288 100644
+--- a/src/lib/api/providers.ts
++++ b/src/lib/api/providers.ts
+@@ -189,6 +189,14 @@ export const providersApi = {
+     return await invoke("get_hermes_live_provider_ids");
+   },
+ 
++  /**
++   * 获取 Pi live 配置中的供应商 ID 列表
++   * 用于前端判断供应商是否已添加到 models.json
++   */
++  async getPiLiveProviderIds(): Promise<string[]> {
++    return await invoke("get_pi_live_provider_ids");
++  },
++
+   /**
+    * 从 OpenClaw live 配置导入供应商到数据库
+    * OpenClaw 特有功能：由于累加模式，用户可能已在 openclaw.json 中配置供应商
+diff --git a/src/lib/api/skills.ts b/src/lib/api/skills.ts
+index cb5502c..69ffb88 100644
+--- a/src/lib/api/skills.ts
++++ b/src/lib/api/skills.ts
+@@ -80,6 +80,8 @@ export interface UnmanagedSkill {
+ export interface ImportSkillSelection {
+   directory: string;
+   apps: SkillApps;
++  /** 本地磁盘完整路径（远端导入时使用；本地导入忽略） */
++  path?: string;
+ }
+ 
+ /** 技能对象（兼容旧 API） */
+diff --git a/src/lib/api/subscription.ts b/src/lib/api/subscription.ts
+index 4b94bec..db45f94 100644
+--- a/src/lib/api/subscription.ts
++++ b/src/lib/api/subscription.ts
+@@ -18,6 +18,9 @@ export const subscriptionApi = {
+     codingPlanProvider?: string,
+     teamOrganizationId?: string,
+     teamProjectId?: string,
++    // OpenCode Go：workspace_id + auth_cookie（抓 /usage 页用）
++    workspaceId?: string,
++    authCookie?: string,
+   ): Promise<SubscriptionQuota> =>
+     invoke("get_coding_plan_quota", {
+       baseUrl,
+@@ -27,6 +30,8 @@ export const subscriptionApi = {
+       codingPlanProvider,
+       teamOrganizationId,
+       teamProjectId,
++      workspaceId,
++      authCookie,
+     }),
+   getBalance: (
+     baseUrl: string,
+diff --git a/src/lib/api/usage.ts b/src/lib/api/usage.ts
+index fe59c37..1d00f5b 100644
+--- a/src/lib/api/usage.ts
++++ b/src/lib/api/usage.ts
+@@ -25,6 +25,22 @@ export const usageApi = {
+     return invoke("queryProviderUsage", { providerId, app: appId });
+   },
+ 
++  queryRemote: async (
++    hostId: string,
++    container: string | undefined,
++    providerId: string,
++    appId: AppId,
++  ): Promise<UsageResult> => {
++    // 命令名必须与后端函数名一致（tauri invoke 用函数名，不做大小写转换）：
++    // 后端是 query_remote_provider_usage（snake_case），此处必须用 snake_case
++    return invoke("query_remote_provider_usage", {
++      hostId,
++      container: container ?? null,
++      app: appId,
++      providerId,
++    });
++  },
++
+   testScript: async (
+     providerId: string,
+     appId: AppId,
+diff --git a/src/lib/query/queries.ts b/src/lib/query/queries.ts
+index 0f4a380..960ac09 100644
+--- a/src/lib/query/queries.ts
++++ b/src/lib/query/queries.ts
+@@ -20,6 +20,10 @@ import type {
+ } from "@/types";
+ import { usageKeys } from "@/lib/query/usage";
+ import { extractErrorMessage } from "@/utils/errorUtils";
++import {
++  getRemoteSessionMessages,
++  listRemoteSessionsAll,
++} from "@/lib/api/remote";
+ 
+ const sortProviders = (
+   providers: Record<string, Provider>,
+@@ -99,6 +103,10 @@ export const useSettingsQuery = (): UseQueryResult<Settings> => {
+ export interface UseUsageQueryOptions {
+   enabled?: boolean;
+   autoQueryInterval?: number; // 自动查询间隔（分钟），0 表示禁用
++  /** 远端目标：提供 hostId 时余量查询改走远端 SSOT（见 queryRemote） */
++  remoteTargetId?: string;
++  /** 远端容器（宿主机为 undefined） */
++  remoteContainerId?: string;
+ }
+ 
+ /** keep-last-good 判定所需的最小结果形状（UsageResult / SubscriptionQuota 都满足）。 */
+@@ -247,7 +255,8 @@ export const useUsageQuery = (
+   appId: AppId,
+   options?: UseUsageQueryOptions,
+ ) => {
+-  const { enabled = true, autoQueryInterval = 0 } = options || {};
++  const { enabled = true, autoQueryInterval = 0, remoteTargetId, remoteContainerId } =
++    options || {};
+ 
+   // 计算 staleTime：如果有自动刷新间隔，使用该间隔；否则默认 5 分钟
+   // 这样可以避免切换 app 页面时重复触发查询
+@@ -256,9 +265,22 @@ export const useUsageQuery = (
+       ? autoQueryInterval * 60 * 1000 // 与刷新间隔保持一致
+       : 5 * 60 * 1000; // 默认 5 分钟
+ 
++  // 远端目标：provider 来自远端 SSOT（providerId 是远端 SSOT 里的 id）。
++  // usage 缓存按 (remote, hostId, container, app, providerId) 隔离，调
++  // usageApi.queryRemote → query_remote_provider_usage（读远端 SSOT 分派）。
++  // 本机（无 remoteTargetId）保持原 queryKey 与原 queryApi.query，行为不变。
++  const isRemote = Boolean(remoteTargetId);
++  const queryKey = isRemote
++    ? usageKeys.scriptRemote(remoteTargetId!, appId, providerId, remoteContainerId)
++    : usageKeys.script(providerId, appId);
++  const queryFn = () =>
++    isRemote
++      ? usageApi.queryRemote(remoteTargetId!, remoteContainerId, providerId, appId)
++      : usageApi.query(providerId, appId);
++
+   const query = useQuery<UsageResult>({
+-    queryKey: usageKeys.script(providerId, appId),
+-    queryFn: async () => usageApi.query(providerId, appId),
++    queryKey,
++    queryFn,
+     enabled: enabled && !!providerId,
+     refetchInterval:
+       autoQueryInterval > 0
+@@ -304,10 +326,23 @@ export const useUsageQuery = (
+   };
+ };
+ 
+-export const useSessionsQuery = () => {
++export const useSessionsQuery = (
++  remoteTargetId?: string,
++  remoteContainerId?: string,
++) => {
+   return useQuery<SessionMeta[]>({
+-    queryKey: ["sessions"],
+-    queryFn: async () => sessionsApi.list(),
++    queryKey: remoteTargetId
++      ? [
++          "sessions",
++          "remote",
++          remoteTargetId,
++          remoteContainerId ?? "__host__",
++        ]
++      : ["sessions"],
++    queryFn: async () =>
++      remoteTargetId
++        ? listRemoteSessionsAll(remoteTargetId, remoteContainerId)
++        : sessionsApi.list(),
+     staleTime: 30 * 1000,
+   });
+ };
+@@ -315,10 +350,33 @@ export const useSessionsQuery = () => {
+ export const useSessionMessagesQuery = (
+   providerId?: string,
+   sourcePath?: string,
++  sessionId?: string,
++  remoteTargetId?: string,
++  remoteContainerId?: string,
++  appId?: string,
+ ) => {
+   return useQuery<SessionMessage[]>({
+-    queryKey: ["sessionMessages", providerId, sourcePath],
+-    queryFn: async () => sessionsApi.getMessages(providerId!, sourcePath!),
++    queryKey: remoteTargetId
++      ? [
++          "sessionMessages",
++          "remote",
++          remoteTargetId,
++          remoteContainerId ?? "__host__",
++          sourcePath,
++          sessionId,
++          appId ?? "claude",
++        ]
++      : ["sessionMessages", providerId, sourcePath],
++    queryFn: async () =>
++      remoteTargetId
++        ? getRemoteSessionMessages(
++            remoteTargetId,
++            sourcePath!,
++            sessionId ?? "",
++            remoteContainerId,
++            appId,
++          )
++        : sessionsApi.getMessages(providerId!, sourcePath!),
+     enabled: Boolean(providerId && sourcePath),
+     staleTime: 30 * 1000,
+   });
+diff --git a/src/lib/query/usage.ts b/src/lib/query/usage.ts
+index ea95dc0..1931a8b 100644
+--- a/src/lib/query/usage.ts
++++ b/src/lib/query/usage.ts
+@@ -147,6 +147,21 @@ export const usageKeys = {
+     [...usageKeys.all, "limits", providerId, appType] as const,
+   script: (providerId: string, appType: string) =>
+     [...usageKeys.all, providerId, appType] as const,
++  /** 远端目标下的用量查询缓存 key（与 useUsageQuery 保持一致，按 (remote, hostId, container, app, provider) 隔离） */
++  scriptRemote: (
++    hostId: string,
++    appType: string,
++    providerId: string,
++    container?: string,
++  ) =>
++    [
++      ...usageKeys.all,
++      "remote",
++      hostId,
++      container || "__host__",
++      appType,
++      providerId,
++    ] as const,
+ };
+ 
+ /** 把 UI 侧的 "all" 哨兵归一成 undefined（后端语义：不过滤）。 */
+diff --git a/src/lib/updater.ts b/src/lib/updater.ts
+index 0bc7da2..fc38848 100644
+--- a/src/lib/updater.ts
++++ b/src/lib/updater.ts
+@@ -31,7 +31,9 @@ export async function checkForUpdate(
+   const { check } = await import("@tauri-apps/plugin-updater");
+ 
+   const currentVersion = await getCurrentVersion();
++  console.log("[Update] currentVersion:", currentVersion);
+   const update = await check({ timeout: opts.timeout ?? 30000 } as any);
++  console.log("[Update] check() returned:", update);
+ 
+   if (!update) {
+     return { status: "up-to-date" };

@@ -1,0 +1,5242 @@
+diff --git a/src/components/AppSwitcher.tsx b/src/components/AppSwitcher.tsx
+index de00a9a..bfc3b41 100644
+--- a/src/components/AppSwitcher.tsx
++++ b/src/components/AppSwitcher.tsx
+@@ -23,6 +23,8 @@ interface AppSwitcherProps {
+   activeApp: AppId;
+   onSwitch: (app: AppId) => void;
+   visibleApps?: VisibleApps;
++  /** 额外隐藏的应用（如远端目标下隐藏 claude-desktop，远端无此应用） */
++  hideApps?: AppId[];
+ }
+ 
+ const STORAGE_KEY = "cc-switch-last-app";
+@@ -91,6 +93,7 @@ export function AppSwitcher({
+   activeApp,
+   onSwitch,
+   visibleApps,
++  hideApps,
+ }: AppSwitcherProps) {
+   const { t } = useTranslation();
+   const rootRef = useRef<HTMLDivElement>(null);
+@@ -104,6 +107,7 @@ export function AppSwitcher({
+ 
+   // Filter apps based on visibility settings (default all visible)
+   const appsToShow = APP_IDS.filter((app) => {
++    if (hideApps?.includes(app)) return false;
+     if (!visibleApps) return true;
+     return visibleApps[app];
+   });
+diff --git a/src/components/UsageFooter.tsx b/src/components/UsageFooter.tsx
+index 0416a99..9136c65 100644
+--- a/src/components/UsageFooter.tsx
++++ b/src/components/UsageFooter.tsx
+@@ -4,7 +4,10 @@ import { useTranslation } from "react-i18next";
+ import { type AppId } from "@/lib/api";
+ import { useUsageQuery } from "@/lib/query/queries";
+ import { UsageData, Provider } from "@/types";
+-import { TierBadge } from "@/components/SubscriptionQuotaFooter";
++import {
++  TierBadge,
++  TIER_I18N_KEYS,
++} from "@/components/SubscriptionQuotaFooter";
+ import type { QuotaTier } from "@/types/subscription";
+ import { isAdditiveAppId } from "@/config/appConfig";
+ 
+@@ -16,6 +19,10 @@ interface UsageFooterProps {
+   isCurrent: boolean; // 是否为当前激活的供应商
+   isInConfig?: boolean; // OpenCode: 是否已添加到配置
+   inline?: boolean; // 是否内联显示（在按钮左侧）
++  /** 远端目标：提供时余量查询改走远端 SSOT（见 useUsageQuery） */
++  remoteTargetId?: string;
++  /** 远端容器（宿主机为 undefined） */
++  remoteContainerId?: string;
+ }
+ 
+ /** UsageData → QuotaTier 转换（Token Plan 使用） */
+@@ -51,10 +58,14 @@ const UsageFooter: React.FC<UsageFooterProps> = ({
+   isCurrent,
+   isInConfig = false,
+   inline = false,
++  remoteTargetId,
++  remoteContainerId,
+ }) => {
+   const { t } = useTranslation();
+-  const isTokenPlan =
+-    provider.meta?.usage_script?.templateType === "token_plan";
++  // 检查是否为 plan 类型（token_plan 或 OpenCode Go）
++  const isPlan =
++    provider.meta?.usage_script?.templateType === "token_plan" ||
++    provider.meta?.usage_script?.codingPlanProvider === "opencode_go";
+ 
+   // 统一的用量查询（自动查询仅对当前激活的供应商启用）
+   // 累加模式：使用 isInConfig 代替 isCurrent
+@@ -72,6 +83,8 @@ const UsageFooter: React.FC<UsageFooterProps> = ({
+   } = useUsageQuery(providerId, appId, {
+     enabled: usageEnabled,
+     autoQueryInterval,
++    remoteTargetId,
++    remoteContainerId,
+   });
+ 
+   // 🆕 定期更新当前时间，用于刷新相对时间显示
+@@ -141,8 +154,16 @@ const UsageFooter: React.FC<UsageFooterProps> = ({
+   // 无数据时不显示
+   if (usageDataList.length === 0) return null;
+ 
+-  // ── Token Plan：订阅风格内联渲染（百分比徽章 + 倒计时） ──
+-  if (isTokenPlan && inline) {
++  // 检查是否有 tier 信息（planName + total/used 才算真正的 tier；纯余额查询如
++  // DeepSeek 只有 planName="CNY" + remaining，不应走进 tier 分支）
++  const hasTierInfo = usageDataList.some(
++    (d) =>
++      (d.planName && (d.total != null || d.used != null)) ||
++      (d.extra && d.extra.startsWith("{")),
++  );
++
++  // ── Token Plan 或有 tier 信息：订阅风格内联渲染（百分比徽章 + 倒计时） ──
++  if ((isPlan || hasTierInfo) && inline) {
+     return (
+       <div className="flex flex-col items-end gap-1 text-xs whitespace-nowrap flex-shrink-0">
+         {/* 第一行：查询时间 + 刷新 */}
+@@ -313,6 +334,36 @@ const UsageFooter: React.FC<UsageFooterProps> = ({
+ 
+ // ── 通用用量组件 ────────────────────────────────────────────
+ 
++/** 格式化 ISO 日期字符串为倒计时 + 可读时间 */
++function formatResetInfo(
++  isoStr: string,
++  showMinutes = true,
++): { countdown: string; date: string } {
++  try {
++    const date = new Date(isoStr);
++    if (isNaN(date.getTime())) return { countdown: "", date: isoStr };
++    const diffMs = date.getTime() - Date.now();
++    const diffSec = Math.max(0, Math.floor(diffMs / 1000));
++    const days = Math.floor(diffSec / 86400);
++    const hours = Math.floor((diffSec % 86400) / 3600);
++    const minutes = Math.floor((diffSec % 3600) / 60);
++    let countdown = "";
++    if (days > 0) countdown += `${days}d`;
++    if (hours > 0) countdown += `${hours}h`;
++    if (showMinutes) countdown += `${minutes.toString().padStart(2, "0")}m`;
++    const month = date.getMonth() + 1;
++    const day = date.getDate();
++    const h = date.getHours().toString().padStart(2, "0");
++    const m = date.getMinutes().toString().padStart(2, "0");
++    return {
++      countdown,
++      date: `${month.toString().padStart(2, "0")}/${day.toString().padStart(2, "0")} ${h}:${m}`,
++    };
++  } catch {
++    return { countdown: "", date: isoStr };
++  }
++}
++
+ // 单个套餐数据展示组件
+ const UsagePlanItem: React.FC<{ data: UsageData }> = ({ data }) => {
+   const { t } = useTranslation();
+@@ -342,7 +393,8 @@ const UsagePlanItem: React.FC<{ data: UsageData }> = ({ data }) => {
+             className={`font-medium truncate block ${isExpired ? "text-red-500 dark:text-red-400" : ""}`}
+             title={planName}
+           >
+-            💰 {planName}
++            💰{" "}
++            {TIER_I18N_KEYS[planName] ? t(TIER_I18N_KEYS[planName]) : planName}
+           </span>
+         ) : (
+           <span className="opacity-50">—</span>
+@@ -354,14 +406,22 @@ const UsagePlanItem: React.FC<{ data: UsageData }> = ({ data }) => {
+         className="text-xs text-gray-500 dark:text-gray-400 min-w-0 flex items-center gap-2"
+         style={{ width: "30%" }}
+       >
+-        {extra && (
+-          <span
+-            className={`truncate ${isExpired ? "text-red-500 dark:text-red-400" : ""}`}
+-            title={extra}
+-          >
+-            {extra}
+-          </span>
+-        )}
++        {extra &&
++          (() => {
++            const { countdown, date } = formatResetInfo(
++              extra,
++              planName === "five_hour",
++            );
++            return (
++              <span
++                className={`text-xs text-gray-500 dark:text-gray-400 tabular-nums flex items-center gap-1 ${isExpired ? "text-red-500 dark:text-red-400" : ""}`}
++                title={extra}
++              >
++                <Clock size={10} className="flex-shrink-0" />
++                {countdown} {date}
++              </span>
++            );
++          })()}
+         {isExpired && (
+           <span className="text-red-500 dark:text-red-400 font-medium text-[10px] px-1.5 py-0.5 bg-red-50 dark:bg-red-900/20 rounded flex-shrink-0">
+             {invalidMessage || t("usage.invalid")}
+@@ -371,38 +431,53 @@ const UsagePlanItem: React.FC<{ data: UsageData }> = ({ data }) => {
+ 
+       {/* 用量信息：45% */}
+       <div
+-        className="flex items-center justify-end gap-2 text-xs flex-shrink-0"
++        className="flex items-center justify-end gap-2 text-xs flex-shrink-0 whitespace-nowrap"
+         style={{ width: "45%" }}
+       >
+         {/* 总额度 */}
+         {total !== undefined && (
+-          <>
++          <span className="inline-flex items-center gap-1">
+             <span className="text-gray-500 dark:text-gray-400">
+               {t("usage.total")}
+             </span>
+-            <span className="tabular-nums text-gray-600 dark:text-gray-400">
++            <span
++              className="tabular-nums text-gray-600 dark:text-gray-400"
++              style={{ minWidth: "4ch", textAlign: "right" }}
++            >
+               {total === -1 ? "∞" : total.toFixed(2)}
+             </span>
+-            <span className="text-gray-400 dark:text-gray-600">|</span>
+-          </>
++            <span className="text-gray-500 dark:text-gray-400">%</span>
++            <span className="text-gray-500 dark:text-gray-400">|</span>
++          </span>
+         )}
+ 
+-        {/* 已用额度 */}
++        {/* 已用额度 - 突出显示 */}
+         {used !== undefined && (
+-          <>
++          <span className="inline-flex items-center gap-1">
+             <span className="text-gray-500 dark:text-gray-400">
+               {t("usage.used")}
+             </span>
+-            <span className="tabular-nums text-gray-600 dark:text-gray-400">
+-              {used.toFixed(2)}
++            <span
++              className={`font-semibold tabular-nums ${
++                isExpired
++                  ? "text-red-500 dark:text-red-400"
++                  : used > (total || used) * 0.9
++                    ? "text-red-500 dark:text-red-400"
++                    : used > (total || used) * 0.7
++                      ? "text-orange-500 dark:text-orange-400"
++                      : "text-green-600 dark:text-green-400"
++              }`}
++              style={{ minWidth: "4ch", textAlign: "right" }}
++            >
++              {used.toFixed(2)}%
+             </span>
+-            <span className="text-gray-400 dark:text-gray-600">|</span>
+-          </>
++            <span className="text-gray-500 dark:text-gray-400">|</span>
++          </span>
+         )}
+ 
+-        {/* 剩余额度 - 突出显示 */}
++        {/* 剩余额度 - 状态色 */}
+         {remaining !== undefined && (
+-          <>
++          <span className="inline-flex items-center gap-1">
+             <span className="text-gray-500 dark:text-gray-400">
+               {t("usage.remaining")}
+             </span>
+@@ -415,12 +490,12 @@ const UsagePlanItem: React.FC<{ data: UsageData }> = ({ data }) => {
+                     : "text-green-600 dark:text-green-400"
+               }`}
+             >
+-              {remaining.toFixed(2)}
++              {remaining.toFixed(2)}%
+             </span>
+-          </>
++          </span>
+         )}
+ 
+-        {unit && (
++        {unit && unit !== "%" && (
+           <span className="text-gray-500 dark:text-gray-400">{unit}</span>
+         )}
+       </div>
+diff --git a/src/components/mcp/McpFormModal.tsx b/src/components/mcp/McpFormModal.tsx
+index 95d339c..60ab286 100644
+--- a/src/components/mcp/McpFormModal.tsx
++++ b/src/components/mcp/McpFormModal.tsx
+@@ -33,6 +33,10 @@ interface McpFormModalProps {
+   existingIds?: string[];
+   defaultFormat?: "json" | "toml";
+   defaultEnabledApps?: AppId[];
++  /** 选中远端目标时，表单保存直接写该主机 ~/.claude.json */
++  remoteTargetId?: string;
++  /** 目标细化到 Docker 容器时，写容器内 ~/.claude.json */
++  remoteContainerId?: string;
+ }
+ 
+ const McpFormModal: React.FC<McpFormModalProps> = ({
+@@ -43,12 +47,14 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
+   existingIds = [],
+   defaultFormat = "json",
+   defaultEnabledApps = ["claude", "codex", "gemini", "grokbuild"],
++  remoteTargetId,
++  remoteContainerId,
+ }) => {
+   const { t } = useTranslation();
+   const { formatTomlError, validateTomlConfig, validateJsonConfig } =
+     useMcpValidation();
+ 
+-  const upsertMutation = useUpsertMcpServer();
++  const upsertMutation = useUpsertMcpServer(remoteTargetId, remoteContainerId);
+ 
+   const [formId, setFormId] = useState(
+     () => editingId || initialData?.id || "",
+@@ -610,6 +616,22 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
+                   </label>
+                 </div>
+ 
++                <div className="flex items-center gap-2">
++                  <Checkbox
++                    id="enable-openclaw"
++                    checked={enabledApps.openclaw}
++                    onCheckedChange={(checked: boolean) =>
++                      setEnabledApps({ ...enabledApps, openclaw: checked })
++                    }
++                  />
++                  <label
++                    htmlFor="enable-openclaw"
++                    className="text-sm text-foreground cursor-pointer select-none"
++                  >
++                    {t("mcp.unifiedPanel.apps.openclaw")}
++                  </label>
++                </div>
++
+                 <div className="flex items-center gap-2">
+                   <Checkbox
+                     id="enable-hermes"
+diff --git a/src/components/mcp/UnifiedMcpPanel.tsx b/src/components/mcp/UnifiedMcpPanel.tsx
+index 5580716..5bddbbf 100644
+--- a/src/components/mcp/UnifiedMcpPanel.tsx
++++ b/src/components/mcp/UnifiedMcpPanel.tsx
+@@ -52,6 +52,10 @@ function getMcpSearchText(id: string, server: McpServer): string {
+ 
+ interface UnifiedMcpPanelProps {
+   onOpenChange: (open: boolean) => void;
++  /** 选中远端目标时，MCP 面板直接操作该主机 ~/.claude.json */
++  remoteTargetId?: string;
++  /** 目标细化到 Docker 容器时，操作容器内 ~/.claude.json */
++  remoteContainerId?: string;
+   onInteractionBlockedChange?: (blocked: boolean) => void;
+ }
+ 
+@@ -63,308 +67,339 @@ export interface UnifiedMcpPanelHandle {
+ const UnifiedMcpPanel = React.forwardRef<
+   UnifiedMcpPanelHandle,
+   UnifiedMcpPanelProps
+->(({ onOpenChange: _onOpenChange, onInteractionBlockedChange }, ref) => {
+-  const { t } = useTranslation();
+-  const [isFormOpen, setIsFormOpen] = useState(false);
+-  const [editingId, setEditingId] = useState<string | null>(null);
+-  const [searchQuery, setSearchQuery] = useState("");
+-  const [writePending, setWritePending] = useState(false);
+-  const writeLockRef = React.useRef(false);
+-  const [confirmDialog, setConfirmDialog] = useState<{
+-    isOpen: boolean;
+-    title: string;
+-    message: string;
+-    onConfirm: () => void;
+-  } | null>(null);
+-
+-  const { data: serversMap, isLoading } = useAllMcpServers();
+-  const toggleAppMutation = useToggleMcpApp();
+-  const bulkToggleAppMutation = useBulkToggleMcpApp();
+-  const deleteServerMutation = useDeleteMcpServer();
+-  const importMutation = useImportMcpFromApps();
+-
+-  const mutationPending =
+-    toggleAppMutation.isPending ||
+-    bulkToggleAppMutation.isPending ||
+-    deleteServerMutation.isPending ||
+-    importMutation.isPending;
+-  const interactionBlocked =
+-    writePending || mutationPending || isFormOpen || confirmDialog !== null;
+-
+-  React.useEffect(() => {
+-    onInteractionBlockedChange?.(interactionBlocked);
+-  }, [interactionBlocked, onInteractionBlockedChange]);
+-
+-  React.useEffect(
+-    () => () => onInteractionBlockedChange?.(false),
+-    [onInteractionBlockedChange],
+-  );
+-
+-  const beginWrite = (allowOpenConfirmation = false) => {
+-    if (
+-      writeLockRef.current ||
+-      mutationPending ||
+-      isFormOpen ||
+-      (!allowOpenConfirmation && confirmDialog !== null)
+-    ) {
+-      return false;
+-    }
+-    writeLockRef.current = true;
+-    setWritePending(true);
+-    return true;
+-  };
+-
+-  const endWrite = () => {
+-    writeLockRef.current = false;
+-    setWritePending(false);
+-  };
+-
+-  const serverEntries = useMemo((): Array<[string, McpServer]> => {
+-    if (!serversMap) return [];
+-    return Object.entries(serversMap);
+-  }, [serversMap]);
++>(
++  (
++    {
++      onOpenChange: _onOpenChange,
++      onInteractionBlockedChange,
++      remoteTargetId,
++      remoteContainerId,
++    },
++    ref,
++  ) => {
++    const { t } = useTranslation();
++    const [isFormOpen, setIsFormOpen] = useState(false);
++    const [editingId, setEditingId] = useState<string | null>(null);
++    const [searchQuery, setSearchQuery] = useState("");
++    const [writePending, setWritePending] = useState(false);
++    const writeLockRef = React.useRef(false);
++    const [confirmDialog, setConfirmDialog] = useState<{
++      isOpen: boolean;
++      title: string;
++      message: string;
++      onConfirm: () => void;
++    } | null>(null);
++
++    const { data: serversMap, isLoading } = useAllMcpServers(
++      remoteTargetId,
++      remoteContainerId,
++    );
++    const toggleAppMutation = useToggleMcpApp(
++      remoteTargetId,
++      remoteContainerId,
++    );
++    const bulkToggleAppMutation = useBulkToggleMcpApp(
++      remoteTargetId,
++      remoteContainerId,
++    );
++    const deleteServerMutation = useDeleteMcpServer(
++      remoteTargetId,
++      remoteContainerId,
++    );
++    const importMutation = useImportMcpFromApps(
++      remoteTargetId,
++      remoteContainerId,
++    );
+ 
+-  const normalizedSearchQuery = searchQuery.trim().toLowerCase();
+-  const filteredServerEntries = useMemo(() => {
+-    if (!normalizedSearchQuery) return serverEntries;
+-    return serverEntries.filter(([id, server]) =>
+-      getMcpSearchText(id, server).includes(normalizedSearchQuery),
++    // 本机与远端统一：serversMap 都是 McpServer 结构（含 apps 多开关 + 元数据）
++    const mutationPending =
++      toggleAppMutation.isPending ||
++      bulkToggleAppMutation.isPending ||
++      deleteServerMutation.isPending ||
++      importMutation.isPending;
++    const interactionBlocked =
++      writePending || mutationPending || isFormOpen || confirmDialog !== null;
++
++    React.useEffect(() => {
++      onInteractionBlockedChange?.(interactionBlocked);
++    }, [interactionBlocked, onInteractionBlockedChange]);
++
++    React.useEffect(
++      () => () => onInteractionBlockedChange?.(false),
++      [onInteractionBlockedChange],
+     );
+-  }, [normalizedSearchQuery, serverEntries]);
+-
+-  const enabledCounts = useMemo(() => {
+-    const counts = {
+-      claude: 0,
+-      "claude-desktop": 0,
+-      codex: 0,
+-      gemini: 0,
+-      grokbuild: 0,
+-      opencode: 0,
+-      openclaw: 0,
+-      hermes: 0,
+-    };
+-    serverEntries.forEach(([_, server]) => {
+-      for (const app of MCP_APP_IDS) {
+-        if (server.apps[app]) counts[app]++;
+-      }
+-    });
+-    return counts;
+-  }, [serverEntries]);
+-
+-  const pendingApp = bulkToggleAppMutation.isPending
+-    ? (bulkToggleAppMutation.variables?.app ?? null)
+-    : toggleAppMutation.isPending
+-      ? (toggleAppMutation.variables?.app ?? null)
+-      : null;
+-
+-  const handleToggleApp = async (
+-    serverId: string,
+-    app: AppId,
+-    enabled: boolean,
+-  ) => {
+-    if (!isMcpAppId(app)) return;
+-    if (!beginWrite()) return;
+-    try {
+-      await toggleAppMutation.mutateAsync({ serverId, app, enabled });
+-    } catch (error) {
+-      toast.error(t("common.error"), { description: String(error) });
+-    } finally {
+-      endWrite();
+-    }
+-  };
+ 
+-  const handleToggleAll = async (app: AppId, enabled: boolean) => {
+-    if (!isMcpAppId(app)) return;
+-    if (!beginWrite()) return;
+-
+-    // AppCountBar summarizes the complete collection, so its bulk action must
+-    // use the complete collection too, even while a search filter is active.
+-    const serverIds = serverEntries
+-      .filter(([_, server]) => Boolean(server.apps[app]) !== enabled)
+-      .map(([id]) => id);
+-    if (serverIds.length === 0) {
+-      endWrite();
+-      return;
+-    }
++    const beginWrite = (allowOpenConfirmation = false) => {
++      if (
++        writeLockRef.current ||
++        mutationPending ||
++        isFormOpen ||
++        (!allowOpenConfirmation && confirmDialog !== null)
++      ) {
++        return false;
++      }
++      writeLockRef.current = true;
++      setWritePending(true);
++      return true;
++    };
+ 
+-    try {
+-      const result = await bulkToggleAppMutation.mutateAsync({
+-        serverIds,
+-        app,
+-        enabled,
++    const endWrite = () => {
++      writeLockRef.current = false;
++      setWritePending(false);
++    };
++    const serverEntries = useMemo((): Array<[string, McpServer]> => {
++      if (!serversMap) return [];
++      return Object.entries(serversMap as Record<string, McpServer>);
++    }, [serversMap]);
++
++    const normalizedSearchQuery = searchQuery.trim().toLowerCase();
++    const filteredServerEntries = useMemo(() => {
++      if (!normalizedSearchQuery) return serverEntries;
++      return serverEntries.filter(([id, server]) =>
++        getMcpSearchText(id, server).includes(normalizedSearchQuery),
++      );
++    }, [normalizedSearchQuery, serverEntries]);
++
++    const enabledCounts = useMemo(() => {
++      const counts = {
++        claude: 0,
++        "claude-desktop": 0,
++        codex: 0,
++        gemini: 0,
++        grokbuild: 0,
++        opencode: 0,
++        openclaw: 0,
++        hermes: 0,
++      };
++      serverEntries.forEach(([_, server]) => {
++        for (const app of MCP_APP_IDS) {
++          if (server.apps[app]) counts[app]++;
++        }
+       });
+-      if (result.failed.length > 0) {
+-        toast.error(
+-          t("common.bulkToggleFailed", { count: result.failed.length }),
+-          { closeButton: true },
+-        );
++      return counts;
++    }, [serverEntries]);
++
++    const pendingApp = bulkToggleAppMutation.isPending
++      ? (bulkToggleAppMutation.variables?.app ?? null)
++      : toggleAppMutation.isPending
++        ? (toggleAppMutation.variables?.app ?? null)
++        : null;
++
++    const handleToggleApp = async (
++      serverId: string,
++      app: AppId,
++      enabled: boolean,
++    ) => {
++      if (!isMcpAppId(app)) return;
++      if (!beginWrite()) return;
++      try {
++        await toggleAppMutation.mutateAsync({ serverId, app, enabled });
++      } catch (error) {
++        toast.error(t("common.error"), { description: String(error) });
++      } finally {
++        endWrite();
+       }
+-    } catch (error) {
+-      toast.error(t("common.bulkToggleFailed", { count: serverIds.length }), {
+-        description: String(error),
+-        closeButton: true,
+-      });
+-    } finally {
+-      endWrite();
+-    }
+-  };
+-
+-  const handleEdit = (id: string) => {
+-    if (writeLockRef.current || interactionBlocked) return;
+-    setEditingId(id);
+-    setIsFormOpen(true);
+-  };
++    };
+ 
+-  const handleAdd = () => {
+-    if (writeLockRef.current || interactionBlocked) return;
+-    setEditingId(null);
+-    setIsFormOpen(true);
+-  };
++    const handleToggleAll = async (app: AppId, enabled: boolean) => {
++      if (!isMcpAppId(app)) return;
++      if (!beginWrite()) return;
++
++      // AppCountBar summarizes the complete collection, so its bulk action must
++      // use the complete collection too, even while a search filter is active.
++      const serverIds = serverEntries
++        .filter(([_, server]) => Boolean(server.apps[app]) !== enabled)
++        .map(([id]) => id);
++      if (serverIds.length === 0) {
++        endWrite();
++        return;
++      }
+ 
+-  const handleImport = async () => {
+-    if (!beginWrite()) return;
+-    try {
+-      const count = await importMutation.mutateAsync();
+-      if (count === 0) {
+-        toast.success(t("mcp.unifiedPanel.noImportFound"), {
+-          closeButton: true,
++      try {
++        const result = await bulkToggleAppMutation.mutateAsync({
++          serverIds,
++          app,
++          enabled,
+         });
+-      } else {
+-        toast.success(t("mcp.unifiedPanel.importSuccess", { count }), {
++        if (result.failed.length > 0) {
++          toast.error(
++            t("common.bulkToggleFailed", { count: result.failed.length }),
++            { closeButton: true },
++          );
++        }
++      } catch (error) {
++        toast.error(t("common.bulkToggleFailed", { count: serverIds.length }), {
++          description: String(error),
+           closeButton: true,
+         });
++      } finally {
++        endWrite();
+       }
+-    } catch (error) {
+-      toast.error(t("common.error"), { description: String(error) });
+-    } finally {
+-      endWrite();
+-    }
+-  };
++    };
++
++    const handleEdit = (id: string) => {
++      if (writeLockRef.current || interactionBlocked) return;
++      setEditingId(id);
++      setIsFormOpen(true);
++    };
++
++    const handleAdd = () => {
++      if (writeLockRef.current || interactionBlocked) return;
++      setEditingId(null);
++      setIsFormOpen(true);
++    };
+ 
+-  React.useImperativeHandle(ref, () => ({
+-    openAdd: handleAdd,
+-    openImport: handleImport,
+-  }));
+-
+-  const handleDelete = (id: string) => {
+-    if (writeLockRef.current || interactionBlocked) return;
+-    setConfirmDialog({
+-      isOpen: true,
+-      title: t("mcp.unifiedPanel.deleteServer"),
+-      message: t("mcp.unifiedPanel.deleteConfirm", { id }),
+-      onConfirm: async () => {
+-        if (!beginWrite(true)) return;
+-        try {
+-          await deleteServerMutation.mutateAsync(id);
+-          setConfirmDialog(null);
+-          toast.success(t("common.success"), { closeButton: true });
+-        } catch (error) {
+-          toast.error(t("common.error"), { description: String(error) });
+-        } finally {
+-          endWrite();
++    const handleImport = async () => {
++      if (!beginWrite()) return;
++      try {
++        const count = await importMutation.mutateAsync();
++        if (count === 0) {
++          toast.success(t("mcp.unifiedPanel.noImportFound"), {
++            closeButton: true,
++          });
++        } else {
++          toast.success(t("mcp.unifiedPanel.importSuccess", { count }), {
++            closeButton: true,
++          });
+         }
+-      },
+-    });
+-  };
++      } catch (error) {
++        toast.error(t("common.error"), { description: String(error) });
++      } finally {
++        endWrite();
++      }
++    };
+ 
+-  const handleCloseForm = () => {
+-    setIsFormOpen(false);
+-    setEditingId(null);
+-  };
++    React.useImperativeHandle(ref, () => ({
++      openAdd: handleAdd,
++      openImport: handleImport,
++    }));
++
++    const handleDelete = (id: string) => {
++      if (writeLockRef.current || interactionBlocked) return;
++      setConfirmDialog({
++        isOpen: true,
++        title: t("mcp.unifiedPanel.deleteServer"),
++        message: t("mcp.unifiedPanel.deleteConfirm", { id }),
++        onConfirm: async () => {
++          if (!beginWrite(true)) return;
++          try {
++            await deleteServerMutation.mutateAsync(id);
++            setConfirmDialog(null);
++            toast.success(t("common.success"), { closeButton: true });
++          } catch (error) {
++            toast.error(t("common.error"), { description: String(error) });
++          } finally {
++            endWrite();
++          }
++        },
++      });
++    };
+ 
+-  return (
+-    <div className="px-6 flex flex-col flex-1 min-h-0 overflow-hidden">
+-      <AppCountBar
+-        totalLabel={t("mcp.serverCount", { count: serverEntries.length })}
+-        counts={enabledCounts}
+-        appIds={MCP_APP_IDS}
+-        totalCount={serverEntries.length}
+-        onToggleAll={handleToggleAll}
+-        pendingApp={pendingApp}
+-        disabled={interactionBlocked}
+-      />
++    const handleCloseForm = () => {
++      setIsFormOpen(false);
++      setEditingId(null);
++    };
+ 
+-      <ManagementListSearch
+-        value={searchQuery}
+-        onValueChange={setSearchQuery}
+-        placeholder={t("mcp.unifiedPanel.searchPlaceholder")}
+-        ariaLabel={t("mcp.unifiedPanel.searchAriaLabel")}
+-        clearLabel={t("common.clear")}
+-      />
++    return (
++      <div className="px-6 flex flex-col flex-1 min-h-0 overflow-hidden">
++        <AppCountBar
++          totalLabel={t("mcp.serverCount", { count: serverEntries.length })}
++          counts={enabledCounts}
++          appIds={MCP_APP_IDS}
++          totalCount={serverEntries.length}
++          onToggleAll={handleToggleAll}
++          pendingApp={pendingApp}
++          disabled={interactionBlocked}
++        />
+ 
+-      <ScrollArea type="auto" className="-mr-3 flex-1 min-h-0">
+-        <div className="pb-24 pr-3">
+-          {isLoading ? (
+-            <div className="text-center py-12 text-muted-foreground">
+-              {t("mcp.loading")}
+-            </div>
+-          ) : serverEntries.length === 0 ? (
+-            <div className="text-center py-12">
+-              <div className="w-16 h-16 mx-auto mb-4 bg-muted rounded-full flex items-center justify-center">
+-                <Server size={24} className="text-muted-foreground" />
++        <ManagementListSearch
++          value={searchQuery}
++          onValueChange={setSearchQuery}
++          placeholder={t("mcp.unifiedPanel.searchPlaceholder")}
++          ariaLabel={t("mcp.unifiedPanel.searchAriaLabel")}
++          clearLabel={t("common.clear")}
++        />
++
++        <ScrollArea type="auto" className="-mr-3 flex-1 min-h-0">
++          <div className="pb-24 pr-3">
++            {isLoading ? (
++              <div className="text-center py-12 text-muted-foreground">
++                {t("mcp.loading")}
+               </div>
+-              <h3 className="text-lg font-medium text-foreground mb-2">
+-                {t("mcp.unifiedPanel.noServers")}
+-              </h3>
+-              <p className="text-muted-foreground text-sm">
+-                {t("mcp.emptyDescription")}
+-              </p>
+-            </div>
+-          ) : filteredServerEntries.length === 0 ? (
+-            <div className="flex flex-col items-center justify-center py-12 text-center text-muted-foreground">
+-              <Search className="mb-4 h-10 w-10 opacity-40" />
+-              <p className="text-sm">{t("mcp.unifiedPanel.noSearchResults")}</p>
+-            </div>
+-          ) : (
+-            <TooltipProvider delayDuration={300}>
+-              <div className="rounded-xl border border-border-default overflow-hidden">
+-                {filteredServerEntries.map(([id, server], index) => (
+-                  <UnifiedMcpListItem
+-                    key={id}
+-                    id={id}
+-                    server={server}
+-                    onToggleApp={handleToggleApp}
+-                    onEdit={handleEdit}
+-                    onDelete={handleDelete}
+-                    disabled={interactionBlocked}
+-                    isLast={index === filteredServerEntries.length - 1}
+-                  />
+-                ))}
++            ) : serverEntries.length === 0 ? (
++              <div className="text-center py-12">
++                <div className="w-16 h-16 mx-auto mb-4 bg-muted rounded-full flex items-center justify-center">
++                  <Server size={24} className="text-muted-foreground" />
++                </div>
++                <h3 className="text-lg font-medium text-foreground mb-2">
++                  {t("mcp.unifiedPanel.noServers")}
++                </h3>
++                <p className="text-muted-foreground text-sm">
++                  {t("mcp.emptyDescription")}
++                </p>
+               </div>
+-            </TooltipProvider>
+-          )}
+-        </div>
+-      </ScrollArea>
++            ) : filteredServerEntries.length === 0 ? (
++              <div className="flex flex-col items-center justify-center py-12 text-center text-muted-foreground">
++                <Search className="mb-4 h-10 w-10 opacity-40" />
++                <p className="text-sm">
++                  {t("mcp.unifiedPanel.noSearchResults")}
++                </p>
++              </div>
++            ) : (
++              <TooltipProvider delayDuration={300}>
++                <div className="rounded-xl border border-border-default overflow-hidden">
++                  {filteredServerEntries.map(([id, server], index) => (
++                    <UnifiedMcpListItem
++                      key={id}
++                      id={id}
++                      server={server}
++                      onToggleApp={handleToggleApp}
++                      onEdit={handleEdit}
++                      onDelete={handleDelete}
++                      disabled={interactionBlocked}
++                      isLast={index === filteredServerEntries.length - 1}
++                    />
++                  ))}
++                </div>
++              </TooltipProvider>
++            )}
++          </div>
++        </ScrollArea>
++
++        {isFormOpen && (
++          <McpFormModal
++            editingId={editingId || undefined}
++            initialData={
++              editingId && serversMap
++                ? serverEntries.find(([id]) => id === editingId)?.[1]
++                : undefined
++            }
++            existingIds={serversMap ? Object.keys(serversMap) : []}
++            defaultFormat="json"
++            remoteTargetId={remoteTargetId}
++            remoteContainerId={remoteContainerId}
++            onSave={async () => {
++              setIsFormOpen(false);
++              setEditingId(null);
++            }}
++            onClose={handleCloseForm}
++          />
++        )}
+ 
+-      {isFormOpen && (
+-        <McpFormModal
+-          editingId={editingId || undefined}
+-          initialData={
+-            editingId && serversMap ? serversMap[editingId] : undefined
+-          }
+-          existingIds={serversMap ? Object.keys(serversMap) : []}
+-          defaultFormat="json"
+-          onSave={async () => {
+-            setIsFormOpen(false);
+-            setEditingId(null);
+-          }}
+-          onClose={handleCloseForm}
+-        />
+-      )}
+-
+-      {confirmDialog && (
+-        <ConfirmDialog
+-          isOpen={confirmDialog.isOpen}
+-          title={confirmDialog.title}
+-          message={confirmDialog.message}
+-          pending={writePending}
+-          onConfirm={confirmDialog.onConfirm}
+-          onCancel={() => setConfirmDialog(null)}
+-        />
+-      )}
+-    </div>
+-  );
+-});
++        {confirmDialog && (
++          <ConfirmDialog
++            isOpen={confirmDialog.isOpen}
++            title={confirmDialog.title}
++            message={confirmDialog.message}
++            pending={writePending}
++            onConfirm={confirmDialog.onConfirm}
++            onCancel={() => setConfirmDialog(null)}
++          />
++        )}
++      </div>
++    );
++  },
++);
+ 
+ UnifiedMcpPanel.displayName = "UnifiedMcpPanel";
+ 
+diff --git a/src/components/openclaw/AgentsDefaultsPanel.tsx b/src/components/openclaw/AgentsDefaultsPanel.tsx
+index 2a334a5..1877cb6 100644
+--- a/src/components/openclaw/AgentsDefaultsPanel.tsx
++++ b/src/components/openclaw/AgentsDefaultsPanel.tsx
+@@ -24,10 +24,18 @@ import { getOpenClawTimeoutInputValue } from "./utils";
+ 
+ const UNSET_SENTINEL = "__unset__";
+ 
+-const AgentsDefaultsPanel: React.FC = () => {
++interface AgentsDefaultsPanelProps {
++  remoteTargetId?: string;
++  remoteContainerId?: string;
++}
++
++const AgentsDefaultsPanel: React.FC<AgentsDefaultsPanelProps> = ({
++  remoteTargetId,
++  remoteContainerId,
++}) => {
+   const { t } = useTranslation();
+-  const { data: agentsData, isLoading } = useOpenClawAgentsDefaults();
+-  const saveAgentsMutation = useSaveOpenClawAgentsDefaults();
++  const { data: agentsData, isLoading } = useOpenClawAgentsDefaults(remoteTargetId, remoteContainerId);
++  const saveAgentsMutation = useSaveOpenClawAgentsDefaults(remoteTargetId, remoteContainerId);
+   const { options: modelOptions, isLoading: modelsLoading } =
+     useOpenClawModelOptions();
+ 
+diff --git a/src/components/openclaw/EnvPanel.tsx b/src/components/openclaw/EnvPanel.tsx
+index 3137c38..54ef1f3 100644
+--- a/src/components/openclaw/EnvPanel.tsx
++++ b/src/components/openclaw/EnvPanel.tsx
+@@ -8,10 +8,15 @@ import { Button } from "@/components/ui/button";
+ import JsonEditor from "@/components/JsonEditor";
+ import { parseOpenClawEnvEditorValue } from "./utils";
+ 
+-const EnvPanel: React.FC = () => {
++interface EnvPanelProps {
++  remoteTargetId?: string;
++  remoteContainerId?: string;
++}
++
++const EnvPanel: React.FC<EnvPanelProps> = ({ remoteTargetId, remoteContainerId }) => {
+   const { t } = useTranslation();
+-  const { data: envData, isLoading } = useOpenClawEnv();
+-  const saveEnvMutation = useSaveOpenClawEnv();
++  const { data: envData, isLoading } = useOpenClawEnv(remoteTargetId, remoteContainerId);
++  const saveEnvMutation = useSaveOpenClawEnv(remoteTargetId, remoteContainerId);
+   const [editorValue, setEditorValue] = useState("{}");
+   const [isDarkMode, setIsDarkMode] = useState(false);
+ 
+diff --git a/src/components/openclaw/ToolsPanel.tsx b/src/components/openclaw/ToolsPanel.tsx
+index 5d8ec09..70cd543 100644
+--- a/src/components/openclaw/ToolsPanel.tsx
++++ b/src/components/openclaw/ToolsPanel.tsx
+@@ -29,10 +29,15 @@ interface ListItem {
+   value: string;
+ }
+ 
+-const ToolsPanel: React.FC = () => {
++interface ToolsPanelProps {
++  remoteTargetId?: string;
++  remoteContainerId?: string;
++}
++
++const ToolsPanel: React.FC<ToolsPanelProps> = ({ remoteTargetId, remoteContainerId }) => {
+   const { t } = useTranslation();
+-  const { data: toolsData, isLoading } = useOpenClawTools();
+-  const saveToolsMutation = useSaveOpenClawTools();
++  const { data: toolsData, isLoading } = useOpenClawTools(remoteTargetId, remoteContainerId);
++  const saveToolsMutation = useSaveOpenClawTools(remoteTargetId, remoteContainerId);
+   const [config, setConfig] = useState<OpenClawToolsConfig>({});
+   const [allowList, setAllowList] = useState<ListItem[]>([]);
+   const [denyList, setDenyList] = useState<ListItem[]>([]);
+diff --git a/src/components/prompts/PiNativePromptResources.tsx b/src/components/prompts/PiNativePromptResources.tsx
+index 21c1019..cfd3b70 100644
+--- a/src/components/prompts/PiNativePromptResources.tsx
++++ b/src/components/prompts/PiNativePromptResources.tsx
+@@ -37,6 +37,14 @@ import {
+   type PiPromptFileSnapshot,
+   type PiPromptTemplate,
+ } from "@/lib/api/prompts";
++import {
++  getRemotePiPromptFile,
++  replaceRemotePiPromptFile,
++  deleteRemotePiPromptFile,
++  listRemotePiPromptTemplates,
++  upsertRemotePiPromptTemplate,
++  deleteRemotePiPromptTemplate,
++} from "@/lib/api/remote";
+ import { useDarkMode } from "@/hooks/useDarkMode";
+ import {
+   getPiPromptTemplateDescription,
+@@ -85,10 +93,14 @@ function PiInstructionFileEditor({
+   file,
+   snapshot,
+   onClose,
++  remoteTargetId,
++  remoteContainerId,
+ }: {
+   file: (typeof EDITABLE_FILES)[number];
+   snapshot: PiPromptFileSnapshot;
+   onClose: () => void;
++  remoteTargetId?: string;
++  remoteContainerId?: string;
+ }) {
+   const { t } = useTranslation();
+   const darkMode = useDarkMode();
+@@ -97,11 +109,16 @@ function PiInstructionFileEditor({
+   const [draft, setDraft] = useState(baseSnapshot.content);
+   const [confirmCreate, setConfirmCreate] = useState(false);
+   const [confirmDelete, setConfirmDelete] = useState(false);
+-  const queryKey = promptFileKey(file.kind);
++  const isRemote = Boolean(remoteTargetId);
++  const queryKey = isRemote
++    ? ["remote", "pi", "promptFile", file.kind, remoteTargetId, remoteContainerId ?? "__host__"]
++    : promptFileKey(file.kind);
+ 
+   const save = useMutation({
+     mutationFn: () =>
+-      promptsApi.replacePiPromptFile(file.kind, baseSnapshot.revision, draft),
++      isRemote
++        ? replaceRemotePiPromptFile(remoteTargetId!, file.kind, baseSnapshot.revision, draft, remoteContainerId)
++        : promptsApi.replacePiPromptFile(file.kind, baseSnapshot.revision, draft),
+     onSuccess: (nextSnapshot) => {
+       queryClient.setQueryData<PiPromptFileSnapshot>(queryKey, nextSnapshot);
+       toast.success(t("pi.prompts.fileSaved", { filename: file.filename }), {
+@@ -118,7 +135,9 @@ function PiInstructionFileEditor({
+ 
+   const remove = useMutation({
+     mutationFn: () =>
+-      promptsApi.deletePiPromptFile(file.kind, baseSnapshot.revision),
++      isRemote
++        ? deleteRemotePiPromptFile(remoteTargetId!, file.kind, baseSnapshot.revision, remoteContainerId)
++        : promptsApi.deletePiPromptFile(file.kind, baseSnapshot.revision),
+     onSuccess: async () => {
+       await queryClient.invalidateQueries({ queryKey });
+       toast.success(t("pi.prompts.fileRemoved", { filename: file.filename }), {
+@@ -247,14 +266,24 @@ function PiInstructionFileEditor({
+ 
+ function PiInstructionFileCard({
+   file,
++  remoteTargetId,
++  remoteContainerId,
+ }: {
+   file: (typeof EDITABLE_FILES)[number];
++  remoteTargetId?: string;
++  remoteContainerId?: string;
+ }) {
+   const { t } = useTranslation();
+   const [editing, setEditing] = useState(false);
++  const isRemote = Boolean(remoteTargetId);
+   const query = useQuery({
+-    queryKey: promptFileKey(file.kind),
+-    queryFn: () => promptsApi.getPiPromptFile(file.kind),
++    queryKey: isRemote
++      ? ["remote", "pi", "promptFile", file.kind, remoteTargetId, remoteContainerId ?? "__host__"]
++      : promptFileKey(file.kind),
++    queryFn: () =>
++      isRemote
++        ? getRemotePiPromptFile(remoteTargetId!, file.kind, remoteContainerId)
++        : promptsApi.getPiPromptFile(file.kind),
+   });
+ 
+   const status = (() => {
+@@ -354,13 +383,21 @@ function PiInstructionFileCard({
+           file={file}
+           snapshot={query.data}
+           onClose={() => setEditing(false)}
++          remoteTargetId={remoteTargetId}
++          remoteContainerId={remoteContainerId}
+         />
+       )}
+     </>
+   );
+ }
+ 
+-export function PiSystemPromptFiles() {
++export function PiSystemPromptFiles({
++  remoteTargetId,
++  remoteContainerId,
++}: {
++  remoteTargetId?: string;
++  remoteContainerId?: string;
++} = {}) {
+   const { t } = useTranslation();
+ 
+   return (
+@@ -371,7 +408,12 @@ export function PiSystemPromptFiles() {
+ 
+       <div className="grid grid-cols-1 gap-3">
+         {EDITABLE_FILES.map((file) => (
+-          <PiInstructionFileCard key={file.kind} file={file} />
++          <PiInstructionFileCard
++            key={file.kind}
++            file={file}
++            remoteTargetId={remoteTargetId}
++            remoteContainerId={remoteContainerId}
++          />
+         ))}
+       </div>
+     </section>
+@@ -383,6 +425,8 @@ interface PiPromptTemplateEditorProps {
+   existingSlugs: Set<string>;
+   onClose: () => void;
+   onChanged: () => Promise<void>;
++  remoteTargetId?: string;
++  remoteContainerId?: string;
+ }
+ 
+ function PiPromptTemplateEditor({
+@@ -390,6 +434,8 @@ function PiPromptTemplateEditor({
+   existingSlugs,
+   onClose,
+   onChanged,
++  remoteTargetId,
++  remoteContainerId,
+ }: PiPromptTemplateEditorProps) {
+   const { t } = useTranslation();
+   const darkMode = useDarkMode();
+@@ -418,14 +464,24 @@ function PiPromptTemplateEditor({
+     ? setPiPromptTemplateDescription(content, description)
+     : (template?.content ?? content);
+ 
++  const isRemote = Boolean(remoteTargetId);
+   const save = useMutation({
+     mutationFn: () =>
+-      promptsApi.upsertPiPromptTemplate(
+-        normalizedSlug,
+-        template?.revision ?? "missing",
+-        serializedContent,
+-        template?.slug,
+-      ),
++      isRemote
++        ? upsertRemotePiPromptTemplate(
++            remoteTargetId!,
++            normalizedSlug,
++            template?.revision ?? "missing",
++            serializedContent,
++            template?.slug,
++            remoteContainerId,
++          )
++        : promptsApi.upsertPiPromptTemplate(
++            normalizedSlug,
++            template?.revision ?? "missing",
++            serializedContent,
++            template?.slug,
++          ),
+     onSuccess: async (saved) => {
+       await onChanged();
+       toast.success(
+@@ -575,8 +631,11 @@ export interface PiPromptTemplatesHandle {
+   openCreate: () => void;
+ }
+ 
+-export const PiPromptTemplates = forwardRef<PiPromptTemplatesHandle>(
+-  function PiPromptTemplates(_props, ref) {
++export const PiPromptTemplates = forwardRef<PiPromptTemplatesHandle, {
++  remoteTargetId?: string;
++  remoteContainerId?: string;
++}>(
++  function PiPromptTemplates({ remoteTargetId, remoteContainerId }, ref) {
+     const { t } = useTranslation();
+     const queryClient = useQueryClient();
+     const [search, setSearch] = useState("");
+@@ -586,10 +645,17 @@ export const PiPromptTemplates = forwardRef<PiPromptTemplatesHandle>(
+     const [pendingDelete, setPendingDelete] = useState<PiPromptTemplate | null>(
+       null,
+     );
++    const isRemote = Boolean(remoteTargetId);
++    const templatesQueryKey = isRemote
++      ? ["remote", "pi", "promptTemplates", remoteTargetId, remoteContainerId ?? "__host__"]
++      : promptTemplatesKey;
+ 
+     const templates = useQuery({
+-      queryKey: promptTemplatesKey,
+-      queryFn: () => promptsApi.listPiPromptTemplates(),
++      queryKey: templatesQueryKey,
++      queryFn: () =>
++        isRemote
++          ? listRemotePiPromptTemplates(remoteTargetId!, remoteContainerId)
++          : promptsApi.listPiPromptTemplates(),
+     });
+ 
+     useImperativeHandle(ref, () => ({
+@@ -597,12 +663,14 @@ export const PiPromptTemplates = forwardRef<PiPromptTemplatesHandle>(
+     }));
+ 
+     const refresh = async () => {
+-      await queryClient.invalidateQueries({ queryKey: promptTemplatesKey });
++      await queryClient.invalidateQueries({ queryKey: templatesQueryKey });
+     };
+ 
+     const remove = useMutation({
+       mutationFn: (template: PiPromptTemplate) =>
+-        promptsApi.deletePiPromptTemplate(template.slug, template.revision),
++        isRemote
++          ? deleteRemotePiPromptTemplate(remoteTargetId!, template.slug, template.revision, remoteContainerId)
++          : promptsApi.deletePiPromptTemplate(template.slug, template.revision),
+       onSuccess: async (_removed, template) => {
+         await refresh();
+         toast.success(
+@@ -765,6 +833,8 @@ export const PiPromptTemplates = forwardRef<PiPromptTemplatesHandle>(
+             existingSlugs={existingSlugs}
+             onClose={() => setEditor(null)}
+             onChanged={refresh}
++            remoteTargetId={remoteTargetId}
++            remoteContainerId={remoteContainerId}
+           />
+         )}
+ 
+diff --git a/src/components/prompts/PiPromptPanel.tsx b/src/components/prompts/PiPromptPanel.tsx
+index 097ee96..a35c82b 100644
+--- a/src/components/prompts/PiPromptPanel.tsx
++++ b/src/components/prompts/PiPromptPanel.tsx
+@@ -1,11 +1,13 @@
+-import React, { useEffect, useRef, useState } from "react";
++import React, { useCallback, useEffect, useRef, useState } from "react";
+ import { useTranslation } from "react-i18next";
++import { toast } from "sonner";
+ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+ import { ScrollArea } from "@/components/ui/scroll-area";
+ import { ConfirmDialog } from "@/components/ConfirmDialog";
+ import { usePromptActions } from "@/hooks/usePromptActions";
+ import { useTauriEvent } from "@/hooks/useTauriEvent";
+ import type { Prompt } from "@/lib/api";
++import { listRemotePrompts, saveRemotePrompts, type RemotePrompt } from "@/lib/api/remote";
+ import PromptFormPanel from "./PromptFormPanel";
+ import { PromptLibrary } from "./PromptLibrary";
+ import {
+@@ -19,6 +21,8 @@ export type PromptPrimaryAction = "prompt" | "template" | null;
+ 
+ interface PiPromptPanelProps {
+   open: boolean;
++  remoteTargetId?: string;
++  remoteContainerId?: string;
+   onInteractionBlockedChange?: (blocked: boolean) => void;
+   onNavigationBlockedChange?: (blocked: boolean) => void;
+   onPrimaryActionChange?: (action: PromptPrimaryAction) => void;
+@@ -38,6 +42,8 @@ const PiPromptPanel = React.forwardRef<PiPromptPanelHandle, PiPromptPanelProps>(
+   (
+     {
+       open,
++      remoteTargetId,
++      remoteContainerId,
+       onInteractionBlockedChange,
+       onNavigationBlockedChange,
+       onPrimaryActionChange,
+@@ -52,25 +58,56 @@ const PiPromptPanel = React.forwardRef<PiPromptPanelHandle, PiPromptPanelProps>(
+     const [deletingPrompt, setDeletingPrompt] = useState<Prompt | null>(null);
+     const templatesRef = useRef<PiPromptTemplatesHandle>(null);
+ 
++    const isRemote = Boolean(remoteTargetId);
++
+     const {
+-      prompts,
+-      loading,
++      prompts: localPrompts,
++      loading: localLoading,
+       currentFileContent,
+       togglingId,
+-      reload,
++      reload: localReload,
+       savePrompt,
+       deletePrompt,
+       toggleEnabled,
+     } = usePromptActions("pi");
++
++    // 远端模式：listRemotePrompts + saveRemotePrompts（与 StandardPromptPanel 远端模式一致）
++    const [remotePrompts, setRemotePrompts] = useState<Record<string, RemotePrompt>>({});
++    const [remoteLoading, setRemoteLoading] = useState(false);
++
++    const loadRemote = useCallback(async () => {
++      if (!remoteTargetId) return;
++      setRemoteLoading(true);
++      try {
++        const list = await listRemotePrompts(
++          remoteTargetId,
++          remoteContainerId || undefined,
++          "pi",
++        );
++        const map: Record<string, RemotePrompt> = {};
++        list.forEach((p) => { map[p.id] = p; });
++        setRemotePrompts(map);
++      } catch (e) {
++        toast.error(String(e));
++      } finally {
++        setRemoteLoading(false);
++      }
++    }, [remoteTargetId, remoteContainerId]);
++
++    const prompts = isRemote ? remotePrompts : localPrompts;
++    const loading = isRemote ? remoteLoading : localLoading;
+     const dialogOpen = deletingPrompt !== null;
+     const writePending = Boolean(togglingId);
+     const interactionBlocked =
+-      loading || writePending || isFormOpen || dialogOpen;
++      loading || writePending || isFormOpen || dialogOpen || remoteLoading;
+     const navigationBlocked = writePending || isFormOpen || dialogOpen;
+ 
+     useEffect(() => {
+-      if (open) void reload();
+-    }, [open, reload]);
++      if (open && !isRemote) void localReload();
++    }, [open, isRemote, localReload]);
++    useEffect(() => {
++      if (open && isRemote) void loadRemote();
++    }, [open, isRemote, loadRemote]);
+ 
+     useEffect(() => {
+       onPrimaryActionChange?.(actionForTab(activeTab));
+@@ -96,17 +133,19 @@ const PiPromptPanel = React.forwardRef<PiPromptPanelHandle, PiPromptPanelProps>(
+       const handlePromptImported = (event: Event) => {
+         const customEvent = event as CustomEvent;
+         if (customEvent.detail?.app === "pi") {
+-          void reload();
++          if (isRemote) void loadRemote();
++          else void localReload();
+         }
+       };
+ 
+       window.addEventListener("prompt-imported", handlePromptImported);
+       return () =>
+         window.removeEventListener("prompt-imported", handlePromptImported);
+-    }, [reload]);
++    }, [isRemote, localReload, loadRemote]);
+ 
+     useTauriEvent("profile-applied", () => {
+-      void reload();
++      if (isRemote) void loadRemote();
++      else void localReload();
+     });
+ 
+     const openGlobalPromptForm = (id?: string) => {
+@@ -135,10 +174,29 @@ const PiPromptPanel = React.forwardRef<PiPromptPanelHandle, PiPromptPanelProps>(
+     const handleDelete = async () => {
+       if (!deletingPrompt) return;
+       try {
+-        await deletePrompt(deletingPrompt.id);
++        if (isRemote && remoteTargetId) {
++          const list = Object.values(remotePrompts).filter(
++            (p) => p.id !== deletingPrompt.id,
++          );
++          await saveRemotePrompts(
++            remoteTargetId,
++            list,
++            remoteContainerId || undefined,
++            "pi",
++          );
++          setRemotePrompts((prev) => {
++            const next = { ...prev };
++            delete next[deletingPrompt.id];
++            return next;
++          });
++          toast.success(t("prompts.deleteSuccess"), { closeButton: true });
++        } else {
++          await deletePrompt(deletingPrompt.id);
++          // usePromptActions owns the error toast.
++        }
+         setDeletingPrompt(null);
+-      } catch {
+-        // usePromptActions owns the error toast.
++      } catch (error) {
++        toast.error(t("prompts.deleteFailed"), { description: String(error) });
+       }
+     };
+ 
+@@ -180,7 +238,56 @@ const PiPromptPanel = React.forwardRef<PiPromptPanelHandle, PiPromptPanelProps>(
+               }
+               disabled={interactionBlocked}
+               onSearchQueryChange={setSearchQuery}
+-              onToggle={(id, enabled) => {
++              onToggle={async (id, enabled) => {
++                if (isRemote && remoteTargetId) {
++                  // 远端：乐观更新 + 写回远端
++                  const prev = { ...remotePrompts };
++                  if (enabled) {
++                    const updated: Record<string, RemotePrompt> = {};
++                    Object.keys(remotePrompts).forEach((k) => {
++                      updated[k] = { ...remotePrompts[k], enabled: k === id };
++                    });
++                    setRemotePrompts(updated);
++                  } else {
++                    setRemotePrompts((p) => ({
++                      ...p,
++                      [id]: { ...p[id], enabled: false },
++                    }));
++                  }
++                  try {
++                    const list = Object.values(
++                      enabled
++                        ? Object.keys(remotePrompts).reduce<
++                            Record<string, RemotePrompt>
++                          >((acc, k) => {
++                            acc[k] = { ...remotePrompts[k], enabled: k === id };
++                            return acc;
++                          }, {})
++                        : {
++                            ...remotePrompts,
++                            [id]: { ...remotePrompts[id], enabled: false },
++                          },
++                    );
++                    await saveRemotePrompts(
++                      remoteTargetId,
++                      list,
++                      remoteContainerId || undefined,
++                      "pi",
++                    );
++                    toast.success(
++                      enabled
++                        ? t("prompts.enableSuccess")
++                        : t("prompts.disableSuccess"),
++                      { closeButton: true },
++                    );
++                  } catch {
++                    setRemotePrompts(prev); // 回滚
++                    toast.error(
++                      enabled ? t("prompts.enableFailed") : t("prompts.disableFailed"),
++                    );
++                  }
++                  return;
++                }
+                 void toggleEnabled(id, enabled).catch(() => undefined);
+               }}
+               onEdit={openGlobalPromptForm}
+@@ -203,13 +310,20 @@ const PiPromptPanel = React.forwardRef<PiPromptPanelHandle, PiPromptPanelProps>(
+           >
+             <ScrollArea className="-mr-3 h-full" type="auto">
+               <div className="pb-16 pr-3">
+-                <PiSystemPromptFiles />
++                <PiSystemPromptFiles
++                  remoteTargetId={remoteTargetId}
++                  remoteContainerId={remoteContainerId}
++                />
+               </div>
+             </ScrollArea>
+           </TabsContent>
+ 
+           <TabsContent value="templates" className="m-0 min-h-0 min-w-0 flex-1">
+-            <PiPromptTemplates ref={templatesRef} />
++            <PiPromptTemplates
++              ref={templatesRef}
++              remoteTargetId={remoteTargetId}
++              remoteContainerId={remoteContainerId}
++            />
+           </TabsContent>
+         </Tabs>
+ 
+@@ -218,7 +332,41 @@ const PiPromptPanel = React.forwardRef<PiPromptPanelHandle, PiPromptPanelProps>(
+             appId="pi"
+             editingId={editingId ?? undefined}
+             initialData={editingId ? prompts[editingId] : undefined}
+-            onSave={savePrompt}
++            onSave={async (id, prompt) => {
++              if (isRemote && remoteTargetId) {
++                const list = Object.values(remotePrompts);
++                if (editingId) {
++                  const idx = list.findIndex((p) => p.id === editingId);
++                  if (idx >= 0) {
++                    list[idx] = {
++                      ...list[idx],
++                      ...prompt,
++                      id: editingId,
++                      updatedAt: Date.now(),
++                    };
++                  }
++                } else {
++                  list.push({
++                    ...prompt,
++                    id,
++                    createdAt: Date.now(),
++                    updatedAt: Date.now(),
++                  } as RemotePrompt);
++                }
++                await saveRemotePrompts(
++                  remoteTargetId,
++                  list,
++                  remoteContainerId || undefined,
++                  "pi",
++                );
++                const map: Record<string, RemotePrompt> = {};
++                list.forEach((p) => { map[p.id] = p; });
++                setRemotePrompts(map);
++                toast.success(t("prompts.saveSuccess"), { closeButton: true });
++                return true;
++              }
++              return savePrompt(id, prompt);
++            }}
+             onClose={() => setIsFormOpen(false)}
+           />
+         )}
+diff --git a/src/components/prompts/PromptPanel.tsx b/src/components/prompts/PromptPanel.tsx
+index 3e2eba3..3b5323c 100644
+--- a/src/components/prompts/PromptPanel.tsx
++++ b/src/components/prompts/PromptPanel.tsx
+@@ -1,5 +1,7 @@
+-import React, { useEffect, useState } from "react";
++﻿import React, { useCallback, useEffect, useMemo, useState } from "react";
+ import { useTranslation } from "react-i18next";
++
++import { toast } from "sonner";
+ import { type AppId } from "@/lib/api";
+ import { usePromptActions } from "@/hooks/usePromptActions";
+ import { useTauriEvent } from "@/hooks/useTauriEvent";
+@@ -7,11 +9,20 @@ import PiPromptPanel, { type PromptPrimaryAction } from "./PiPromptPanel";
+ import PromptFormPanel from "./PromptFormPanel";
+ import { PromptLibrary } from "./PromptLibrary";
+ import { ConfirmDialog } from "../ConfirmDialog";
++import {
++  listRemotePrompts,
++  saveRemotePrompts,
++  type RemotePrompt,
++} from "@/lib/api/remote";
+ 
+ interface PromptPanelProps {
+   open: boolean;
+   onOpenChange: (open: boolean) => void;
+   appId: AppId;
++  /** 选中远端目标时，Prompts 直接编辑该主机 ~/.claude/CLAUDE.md */
++  remoteTargetId?: string;
++  /** 目标细化到 Docker 容器时，编辑容器内 ~/.claude/CLAUDE.md */
++  remoteContainerId?: string;
+   onInteractionBlockedChange?: (blocked: boolean) => void;
+   onNavigationBlockedChange?: (blocked: boolean) => void;
+   onPrimaryActionChange?: (action: PromptPrimaryAction) => void;
+@@ -31,6 +42,8 @@ const StandardPromptPanel = React.forwardRef<
+     {
+       open,
+       appId,
++      remoteTargetId,
++      remoteContainerId,
+       onInteractionBlockedChange,
+       onNavigationBlockedChange,
+       onPrimaryActionChange,
+@@ -38,6 +51,9 @@ const StandardPromptPanel = React.forwardRef<
+     ref,
+   ) => {
+     const { t } = useTranslation();
++    // 远端目标下走远端 prompts 管理（所有 app，后端按 app 映射 live 提示词文件）
++    const isRemote = Boolean(remoteTargetId);
++
+     const [isFormOpen, setIsFormOpen] = useState(false);
+     const [editingId, setEditingId] = useState<string | null>(null);
+     const [searchQuery, setSearchQuery] = useState("");
+@@ -56,14 +72,42 @@ const StandardPromptPanel = React.forwardRef<
+     const overlayOpenRef = React.useRef(false);
+     const externalReloadQueuedRef = React.useRef(false);
+ 
+-    const {
+-      prompts,
+-      loading,
+-      reload,
+-      savePrompt,
+-      deletePrompt,
+-      toggleEnabled,
+-    } = usePromptActions(appId);
++    // 本地：使用 DB hook
++    const localActions = usePromptActions(appId);
++    // 远端：自行管理状态
++    const [remoteLoading, setRemoteLoading] = useState(false);
++    const [remotePrompts, setRemotePrompts] = useState<
++      Record<string, RemotePrompt>
++    >({});
++
++    const loadRemote = useCallback(async () => {
++      if (!remoteTargetId) return;
++      setRemoteLoading(true);
++      try {
++        const list = await listRemotePrompts(
++          remoteTargetId,
++          remoteContainerId || undefined,
++          appId,
++        );
++        const map: Record<string, RemotePrompt> = {};
++        list.forEach((p) => {
++          map[p.id] = p;
++        });
++        setRemotePrompts(map);
++      } catch (e) {
++        toast.error(String(e));
++      } finally {
++        setRemoteLoading(false);
++      }
++    }, [remoteTargetId, remoteContainerId]);
++
++    const prompts = isRemote ? remotePrompts : localActions.prompts;
++    const loading = isRemote ? remoteLoading : localActions.loading;
++    const savePrompt = localActions.savePrompt;
++    const deletePrompt = localActions.deletePrompt;
++    const toggleEnabled = localActions.toggleEnabled;
++
++    const reload = isRemote ? loadRemote : localActions.reload;
+     const reloadRef = React.useRef(reload);
+     reloadRef.current = reload;
+ 
+@@ -150,7 +194,6 @@ const StandardPromptPanel = React.forwardRef<
+           void runExternalReload();
+         }
+       };
+-
+       window.addEventListener("prompt-imported", handlePromptImported);
+       return () => {
+         window.removeEventListener("prompt-imported", handlePromptImported);
+@@ -195,14 +238,33 @@ const StandardPromptPanel = React.forwardRef<
+         onConfirm: async () => {
+           if (!beginWrite()) return;
+           try {
+-            const refreshed = await deletePrompt(id);
+-            if (refreshed === false) {
+-              externalReloadQueuedRef.current = true;
++            if (isRemote && remoteTargetId) {
++              const list = Object.values(remotePrompts).filter(
++                (p) => p.id !== id,
++              );
++              await saveRemotePrompts(
++                remoteTargetId,
++                list,
++                remoteContainerId || undefined,
++                appId,
++              );
++              // 同步更新前端状态
++              setRemotePrompts((prev) => {
++                const next = { ...prev };
++                delete next[id];
++                return next;
++              });
++              toast.success(t("prompts.deleteSuccess"), { closeButton: true });
++            } else {
++              const refreshed = await deletePrompt(id);
++              if (refreshed === false) {
++                externalReloadQueuedRef.current = true;
++              }
+             }
+             overlayOpenRef.current = false;
+             setConfirmDialog(null);
+-          } catch {
+-            // Error handled by hook
++          } catch (e) {
++            toast.error(String(e));
+           } finally {
+             endWrite();
+           }
+@@ -213,6 +275,56 @@ const StandardPromptPanel = React.forwardRef<
+     const handleToggle = async (id: string, enabled: boolean) => {
+       if (!beginWrite()) return;
+       try {
++        if (isRemote && remoteTargetId) {
++          // 远端：乐观更新 + 写回远端 CLAUDE.md
++          const prev = { ...remotePrompts };
++          // 乐观更新：立即改 UI
++          if (enabled) {
++            const updated: Record<string, RemotePrompt> = {};
++            Object.keys(remotePrompts).forEach((k) => {
++              updated[k] = { ...remotePrompts[k], enabled: k === id };
++            });
++            setRemotePrompts(updated);
++          } else {
++            setRemotePrompts((p) => ({
++              ...p,
++              [id]: { ...p[id], enabled: false },
++            }));
++          }
++          try {
++            const list = Object.values(
++              enabled
++                ? Object.keys(remotePrompts).reduce<
++                    Record<string, RemotePrompt>
++                  >((acc, k) => {
++                    acc[k] = { ...remotePrompts[k], enabled: k === id };
++                    return acc;
++                  }, {})
++                : {
++                    ...remotePrompts,
++                    [id]: { ...remotePrompts[id], enabled: false },
++                  },
++            );
++            await saveRemotePrompts(
++              remoteTargetId,
++              list,
++              remoteContainerId || undefined,
++              appId,
++            );
++            toast.success(
++              enabled
++                ? t("prompts.enableSuccess")
++                : t("prompts.disableSuccess"),
++              { closeButton: true },
++            );
++          } catch (e) {
++            setRemotePrompts(prev); // 回滚
++            toast.error(
++              enabled ? t("prompts.enableFailed") : t("prompts.disableFailed"),
++            );
++          }
++          return;
++        }
+         const refreshed = await toggleEnabled(id, enabled);
+         if (refreshed === false) {
+           externalReloadQueuedRef.current = true;
+@@ -230,6 +342,41 @@ const StandardPromptPanel = React.forwardRef<
+     ) => {
+       if (!beginWrite()) return false;
+       try {
++        if (isRemote && remoteTargetId) {
++          const list = Object.values(remotePrompts);
++          if (editingId) {
++            const idx = list.findIndex((p) => p.id === editingId);
++            if (idx >= 0) {
++              list[idx] = {
++                ...list[idx],
++                ...prompt,
++                id: editingId,
++                updatedAt: Date.now(),
++              };
++            }
++          } else {
++            list.push({
++              ...prompt,
++              id,
++              createdAt: Date.now(),
++              updatedAt: Date.now(),
++            });
++          }
++          await saveRemotePrompts(
++            remoteTargetId,
++            list,
++            remoteContainerId || undefined,
++            appId,
++          );
++          // 同步更新前端状态
++          const map: Record<string, RemotePrompt> = {};
++          list.forEach((p) => {
++            map[p.id] = p;
++          });
++          setRemotePrompts(map);
++          toast.success(t("prompts.saveSuccess"), { closeButton: true });
++          return true;
++        }
+         const refreshed = await savePrompt(id, prompt);
+         if (refreshed === false) {
+           externalReloadQueuedRef.current = true;
+@@ -253,8 +400,8 @@ const StandardPromptPanel = React.forwardRef<
+       }
+     };
+ 
+-    const promptEntries = Object.entries(prompts);
+-    const enabledPrompt = promptEntries.find(([, prompt]) => prompt.enabled);
++    const promptEntries = useMemo(() => Object.entries(prompts), [prompts]);
++    const enabledPrompt = promptEntries.find(([_, p]) => p.enabled);
+ 
+     return (
+       <div className="flex flex-col flex-1 min-h-0 px-6">
+@@ -316,6 +463,8 @@ const PromptPanel = React.forwardRef<PromptPanelHandle, PromptPanelProps>(
+         <PiPromptPanel
+           ref={ref}
+           open={props.open}
++          remoteTargetId={props.remoteTargetId}
++          remoteContainerId={props.remoteContainerId}
+           onInteractionBlockedChange={props.onInteractionBlockedChange}
+           onNavigationBlockedChange={props.onNavigationBlockedChange}
+           onPrimaryActionChange={props.onPrimaryActionChange}
+diff --git a/src/components/providers/AddProviderDialog.tsx b/src/components/providers/AddProviderDialog.tsx
+index 10dc554..892643d 100644
+--- a/src/components/providers/AddProviderDialog.tsx
++++ b/src/components/providers/AddProviderDialog.tsx
+@@ -38,6 +38,8 @@ interface AddProviderDialogProps {
+       ensureGrokBuildOfficialSeed?: boolean;
+     },
+   ) => Promise<void> | void;
++  /** 远端目标下已存在的供应商 key 集合（添加时重复校验用） */
++  remoteExistingKeys?: string[];
+ }
+ 
+ export function AddProviderDialog({
+@@ -45,6 +47,7 @@ export function AddProviderDialog({
+   onOpenChange,
+   appId,
+   onSubmit,
++  remoteExistingKeys,
+ }: AddProviderDialogProps) {
+   const { t } = useTranslation();
+   // OpenCode and OpenClaw don't support universal providers
+@@ -433,6 +436,7 @@ export function AddProviderDialog({
+               onSubmittingChange={setIsFormSubmitting}
+               onSubmitReadyChange={handleSubmitReadyChange}
+               showButtons={false}
++              remoteExistingKeys={remoteExistingKeys}
+             />
+           </TabsContent>
+ 
+@@ -451,6 +455,7 @@ export function AddProviderDialog({
+           onSubmittingChange={setIsFormSubmitting}
+           onSubmitReadyChange={handleSubmitReadyChange}
+           showButtons={false}
++          remoteExistingKeys={remoteExistingKeys}
+         />
+       )}
+ 
+diff --git a/src/components/providers/EditProviderDialog.tsx b/src/components/providers/EditProviderDialog.tsx
+index 3c8cfcd..f10fba1 100644
+--- a/src/components/providers/EditProviderDialog.tsx
++++ b/src/components/providers/EditProviderDialog.tsx
+@@ -28,6 +28,10 @@ interface EditProviderDialogProps {
+   }) => Promise<void> | void;
+   appId: AppId;
+   isProxyTakeover?: boolean; // 代理接管模式下不读取 live（避免显示被接管后的代理配置）
++  /** 远端目标下的 live 供应商 ID 集合（编辑时标识锁定用） */
++  remoteLiveIds?: string[];
++  /** 远端目标下已存在的供应商 key 集合（重复校验用） */
++  remoteExistingKeys?: string[];
+ }
+ 
+ const asRecord = (value: unknown): Record<string, unknown> | null =>
+@@ -95,6 +99,8 @@ export function EditProviderDialog({
+   onSubmit,
+   appId,
+   isProxyTakeover = false,
++  remoteLiveIds,
++  remoteExistingKeys,
+ }: EditProviderDialogProps) {
+   const { t } = useTranslation();
+   const [isFormSubmitting, setIsFormSubmitting] = useState(false);
+@@ -364,6 +370,8 @@ export function EditProviderDialog({
+         initialData={initialData}
+         showButtons={false}
+         isProxyTakeover={isProxyTakeover}
++        remoteLiveIds={remoteLiveIds}
++        remoteExistingKeys={remoteExistingKeys}
+       />
+       <AuthSettingsPanel
+         target={authSettingsTarget}
+diff --git a/src/components/providers/ProviderActions.tsx b/src/components/providers/ProviderActions.tsx
+index b8899b0..1572550 100644
+--- a/src/components/providers/ProviderActions.tsx
++++ b/src/components/providers/ProviderActions.tsx
+@@ -36,6 +36,8 @@ interface ProviderActionsProps {
+   isCurrent: boolean;
+   isInConfig?: boolean;
+   isTesting?: boolean;
++  /** 远程切换进行中：禁用主按钮防连点（本机切换毫秒级无需） */
++  isSwitching?: boolean;
+   isProxyTakeover?: boolean;
+   isOmo?: boolean;
+   onSwitch: () => void;
+@@ -78,6 +80,7 @@ export function ProviderActions({
+   isCurrent,
+   isInConfig = false,
+   isTesting,
++  isSwitching,
+   isProxyTakeover = false,
+   isOmo = false,
+   onSwitch,
+@@ -366,21 +369,31 @@ export function ProviderActions({
+       {/* disabled:pointer-events-none prevents the native title from firing,
+           so the wrapper owns the explanatory tooltip and cursor. */}
+       <span
+-        title={buttonState.title}
++        title={
++          isSwitching
++            ? t("provider.switching", { defaultValue: "切换中…" })
++            : buttonState.title
++        }
+         className={cn(
+           "inline-flex",
+-          buttonState.disabled && "cursor-not-allowed",
++          (buttonState.disabled || isSwitching) && "cursor-not-allowed",
+         )}
+       >
+         <Button
+           size="sm"
+           variant={buttonState.variant}
+           onClick={handleMainButtonClick}
+-          disabled={buttonState.disabled}
++          disabled={buttonState.disabled || isSwitching}
+           className={cn("w-[4.5rem] px-2.5", buttonState.className)}
+         >
+-          {buttonState.icon}
+-          {buttonState.text}
++          {isSwitching ? (
++            <Loader2 className="h-4 w-4 animate-spin" />
++          ) : (
++            buttonState.icon
++          )}
++          {isSwitching
++            ? t("provider.switching", { defaultValue: "切换中…" })
++            : buttonState.text}
+         </Button>
+       </span>
+ 
+diff --git a/src/components/providers/ProviderCard.tsx b/src/components/providers/ProviderCard.tsx
+index 3927b62..d4e19c7 100644
+--- a/src/components/providers/ProviderCard.tsx
++++ b/src/components/providers/ProviderCard.tsx
+@@ -22,6 +22,7 @@ import SubscriptionQuotaFooter from "@/components/SubscriptionQuotaFooter";
+ import CopilotQuotaFooter from "@/components/CopilotQuotaFooter";
+ import CodexOauthQuotaFooter from "@/components/CodexOauthQuotaFooter";
+ import XaiOauthQuotaFooter from "@/components/XaiOauthQuotaFooter";
++import { useSettings } from "@/hooks/useSettings";
+ import { PROVIDER_TYPES, TEMPLATE_TYPES } from "@/config/constants";
+ import { isHermesReadOnlyProvider } from "@/config/hermesProviderPresets";
+ import { ProviderHealthBadge } from "@/components/providers/ProviderHealthBadge";
+@@ -52,6 +53,10 @@ interface ProviderCardProps {
+   provider: Provider;
+   isCurrent: boolean;
+   appId: AppId;
++  /** 远端目标：提供时余量查询改走远端 SSOT（见 useUsageQuery） */
++  remoteTargetId?: string;
++  /** 远端容器（宿主机为 undefined） */
++  remoteContainerId?: string;
+   isInConfig?: boolean; // OpenCode: 是否已添加到 opencode.json
+   isOmo?: boolean;
+   isOmoSlim?: boolean;
+@@ -67,6 +72,8 @@ interface ProviderCardProps {
+   onTest?: (provider: Provider) => void;
+   onOpenTerminal?: (provider: Provider) => void;
+   isTesting?: boolean;
++  /** 远程切换进行中：禁用切换按钮防连点 */
++  isSwitching?: boolean;
+   isProxyRunning: boolean;
+   isProxyTakeover?: boolean; // 代理接管模式（Live配置已被接管，切换为热切换）
+   dragHandleProps?: DragHandleProps;
+@@ -169,6 +176,8 @@ export function ProviderCard({
+   provider,
+   isCurrent,
+   appId,
++  remoteTargetId,
++  remoteContainerId,
+   isInConfig = true,
+   isOmo = false,
+   isOmoSlim = false,
+@@ -184,6 +193,7 @@ export function ProviderCard({
+   onTest,
+   onOpenTerminal,
+   isTesting,
++  isSwitching,
+   isProxyRunning,
+   isProxyTakeover = false,
+   dragHandleProps,
+@@ -230,7 +240,7 @@ export function ProviderCard({
+   // OMO and OMO Slim share the same card behavior
+   const isAnyOmo = isOmo || isOmoSlim;
+   const handleDisableAnyOmo = isOmoSlim ? onDisableOmoSlim : onDisableOmo;
+-  const isAdditiveMode = (appId === "opencode" && !isAnyOmo) || appId === "pi";
++  const isAdditiveMode = isAdditiveAppId(appId) && (appId !== "opencode" || !isAnyOmo);
+ 
+   const { data: health } = useProviderHealth(
+     provider.id,
+@@ -266,8 +276,9 @@ export function ProviderCard({
+   }, [provider.notes, displayUrl, fallbackUrlText]);
+ 
+   const isBoundCodexOfficial = codexOfficialIdentity === "managed_account";
+-  const usageEnabled =
+-    provider.meta?.usage_script?.enabled ?? isBoundCodexOfficial;
++  const usageEnabled = provider.meta?.usage_script?.enabled ?? isBoundCodexOfficial;
++  const { settings } = useSettings();
++  const quotaInline = (settings?.quotaDisplayMode ?? "compact") === "compact";
+   const isOfficial = isOfficialProvider(provider, appId);
+   const supportsOfficialSubscription =
+     isOfficial && ["claude", "codex", "gemini", "grokbuild"].includes(appId);
+@@ -319,6 +330,8 @@ export function ProviderCard({
+   const { data: usage } = useUsageQuery(provider.id, appId, {
+     enabled: usageEnabled && !isOfficial && !isOfficialSubscriptionUsage,
+     autoQueryInterval,
++    remoteTargetId,
++    remoteContainerId,
+   });
+ 
+   const isTokenPlan =
+@@ -329,10 +342,13 @@ export function ProviderCard({
+   const [isExpanded, setIsExpanded] = useState(false);
+ 
+   useEffect(() => {
+-    if (hasMultiplePlans) {
++    // 紧凑模式下强制收起，展开模式下多套餐自动展开
++    if (!quotaInline && hasMultiplePlans) {
+       setIsExpanded(true);
++    } else if (quotaInline) {
++      setIsExpanded(false);
+     }
+-  }, [hasMultiplePlans]);
++  }, [hasMultiplePlans, quotaInline]);
+ 
+   const handleOpenWebsite = () => {
+     if (!isClickableUrl) {
+@@ -604,14 +620,14 @@ export function ProviderCard({
+               {isCopilot ? (
+                 <CopilotQuotaFooter
+                   meta={provider.meta}
+-                  inline={true}
++                  inline={quotaInline}
+                   isCurrent={isCurrent}
+                 />
+               ) : isCodexOauth ? (
+                 !isBoundCodexOfficial || usageEnabled ? (
+                   <CodexOauthQuotaFooter
+                     meta={provider.meta}
+-                    inline={true}
++                    inline={quotaInline}
+                     isCurrent={isCurrent}
+                     autoQueryInterval={
+                       isBoundCodexOfficial
+@@ -623,30 +639,31 @@ export function ProviderCard({
+               ) : isXaiOauth ? (
+                 <XaiOauthQuotaFooter
+                   meta={provider.meta}
+-                  inline={true}
++                  inline={quotaInline}
+                   isCurrent={isCurrent}
+                 />
+               ) : isOfficial ? (
+                 officialSubscriptionEnabled ? (
+                   <SubscriptionQuotaFooter
+                     appId={appId}
+-                    inline={true}
++                    inline={quotaInline}
+                     isCurrent={isCurrent}
+                     autoQueryInterval={
+                       provider.meta?.usage_script?.autoQueryInterval ?? 0
+                     }
+                   />
+                 ) : null
+-              ) : hasMultiplePlans ? (
++              ) : !quotaInline ? (
++                // 展开模式：显示套餐摘要
+                 <div className="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-400">
+                   <span className="font-medium">
+-                    {t("usage.multiplePlans", {
+-                      count: usage?.data?.length || 0,
+-                      defaultValue: `${usage?.data?.length || 0} 个套餐`,
++                    {t("usage.subscriptionQuota", {
++                      defaultValue: "套餐用量",
+                     })}
+                   </span>
+                 </div>
+               ) : (
++                // 紧凑模式：直接显示 inline 格式
+                 <UsageFooter
+                   provider={provider}
+                   providerId={provider.id}
+@@ -654,10 +671,13 @@ export function ProviderCard({
+                   usageEnabled={usageEnabled}
+                   isCurrent={isCurrent}
+                   isInConfig={isInConfig}
+-                  inline={true}
++                  inline={quotaInline}
++                  remoteTargetId={remoteTargetId}
++                  remoteContainerId={remoteContainerId}
+                 />
+               )}
+-              {hasMultiplePlans && (
++              {/* 展开按钮：仅展开模式显示，紧凑模式完全隐藏 */}
++              {!quotaInline && (
+                 <button
+                   onClick={(e) => {
+                     e.stopPropagation();
+@@ -686,6 +706,7 @@ export function ProviderCard({
+               isCurrent={isCurrent}
+               isInConfig={isInConfig}
+               isTesting={isTesting}
++              isSwitching={isSwitching}
+               isProxyTakeover={isProxyTakeover}
+               isOfficialBlockedByProxy={isOfficialBlockedByProxy}
+               isReadOnly={isHermesReadOnly}
+@@ -737,8 +758,9 @@ export function ProviderCard({
+         </div>
+       </div>
+ 
+-      {isExpanded && hasMultiplePlans && (
+-        <div className="mt-4 pt-4 border-t border-border-default">
++      {/* 展开区域：仅展开模式显示 */}
++      {isExpanded && !quotaInline && (
++        <div className="mt-1 pt-1 border-t border-border-default">
+           <UsageFooter
+             provider={provider}
+             providerId={provider.id}
+@@ -746,7 +768,9 @@ export function ProviderCard({
+             usageEnabled={usageEnabled}
+             isCurrent={isCurrent}
+             isInConfig={isInConfig}
+-            inline={false}
++            inline={quotaInline}
++            remoteTargetId={remoteTargetId}
++            remoteContainerId={remoteContainerId}
+           />
+         </div>
+       )}
+diff --git a/src/components/providers/ProviderEmptyState.tsx b/src/components/providers/ProviderEmptyState.tsx
+index a50f9d9..3225f53 100644
+--- a/src/components/providers/ProviderEmptyState.tsx
++++ b/src/components/providers/ProviderEmptyState.tsx
+@@ -7,12 +7,15 @@ interface ProviderEmptyStateProps {
+   appId: AppId;
+   onCreate?: () => void;
+   onImport?: () => void;
++  /** 导入按钮禁用（如远端目标下暂不支持导入） */
++  importDisabled?: boolean;
+ }
+ 
+ export function ProviderEmptyState({
+   appId,
+   onCreate,
+   onImport,
++  importDisabled,
+ }: ProviderEmptyStateProps) {
+   const { t } = useTranslation();
+   const isPi = appId === "pi";
+@@ -39,7 +42,17 @@ export function ProviderEmptyState({
+       )}
+       <div className="mt-6 flex flex-col gap-2">
+         {onImport && (
+-          <Button onClick={onImport}>
++          <Button
++            onClick={onImport}
++            disabled={importDisabled}
++            title={
++              importDisabled
++                ? t("provider.importDisabledRemote", {
++                    defaultValue: "远端目标下暂不支持从 live 导入",
++                  })
++                : undefined
++            }
++          >
+             <Download className="mr-2 h-4 w-4" />
+             {appId === "claude-desktop"
+               ? t("provider.importFromClaude", {
+diff --git a/src/components/providers/ProviderList.tsx b/src/components/providers/ProviderList.tsx
+index 61703f4..3eef6e8 100644
+--- a/src/components/providers/ProviderList.tsx
++++ b/src/components/providers/ProviderList.tsx
+@@ -11,9 +11,10 @@ import {
+   useRef,
+   useState,
+   type CSSProperties,
++  type ReactNode,
+ } from "react";
+ import { AnimatePresence, motion } from "framer-motion";
+-import { AlertTriangle, Search, X } from "lucide-react";
++import { AlertTriangle, Loader2, RefreshCw, Search, X } from "lucide-react";
+ import { useTranslation } from "react-i18next";
+ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+ import { toast } from "sonner";
+@@ -22,15 +23,14 @@ import type { AppId } from "@/lib/api";
+ import { providersApi } from "@/lib/api/providers";
+ import { extractErrorMessage } from "@/utils/errorUtils";
+ import { useDragSort } from "@/hooks/useDragSort";
+-import {
+-  useOpenClawLiveProviderIds,
+-  useOpenClawDefaultModel,
+-} from "@/hooks/useOpenClaw";
+-import {
+-  useHermesLiveProviderIds,
+-  useHermesModelConfig,
+-} from "@/hooks/useHermes";
++import { useOpenClawDefaultModel } from "@/hooks/useOpenClaw";
++import { useHermesModelConfig } from "@/hooks/useHermes";
+ import { useStreamCheck } from "@/hooks/useStreamCheck";
++import { streamCheckRemoteProvider } from "@/lib/api/connectivity-check";
++import {
++  getRemoteOpenClawDefaultModel,
++  getRemoteHermesModelConfig,
++} from "@/lib/api/remote";
+ import { ProviderCard } from "@/components/providers/ProviderCard";
+ import { ProviderEmptyState } from "@/components/providers/ProviderEmptyState";
+ import {
+@@ -68,6 +68,19 @@ interface ProviderListProps {
+   isLoading?: boolean;
+   isProxyRunning?: boolean; // 代理服务运行状态
+   isProxyTakeover?: boolean; // 代理接管模式（Live配置已被接管）
++  /** 远程切换进行中：禁用切换按钮防连点 */
++  isSwitching?: boolean;
++  /** 远程目标：非空时「测试」按钮改为在远端探测连通性 */
++  remoteTargetId?: string;
++  remoteContainerId?: string;
++  /** 远端目标下的 live 供应商 ID 集合（来自 get_remote_providers 返回，additive 按钮态用） */
++  remoteLiveIds?: string[];
++  /** 远端加载文案（仅远端目标首次加载时显示；本机不传）。支持带高亮的 JSX */
++  remoteLoadingLabel?: ReactNode;
++  /** 远端加载失败的错误信息（非空时显示错误分支 + 重试） */
++  remoteError?: string;
++  /** 远端加载失败的重试回调 */
++  onRetryRemote?: () => void;
+   activeProviderId?: string; // 代理当前实际使用的供应商 ID（用于故障转移模式下标注绿色边框）
+   onSetAsDefault?: (provider: Provider, modelId?: string) => void; // OpenClaw: set as default model
+ }
+@@ -90,55 +103,133 @@ export function ProviderList({
+   isLoading = false,
+   isProxyRunning = false,
+   isProxyTakeover = false,
++  isSwitching = false,
+   activeProviderId,
+   onSetAsDefault,
++  remoteTargetId,
++  remoteContainerId,
++  remoteLiveIds,
++  remoteLoadingLabel,
++  remoteError,
++  onRetryRemote,
+ }: ProviderListProps) {
+   const { t } = useTranslation();
+   const { checkProvider, isChecking } = useStreamCheck(appId);
+   const { sortedProviders, sensors, handleDragEnd } = useDragSort(
+     providers,
+     appId,
++    remoteTargetId,
++    remoteContainerId,
+   );
+ 
+-  const { data: opencodeLiveIds } = useQuery({
++  const { data: opencodeLiveIds } = useQuery<string[]>({
+     queryKey: ["opencodeLiveProviderIds"],
+     queryFn: () => providersApi.getOpenCodeLiveProviderIds(),
+-    enabled: appId === "opencode",
++    // 远端目标下 live ID 集来自 get_remote_providers 返回（remoteLiveIds prop），
++    // 避免本机查询与远端重复（per-target 独立）
++    enabled: appId === "opencode" && !remoteTargetId,
+   });
+ 
+   // OpenClaw: 查询 live 配置中的供应商 ID 列表，用于判断 isInConfig
+-  const { data: openclawLiveIds } = useOpenClawLiveProviderIds(
+-    appId === "openclaw",
+-  );
++  const { data: openclawLiveIds } = useQuery<string[]>({
++    queryKey: ["openclaw", "liveProviderIds"],
++    queryFn: () => providersApi.getOpenClawLiveProviderIds(),
++    enabled: appId === "openclaw" && !remoteTargetId,
++  });
+ 
+   // Hermes: 查询 live 配置中的供应商 ID 列表，用于判断 isInConfig
+-  const { data: hermesLiveIds } = useHermesLiveProviderIds(appId === "hermes");
++  const { data: hermesLiveIds } = useQuery<string[]>({
++    queryKey: ["hermes", "liveProviderIds"],
++    queryFn: () => providersApi.getHermesLiveProviderIds(),
++    enabled: appId === "hermes" && !remoteTargetId,
++  });
++
++  // Pi: 查询 live 配置中的供应商 ID 列表，用于判断 isInConfig
++  const { data: piLiveIds } = useQuery<string[]>({
++    queryKey: ["pi", "liveProviderIds"],
++    queryFn: () => providersApi.getPiLiveProviderIds(),
++    enabled: appId === "pi" && !remoteTargetId,
++  });
+ 
+   // Hermes: 读取当前 model.provider，用于判断哪个供应商是"当前激活"（高亮）
+-  const { data: hermesModelConfig } = useHermesModelConfig(appId === "hermes");
++  // 远端目标下必须读远端 config.yaml（本机命令读本机文件会读到错误数据）——
++  // 否则远端「设为默认 / 切换」后按钮态不刷新。container 归一化：宿主机目标
++  // 时 remoteContainerId 是 ""，须转 undefined 走宿主机路径。
++  const { data: localHermesModelConfig } = useHermesModelConfig(
++    appId === "hermes" && !remoteTargetId,
++  );
++  const { data: remoteHermesModelConfig } = useQuery({
++    // 第三位统一用 `remoteContainerId || "__host__"`（宿主机归一化为 "__host__"），
++    // 与 remoteMutations 失效时的 `vars.container || "__host__"` 逐字一致——
++    // react-query partialMatchKey 要求逐元素匹配，宿主机下 remoteContainerId 是 ""
++    // 而 mutation 的 vars.container 是 undefined，两者不一致会导致失效落空。
++    queryKey: [
++      "remoteHermesModelConfig",
++      remoteTargetId,
++      remoteContainerId || "__host__",
++    ],
++    queryFn: () =>
++      getRemoteHermesModelConfig(
++        remoteTargetId!,
++        remoteContainerId || undefined,
++      ),
++    enabled: appId === "hermes" && Boolean(remoteTargetId),
++  });
++  const hermesModelConfig = remoteTargetId
++    ? remoteHermesModelConfig
++    : localHermesModelConfig;
+   const hermesCurrentProviderId = hermesModelConfig?.provider;
+ 
+-  // 判断供应商是否已添加到配置（累加模式应用：OpenCode/OpenClaw/Hermes）
++  // 判断供应商是否已添加到配置（累加模式应用：OpenCode/OpenClaw/Hermes/Pi）
+   const isProviderInConfig = useCallback(
+     (providerId: string): boolean => {
++      // 远端目标：live ID 集来自 get_remote_providers 返回（remoteLiveIds prop）
++      const liveIds = remoteTargetId ? (remoteLiveIds ?? []) : undefined;
+       if (appId === "opencode") {
+-        return opencodeLiveIds?.includes(providerId) ?? false;
++        return (liveIds ?? opencodeLiveIds)?.includes(providerId) ?? false;
+       }
+       if (appId === "openclaw") {
+-        return openclawLiveIds?.includes(providerId) ?? false;
++        return (liveIds ?? openclawLiveIds)?.includes(providerId) ?? false;
+       }
+       if (appId === "hermes") {
+-        return hermesLiveIds?.includes(providerId) ?? false;
++        return (liveIds ?? hermesLiveIds)?.includes(providerId) ?? false;
++      }
++      if (appId === "pi") {
++        return (liveIds ?? piLiveIds)?.includes(providerId) ?? false;
+       }
+       return true; // 其他应用始终返回 true
+     },
+-    [appId, opencodeLiveIds, openclawLiveIds, hermesLiveIds],
++    [
++      appId,
++      remoteTargetId,
++      remoteLiveIds,
++      opencodeLiveIds,
++      openclawLiveIds,
++      hermesLiveIds,
++      piLiveIds,
++    ],
+   );
+ 
+   // OpenClaw: query default model to determine which provider is default
+-  const { data: openclawDefaultModel } = useOpenClawDefaultModel(
+-    appId === "openclaw",
++  // 远端场景使用远端 API，本机场景使用本机 API
++  const { data: localOpenclawDefaultModel } = useOpenClawDefaultModel(
++    appId === "openclaw" && !remoteTargetId,
+   );
++  const { data: remoteOpenclawDefaultModel } = useQuery({
++    queryKey: ["remoteOpenclawDefaultModel", remoteTargetId, remoteContainerId],
++    queryFn: () =>
++      // 宿主机目标时 remoteContainerId 是 ""（App 传原始值），必须归一化为
++      // undefined 走宿主机路径；否则后端 Option<String> 收到 Some("") 会进
++      // DockerExecFileOps 的空容器名校验 → 查询报错 → 「设为默认」按钮态读不到。
++      getRemoteOpenClawDefaultModel(
++        remoteTargetId!,
++        remoteContainerId || undefined,
++      ),
++    enabled: appId === "openclaw" && Boolean(remoteTargetId),
++  });
++  const openclawDefaultModel = remoteTargetId
++    ? remoteOpenclawDefaultModel
++    : localOpenclawDefaultModel;
+ 
+   const isProviderDefaultModel = useCallback(
+     (providerId: string): boolean => {
+@@ -223,11 +314,62 @@ export function ProviderList({
+   );
+ 
+   // 连通性检查不发真实请求、无封号/计费风险，直接执行（无需确认弹窗）。
++  // 远端目标下 provider 定义从远端 SSOT 读取，但连通性检查仍在本机执行
++  // （测本机到 API 的网络，与本机场景一致）——用户关心的是本机能否连上该 API。
+   const handleTest = useCallback(
+     (provider: Provider) => {
++      if (remoteTargetId) {
++        void (async () => {
++          try {
++            const result = await streamCheckRemoteProvider(
++              remoteTargetId,
++              remoteContainerId,
++              appId,
++              provider.id,
++            );
++            if (result.status === "operational") {
++              toast.success(
++                t("streamCheck.reachable", {
++                  providerName: provider.name,
++                  responseTimeMs: result.responseTimeMs,
++                  defaultValue: `${provider.name} 连通正常 (${result.responseTimeMs}ms)`,
++                }),
++                { closeButton: true },
++              );
++            } else if (result.status === "degraded") {
++              toast.warning(
++                t("streamCheck.reachableSlow", {
++                  providerName: provider.name,
++                  responseTimeMs: result.responseTimeMs,
++                  defaultValue: `${provider.name} 连通但较慢 (${result.responseTimeMs}ms)`,
++                }),
++              );
++            } else {
++              toast.error(
++                t("streamCheck.unreachable", {
++                  providerName: provider.name,
++                  message: result.message,
++                  defaultValue: `${provider.name} 无法连通: ${result.message}`,
++                }),
++                {
++                  description: t("streamCheck.unreachableHint", {
++                    defaultValue:
++                      "无法建立连接（DNS / 连接 / TLS / 超时）。请检查 base_url 与网络。",
++                  }),
++                  duration: 8000,
++                  closeButton: true,
++                },
++              );
++            }
++          } catch (error) {
++            toast.error(extractErrorMessage(error), { closeButton: true });
++          }
++        })();
++        return;
++      }
+       checkProvider(provider.id, provider.name);
+     },
+-    [checkProvider],
++    [checkProvider, remoteTargetId, remoteContainerId, appId, t],
+   );
+ 
+   // Import current live config as default provider
+@@ -401,6 +543,12 @@ export function ProviderList({
+   if (isLoading) {
+     return (
+       <div className="space-y-3">
++        {remoteLoadingLabel && (
++          <div className="flex items-center gap-2 text-sm text-muted-foreground">
++            <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
++            <span>{remoteLoadingLabel}</span>
++          </div>
++        )}
+         {[0, 1, 2].map((index) => (
+           <div
+             key={index}
+@@ -411,6 +559,34 @@ export function ProviderList({
+     );
+   }
+ 
++  // 远端目标加载失败：明确报错 + 重试（而非误显示空状态）
++  if (remoteError) {
++    return (
++      <div className="flex flex-col items-center justify-center gap-3 py-14 text-center">
++        <div className="flex items-center gap-2 text-destructive">
++          <AlertTriangle className="h-5 w-5 shrink-0" />
++          <p className="text-sm font-medium">
++            {t("remote.loadError", { defaultValue: "无法连接远端" })}
++          </p>
++        </div>
++        <p className="max-w-md break-all text-xs text-muted-foreground">
++          {remoteError}
++        </p>
++        {onRetryRemote && (
++          <Button
++            variant="outline"
++            size="sm"
++            onClick={onRetryRemote}
++            className="mt-1"
++          >
++            <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
++            {t("common.retry", { defaultValue: "重试" })}
++          </Button>
++        )}
++      </div>
++    );
++  }
++
+   if (sortedProviders.length === 0) {
+     return (
+       <div className="mt-4 space-y-4">
+@@ -418,7 +594,10 @@ export function ProviderList({
+         <ProviderEmptyState
+           appId={appId}
+           onCreate={appId === "pi" ? undefined : onCreate}
++          // 远端目标下导入按钮置灰：导入语义是读本机 live 配置，远端目标下
++          // 会读到错误数据（应读远端 live）；待远端导入实现后再启用。
+           onImport={appId === "pi" ? undefined : () => importMutation.mutate()}
++          importDisabled={Boolean(remoteTargetId)}
+         />
+       </div>
+     );
+@@ -459,8 +638,10 @@ export function ProviderList({
+                 provider={provider}
+                 isCurrent={isCurrent}
+                 appId={appId}
++                remoteTargetId={remoteTargetId}
++                remoteContainerId={remoteContainerId}
+                 isInConfig={
+-                  appId === "pi"
++                  appId === "pi" && !remoteTargetId
+                     ? isPiProviderInConfig(provider)
+                     : isProviderInConfig(provider.id)
+                 }
+@@ -478,6 +659,7 @@ export function ProviderList({
+                 onOpenTerminal={onOpenTerminal}
+                 onTest={handleTest}
+                 isTesting={isChecking(provider.id)}
++                isSwitching={isSwitching}
+                 isProxyRunning={supportsFailover && isProxyRunning}
+                 isProxyTakeover={supportsFailover && isProxyTakeover}
+                 isAutoFailoverEnabled={isFailoverModeActive}
+@@ -620,6 +802,8 @@ interface SortableProviderCardProps {
+   provider: Provider;
+   isCurrent: boolean;
+   appId: AppId;
++  remoteTargetId?: string;
++  remoteContainerId?: string;
+   isInConfig: boolean;
+   isOmo: boolean;
+   isOmoSlim: boolean;
+@@ -635,6 +819,7 @@ interface SortableProviderCardProps {
+   onOpenTerminal?: (provider: Provider) => void;
+   onTest?: (provider: Provider) => void;
+   isTesting: boolean;
++  isSwitching?: boolean;
+   isProxyRunning: boolean;
+   isProxyTakeover: boolean;
+   isAutoFailoverEnabled: boolean;
+@@ -653,6 +838,8 @@ function SortableProviderCard({
+   provider,
+   isCurrent,
+   appId,
++  remoteTargetId,
++  remoteContainerId,
+   isInConfig,
+   isOmo,
+   isOmoSlim,
+@@ -668,6 +855,7 @@ function SortableProviderCard({
+   onOpenTerminal,
+   onTest,
+   isTesting,
++  isSwitching,
+   isProxyRunning,
+   isProxyTakeover,
+   isAutoFailoverEnabled,
+@@ -700,6 +888,8 @@ function SortableProviderCard({
+         provider={provider}
+         isCurrent={isCurrent}
+         appId={appId}
++        remoteTargetId={remoteTargetId}
++        remoteContainerId={remoteContainerId}
+         isInConfig={isInConfig}
+         isOmo={isOmo}
+         isOmoSlim={isOmoSlim}
+@@ -717,6 +907,7 @@ function SortableProviderCard({
+         onOpenTerminal={onOpenTerminal}
+         onTest={onTest}
+         isTesting={isTesting}
++        isSwitching={isSwitching}
+         isProxyRunning={isProxyRunning}
+         isProxyTakeover={isProxyTakeover}
+         dragHandleProps={{
+diff --git a/src/components/providers/forms/ProviderForm.tsx b/src/components/providers/forms/ProviderForm.tsx
+index a312a8c..12bb5c2 100644
+--- a/src/components/providers/forms/ProviderForm.tsx
++++ b/src/components/providers/forms/ProviderForm.tsx
+@@ -270,6 +270,10 @@ export interface ProviderFormProps {
+   };
+   showButtons?: boolean;
+   isProxyTakeover?: boolean;
++  /** 远端目标下的 live 供应商 ID 集合（远端编辑时标识锁定用；本机不传） */
++  remoteLiveIds?: string[];
++  /** 远端目标下已存在的供应商 key 集合（SSOT + live，添加/编辑重复校验用；本机不传） */
++  remoteExistingKeys?: string[];
+ }
+ 
+ export function ProviderForm(props: ProviderFormProps) {
+@@ -297,6 +301,8 @@ function ProviderFormFull({
+   onManageAuthAccounts,
+   onSubmittingChange,
+   initialData,
++  remoteLiveIds,
++  remoteExistingKeys,
+   showButtons = true,
+   isProxyTakeover = false,
+ }: ProviderFormProps) {
+@@ -1019,6 +1025,10 @@ function ProviderFormFull({
+   } = useHermesLiveProviderIds(appId === "hermes");
+ 
+   const additiveExistingProviderKeys = useMemo(() => {
++    // 远端目标：以该远端自己的 key 集合校验（SSOT + live），本机集合不适用
++    if (remoteExistingKeys) {
++      return remoteExistingKeys.filter((key) => key !== providerId);
++    }
+     if (appId === "opencode" && !isAnyOmoCategory) {
+       return Array.from(
+         new Set(
+@@ -1061,6 +1071,7 @@ function ProviderFormFull({
+     openclawLiveProviderIds,
+     opencodeLiveProviderIds,
+     providerId,
++    remoteExistingKeys,
+   ]);
+ 
+   const isProviderKeyLockStateLoading = useMemo(() => {
+@@ -1086,14 +1097,16 @@ function ProviderFormFull({
+ 
+   const isProviderKeyLocked = useMemo(() => {
+     if (!isEditMode || !providerId) return false;
++    // 远端目标：以远端 live 集合判定（本机 live ids hooks 在远端下被禁用）；
++    // 本机：以本机 live ids 判定（对齐本机「已添加到应用配置 → 标识不可修改」）
+     if (appId === "opencode" && !isAnyOmoCategory) {
+-      return opencodeLiveProviderIds.includes(providerId);
++      return (remoteLiveIds ?? opencodeLiveProviderIds).includes(providerId);
+     }
+     if (appId === "openclaw") {
+-      return openclawLiveProviderIds.includes(providerId);
++      return (remoteLiveIds ?? openclawLiveProviderIds).includes(providerId);
+     }
+     if (appId === "hermes") {
+-      return hermesLiveProviderIds.includes(providerId);
++      return (remoteLiveIds ?? hermesLiveProviderIds).includes(providerId);
+     }
+     return false;
+   }, [
+@@ -1104,6 +1117,7 @@ function ProviderFormFull({
+     openclawLiveProviderIds,
+     opencodeLiveProviderIds,
+     providerId,
++    remoteLiveIds,
+   ]);
+ 
+   const [isCommonConfigModalOpen, setIsCommonConfigModalOpen] = useState(false);
+diff --git a/src/components/proxy/ProxyToggle.tsx b/src/components/proxy/ProxyToggle.tsx
+index 33f4441..1dc8dca 100644
+--- a/src/components/proxy/ProxyToggle.tsx
++++ b/src/components/proxy/ProxyToggle.tsx
+@@ -42,12 +42,12 @@ export function ProxyToggle({ className, activeApp }: ProxyToggleProps) {
+ 
+   const tooltipText = takeoverEnabled
+     ? isRunning
+-      ? t("proxy.takeover.tooltip.active", {
++      ? `${t("proxy.takeover.tooltip.active", {
+           appLabel,
+           address: status?.address,
+           port: status?.port,
+           defaultValue: `${appLabel} 已接管 - ${status?.address}:${status?.port}\n切换该应用供应商为热切换`,
+-        })
++        })}\n${t("settings.advanced.proxy.marqueeHint")}`
+       : t("proxy.takeover.tooltip.broken", {
+           appLabel,
+           defaultValue: `${appLabel} 已接管，但代理服务未运行`,
+@@ -61,6 +61,7 @@ export function ProxyToggle({ className, activeApp }: ProxyToggleProps) {
+     <div
+       className={cn(
+         "flex items-center gap-1 px-1.5 h-8 rounded-lg bg-muted/50 transition-all",
++        isRunning && "route-service-live",
+         className,
+       )}
+       title={tooltipText}
+diff --git a/src/components/sessions/SessionManagerPage.tsx b/src/components/sessions/SessionManagerPage.tsx
+index f42feb0..4a0b4af 100644
+--- a/src/components/sessions/SessionManagerPage.tsx
++++ b/src/components/sessions/SessionManagerPage.tsx
+@@ -22,6 +22,8 @@ import {
+   ChevronDown,
+   ChevronRight,
+   ChevronsDownUp,
++  ChevronsUp,
++  ChevronsDown,
+ } from "lucide-react";
+ import {
+   piKeys,
+@@ -49,6 +51,7 @@ import {
+   CollapsibleTrigger,
+ } from "@/components/ui/collapsible";
+ import { ConfirmDialog } from "@/components/ConfirmDialog";
++import { deleteRemoteSession } from "@/lib/api/remote";
+ import {
+   Tooltip,
+   TooltipContent,
+@@ -189,15 +192,28 @@ const filterSetToAllowedValues = (
+   return changed ? next : current;
+ };
+ 
+-export function SessionManagerPage({ appId }: { appId: string }) {
++export function SessionManagerPage({
++  appId,
++  remoteTargetId,
++  remoteContainerId,
++}: {
++  appId: string;
++  remoteTargetId?: string;
++  remoteContainerId?: string;
++}) {
+   const { t } = useTranslation();
+   const queryClient = useQueryClient();
+-  const { data, isLoading, refetch } = useSessionsQuery();
++  // 远程会话：一次拉取所有 app 的全量数据（对齐本机 sessionsApi.list()），
++  // providerFilter 客户端过滤
++  const { data, isLoading, isFetching, refetch } = useSessionsQuery(
++    remoteTargetId,
++    remoteContainerId,
++  );
+   const sessions = data ?? [];
+   const piSessionDiscovery = useQuery({
+     queryKey: piKeys.sessionDiscovery,
+     queryFn: () => piApi.getSessionDiscovery(),
+-    enabled: appId === "pi",
++    enabled: appId === "pi" && !remoteTargetId,
+     staleTime: 30 * 1000,
+   });
+   const detailRef = useRef<HTMLDivElement | null>(null);
+@@ -337,6 +353,10 @@ export function SessionManagerPage({ appId }: { appId: string }) {
+     useSessionMessagesQuery(
+       selectedSession?.providerId,
+       selectedSession?.sourcePath,
++      selectedSession?.sessionId,
++      remoteTargetId,
++      remoteContainerId,
++      selectedSession?.providerId,
+     );
+   const deleteSessionMutation = useDeleteSessionMutation();
+   const isDeleting = deleteSessionMutation.isPending || isBatchDeleting;
+@@ -346,7 +366,7 @@ export function SessionManagerPage({ appId }: { appId: string }) {
+     getScrollElement: () => scrollContainerRef.current,
+     estimateSize: () => 120,
+     overscan: 5,
+-    gap: 12,
++    gap: 11,
+   });
+ 
+   useEffect(() => {
+@@ -403,6 +423,19 @@ export function SessionManagerPage({ appId }: { appId: string }) {
+     setTimeout(() => setActiveMessageIndex(null), 2000);
+   };
+ 
++  const scrollToTop = () => {
++    if (messages.length === 0) return;
++    virtualizer.scrollToIndex(0, { align: "start", behavior: "smooth" });
++  };
++
++  const scrollToBottom = () => {
++    if (messages.length === 0) return;
++    virtualizer.scrollToIndex(messages.length - 1, {
++      align: "end",
++      behavior: "smooth",
++    });
++  };
++
+   const handleCopy = useCallback(
+     async (text: string, successMessage: string) => {
+       try {
+@@ -464,6 +497,56 @@ export function SessionManagerPage({ appId }: { appId: string }) {
+       return;
+     }
+ 
++    // 远端目标：逐个删除（走 FileOps 远端实现），再刷新远端会话缓存
++    if (remoteTargetId) {
++      setIsBatchDeleting(true);
++      try {
++        let deletedCount = 0;
++        for (const target of targets) {
++          try {
++            await deleteRemoteSession(
++              remoteTargetId,
++              target.sourcePath!,
++              target.sessionId,
++              remoteContainerId,
++              target.providerId,
++            );
++            deletedCount += 1;
++            queryClient.removeQueries({
++              queryKey: [
++                "sessionMessages",
++                "remote",
++                remoteTargetId,
++                remoteContainerId ?? "__host__",
++                target.sourcePath,
++              ],
++            });
++          } catch (e) {
++            console.error("Failed to delete remote session:", e);
++          }
++        }
++        await queryClient.invalidateQueries({
++          queryKey: [
++            "sessions",
++            "remote",
++            remoteTargetId,
++            remoteContainerId ?? "__host__",
++          ],
++        });
++        if (deletedCount > 0) {
++          toast.success(
++            t("sessionManager.batchDeleteSuccess", {
++              defaultValue: "已删除 {{count}} 个会话",
++              count: deletedCount,
++            }),
++          );
++        }
++      } finally {
++        setIsBatchDeleting(false);
++      }
++      return;
++    }
++
+     if (targets.length === 1) {
+       const [target] = targets;
+       await deleteSessionMutation.mutateAsync({
+@@ -1187,9 +1270,29 @@ export function SessionManagerPage({ appId }: { appId: string }) {
+                               variant="ghost"
+                               size="icon"
+                               className="size-7"
+-                              onClick={() => void refetch()}
++                              onClick={() => {
++                                void refetch();
++                                // 同时刷新当前选中会话的消息内容（本机 + 远端通用）
++                                if (selectedSession?.sourcePath) {
++                                  void queryClient.invalidateQueries({
++                                    queryKey: [
++                                      "sessionMessages",
++                                      ...(remoteTargetId
++                                        ? [
++                                            "remote",
++                                            remoteTargetId,
++                                            remoteContainerId ?? "__host__",
++                                          ]
++                                        : [selectedSession.providerId]),
++                                      selectedSession.sourcePath,
++                                    ],
++                                  });
++                                }
++                              }}
+                             >
+-                              <RefreshCw className="size-3.5" />
++                              <RefreshCw
++                                className={`size-3.5 ${isFetching ? "animate-spin" : ""}`}
++                              />
+                             </Button>
+                           </TooltipTrigger>
+                           <TooltipContent>{t("common.refresh")}</TooltipContent>
+@@ -1666,8 +1769,8 @@ export function SessionManagerPage({ appId }: { appId: string }) {
+                   <CardContent className="flex-1 min-h-0 p-0">
+                     <div className="flex h-full min-w-0">
+                       {/* 消息列表 */}
+-                      <div className="flex-1 min-w-0 flex flex-col">
+-                        <div className="px-4 pt-4 pb-2 min-w-0">
++                      <div className="flex-1 min-w-0 flex flex-col relative">
++                        <div className="px-4 pt-[9px] pb-[9px] min-w-0">
+                           <div className="flex items-center gap-2">
+                             <MessageSquare className="size-4 text-muted-foreground" />
+                             <span className="text-sm font-medium">
+@@ -1678,11 +1781,19 @@ export function SessionManagerPage({ appId }: { appId: string }) {
+                             <Badge variant="secondary" className="text-xs">
+                               {messages.length}
+                             </Badge>
++                            <div className="ml-auto">
++                              <SessionTocDialog
++                                items={userMessagesToc}
++                                onItemClick={scrollToMessage}
++                                open={tocDialogOpen}
++                                onOpenChange={setTocDialogOpen}
++                              />
++                            </div>
+                           </div>
+                         </div>
+                         <div
+                           ref={scrollContainerRef}
+-                          className="flex-1 overflow-y-auto px-4 pb-4 min-w-0"
++                          className="flex-1 overflow-y-auto px-4 pb-0 min-w-0"
+                         >
+                           {isLoadingMessages ? (
+                             <div className="flex items-center justify-center py-12">
+@@ -1730,6 +1841,33 @@ export function SessionManagerPage({ appId }: { appId: string }) {
+                             </div>
+                           )}
+                         </div>
++                        {/* 滚动到顶/底 浮动按钮 */}
++                        {!isLoadingMessages && messages.length > 0 && (
++                          <div className="absolute bottom-4 right-4 flex flex-col gap-1 z-10">
++                            <Button
++                              variant="outline"
++                              size="icon"
++                              className="size-9 rounded-full bg-background/80 backdrop-blur-sm shadow-md hover:bg-background"
++                              onClick={scrollToTop}
++                              title={t("sessionManager.scrollToTop", {
++                                defaultValue: "到达最顶",
++                              })}
++                            >
++                              <ChevronsUp className="size-4" />
++                            </Button>
++                            <Button
++                              variant="outline"
++                              size="icon"
++                              className="size-9 rounded-full bg-background/80 backdrop-blur-sm shadow-md hover:bg-background"
++                              onClick={scrollToBottom}
++                              title={t("sessionManager.scrollToBottom", {
++                                defaultValue: "到达最底",
++                              })}
++                            >
++                              <ChevronsDown className="size-4" />
++                            </Button>
++                          </div>
++                        )}
+                       </div>
+ 
+                       {/* 右侧目录 - 类似少数派 (大屏幕) */}
+@@ -1738,14 +1876,6 @@ export function SessionManagerPage({ appId }: { appId: string }) {
+                         onItemClick={scrollToMessage}
+                       />
+                     </div>
+-
+-                    {/* 浮动目录按钮 (小屏幕) */}
+-                    <SessionTocDialog
+-                      items={userMessagesToc}
+-                      onItemClick={scrollToMessage}
+-                      open={tocDialogOpen}
+-                      onOpenChange={setTocDialogOpen}
+-                    />
+                   </CardContent>
+                 </>
+               )}
+diff --git a/src/components/sessions/SessionToc.tsx b/src/components/sessions/SessionToc.tsx
+index 83fda86..63efd63 100644
+--- a/src/components/sessions/SessionToc.tsx
++++ b/src/components/sessions/SessionToc.tsx
+@@ -1,7 +1,9 @@
+-import { List, X } from "lucide-react";
++import { useState, useMemo } from "react";
++import { List, Search, X } from "lucide-react";
+ import { useTranslation } from "react-i18next";
+ import { cn } from "@/lib/utils";
+ import { Button } from "@/components/ui/button";
++import { Input } from "@/components/ui/input";
+ import { ScrollArea } from "@/components/ui/scroll-area";
+ import {
+   Dialog,
+@@ -77,16 +79,29 @@ export function SessionTocDialog({
+   onOpenChange,
+ }: SessionTocDialogProps) {
+   const { t } = useTranslation();
++  const [searchQuery, setSearchQuery] = useState("");
++
++  const filteredItems = useMemo(
++    () =>
++      searchQuery.trim()
++        ? items.filter((item) =>
++            item.preview
++              .toLowerCase()
++              .includes(searchQuery.toLowerCase().trim()),
++          )
++        : items,
++    [items, searchQuery],
++  );
++
+   if (items.length <= 2) return null;
+ 
+   return (
+     <Dialog open={open} onOpenChange={onOpenChange}>
+       <DialogTrigger asChild>
+         <Button
+-          size="icon"
+-          className="fixed bottom-20 right-4 xl:hidden size-10 rounded-full shadow-lg z-30"
++          className="xl:hidden h-7 w-7 rounded-full shadow-lg bg-primary text-primary-foreground hover:bg-primary/90 p-0"
+         >
+-          <List className="size-4" />
++          <List className="size-5" />
+         </Button>
+       </DialogTrigger>
+       <DialogContent
+@@ -107,28 +122,56 @@ export function SessionTocDialog({
+             <X className="size-4 text-muted-foreground" />
+           </DialogClose>
+         </DialogHeader>
+-        <div className="overflow-y-auto max-h-[calc(70vh-80px)]">
++
++        {/* 搜索框 */}
++        <div className="px-3 py-2 border-b">
++          <div className="relative">
++            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground pointer-events-none" />
++            <Input
++              placeholder={t("common.search", { defaultValue: "搜索..." })}
++              value={searchQuery}
++              onChange={(e) => setSearchQuery(e.target.value)}
++              className="h-8 pl-7 text-xs"
++            />
++          </div>
++        </div>
++
++        {/* 目录列表 - 可见滚动条 */}
++        <div
++          className="overflow-y-auto [scrollbar-width:thin] [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar]:block [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-border [&::-webkit-scrollbar-track]:bg-transparent"
++          style={{ maxHeight: "calc(70vh - 120px)" }}
++        >
+           <div className="p-3 pb-4 space-y-1">
+-            {items.map((item, tocIndex) => (
+-              <button
+-                key={item.index}
+-                type="button"
+-                onClick={() => onItemClick(item.index)}
+-                className={cn(
+-                  "w-full text-left px-3 py-2.5 rounded-lg text-sm transition-all",
+-                  "hover:bg-primary/10 text-foreground",
+-                  "flex items-start gap-3",
+-                  "focus:outline-none focus:ring-2 focus:ring-primary focus:ring-inset",
+-                )}
+-              >
+-                <span className="shrink-0 w-6 h-6 rounded-full bg-primary text-primary-foreground text-xs flex items-center justify-center font-semibold">
+-                  {tocIndex + 1}
+-                </span>
+-                <span className="line-clamp-2 leading-relaxed pt-0.5">
+-                  {item.preview}
+-                </span>
+-              </button>
+-            ))}
++            {filteredItems.length === 0 ? (
++              <p className="text-center text-xs text-muted-foreground py-6">
++                {t("common.noResults", { defaultValue: "无匹配结果" })}
++              </p>
++            ) : (
++              filteredItems.map((item, tocIndex) => (
++                <button
++                  key={item.index}
++                  type="button"
++                  onClick={() => {
++                    onItemClick(item.index);
++                    setSearchQuery("");
++                    onOpenChange(false);
++                  }}
++                  className={cn(
++                    "w-full text-left px-3 py-2.5 rounded-lg text-sm transition-all",
++                    "hover:bg-primary/10 text-foreground",
++                    "flex items-start gap-3",
++                    "focus:outline-none focus:ring-2 focus:ring-primary focus:ring-inset",
++                  )}
++                >
++                  <span className="shrink-0 w-6 h-6 rounded-full bg-primary text-primary-foreground text-xs flex items-center justify-center font-semibold">
++                    {tocIndex + 1}
++                  </span>
++                  <span className="line-clamp-2 leading-relaxed pt-0.5">
++                    {item.preview}
++                  </span>
++                </button>
++              ))
++            )}
+           </div>
+         </div>
+       </DialogContent>
+diff --git a/src/components/settings/AboutSection.tsx b/src/components/settings/AboutSection.tsx
+index d885449..48f61c2 100644
+--- a/src/components/settings/AboutSection.tsx
++++ b/src/components/settings/AboutSection.tsx
+@@ -987,6 +987,60 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
+         )}
+       </motion.div>
+ 
++      <motion.div
++        initial={{ opacity: 0, scale: 0.98 }}
++        animate={{ opacity: 1, scale: 1 }}
++        transition={{ duration: 0.3, delay: 0.15 }}
++        className="rounded-xl border border-border bg-gradient-to-br from-card/80 to-card/40 p-6 space-y-5 shadow-sm"
++      >
++        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
++          <div className="flex items-center gap-8">
++            <div className="flex flex-col items-center gap-2">
++              <div className="flex items-center gap-2">
++                <img src={appIcon} alt="CC Switch" className="h-5 w-5" />
++                <h4 className="text-lg font-semibold text-foreground">
++                  {t("settings.modifiedAppTitle")}
++                </h4>
++              </div>
++              <div className="flex items-center gap-2">
++                <Badge
++                  variant="outline"
++                  className="gap-1.5 bg-background/80"
++                >
++                  <span className="text-muted-foreground">
++                    {t("common.version")}
++                  </span>
++                  {isLoadingVersion ? (
++                    <Loader2 className="h-3 w-3 animate-spin" />
++                  ) : (
++                    <span className="font-medium">{`v${displayVersion}-${t(
++                      "settings.modifiedVersionSuffix",
++                    )}`}</span>
++                  )}
++                </Badge>
++              </div>
++            </div>
++          </div>
++
++          <div className="flex items-center gap-2">
++            <Button
++              type="button"
++              variant="outline"
++              size="sm"
++              onClick={() =>
++                settingsApi.openExternal(
++                  "https://github.com/Amengclass/cc-switch",
++                )
++              }
++              className="h-8 gap-1.5 text-xs"
++            >
++              <Github className="h-3.5 w-3.5" />
++              {t("settings.modifiedGithub")}
++            </Button>
++          </div>
++        </div>
++      </motion.div>
++
+       <div className="space-y-3">
+         <div className="flex flex-col gap-2 px-1 sm:flex-row sm:items-center sm:justify-between">
+           <h3 className="text-sm font-medium">{t("settings.localEnvCheck")}</h3>
+diff --git a/src/components/settings/AppVisibilitySettings.tsx b/src/components/settings/AppVisibilitySettings.tsx
+index d05f1c7..5e3d514 100644
+--- a/src/components/settings/AppVisibilitySettings.tsx
++++ b/src/components/settings/AppVisibilitySettings.tsx
+@@ -1,5 +1,5 @@
+ import { useTranslation } from "react-i18next";
+-import { FolderOpen } from "lucide-react";
++import { ArrowUpCircle, FolderOpen } from "lucide-react";
+ import { Button } from "@/components/ui/button";
+ import { ToggleRow } from "@/components/ui/toggle-row";
+ import { cn } from "@/lib/utils";
+@@ -88,13 +88,28 @@ export function AppVisibilitySettings({
+           );
+         })}
+       </div>
+-      <ToggleRow
+-        icon={<FolderOpen className="h-4 w-4 text-emerald-500" />}
+-        title={t("settings.appVisibility.showProfileSwitcher")}
+-        description={t("settings.appVisibility.showProfileSwitcherDescription")}
+-        checked={settings.showProfileSwitcher ?? true}
+-        onCheckedChange={(value) => onChange({ showProfileSwitcher: value })}
+-      />
++      <div className="space-y-3">
++        <ToggleRow
++          icon={<FolderOpen className="h-4 w-4 text-emerald-500" />}
++          title={t("settings.appVisibility.showProfileSwitcher")}
++          description={t(
++            "settings.appVisibility.showProfileSwitcherDescription",
++          )}
++          checked={settings.showProfileSwitcher ?? true}
++          onCheckedChange={(value) => onChange({ showProfileSwitcher: value })}
++        />
++        {/* 与「项目切换」同类：都是主页面顶部入口的显隐控制。
++            关闭仅隐藏图标，后台自动检查更新不受影响（「关于」页仍可手动检查）。 */}
++        <ToggleRow
++          icon={
++            <ArrowUpCircle className="h-4 w-4 text-green-600 dark:text-green-400" />
++          }
++          title={t("settings.appVisibility.showUpdateBadge")}
++          description={t("settings.appVisibility.showUpdateBadgeDescription")}
++          checked={settings.showUpdateBadge !== false}
++          onCheckedChange={(value) => onChange({ showUpdateBadge: value })}
++        />
++      </div>
+     </section>
+   );
+ }
+diff --git a/src/components/settings/ProxyTabContent.tsx b/src/components/settings/ProxyTabContent.tsx
+index 9cf9f7a..1539d2a 100644
+--- a/src/components/settings/ProxyTabContent.tsx
++++ b/src/components/settings/ProxyTabContent.tsx
+@@ -114,7 +114,11 @@ export function ProxyTabContent({
+               </div>
+               <Badge
+                 variant={isRunning ? "default" : "secondary"}
+-                className="gap-1.5 h-6 ml-auto mr-2"
++                className={`gap-1.5 h-6 ml-auto mr-2 border-transparent ${
++                  isRunning
++                    ? "!bg-green-500 !text-white"
++                    : "dark:border-white/10"
++                }`}
+               >
+                 <Activity
+                   className={`h-3 w-3 ${isRunning ? "status-heartbeat" : ""}`}
+diff --git a/src/components/settings/SettingsPage.tsx b/src/components/settings/SettingsPage.tsx
+index 121109e..2b442f4 100644
+--- a/src/components/settings/SettingsPage.tsx
++++ b/src/components/settings/SettingsPage.tsx
+@@ -37,10 +37,12 @@ import { settingsApi } from "@/lib/api";
+ import { LanguageSettings } from "@/components/settings/LanguageSettings";
+ import { ThemeSettings } from "@/components/settings/ThemeSettings";
+ import { WindowSettings } from "@/components/settings/WindowSettings";
++import { FloatingWindowSettings } from "@/components/settings/FloatingWindowSettings";
+ import { AppVisibilitySettings } from "@/components/settings/AppVisibilitySettings";
+ import { SkillStorageLocationSettings } from "@/components/settings/SkillStorageLocationSettings";
+ import { SkillSyncMethodSettings } from "@/components/settings/SkillSyncMethodSettings";
+ import { TerminalSettings } from "@/components/settings/TerminalSettings";
++import { QuotaDisplaySettings } from "@/components/settings/QuotaDisplaySettings";
+ import { DirectorySettings } from "@/components/settings/DirectorySettings";
+ import { ImportExportSection } from "@/components/settings/ImportExportSection";
+ import { BackupListSection } from "@/components/settings/BackupListSection";
+@@ -50,6 +52,7 @@ import { ProxyTabContent } from "@/components/settings/ProxyTabContent";
+ import { ConnectivityCheckConfigPanel } from "@/components/usage/ConnectivityCheckConfigPanel";
+ import { UsageDashboard } from "@/components/usage/UsageDashboard";
+ import { LogConfigPanel } from "@/components/settings/LogConfigPanel";
++import { RemoteProviderSettings } from "@/components/settings/RemoteProviderSettings";
+ import { AuthCenterPanel } from "@/components/settings/AuthCenterPanel";
+ import { CodexAuthSettings } from "@/components/settings/CodexAuthSettings";
+ import { useInstalledSkills } from "@/hooks/useSkills";
+@@ -63,6 +66,12 @@ interface SettingsDialogProps {
+   onOpenChange: (open: boolean) => void;
+   onImportSuccess?: () => void | Promise<void>;
+   defaultTab?: string;
++  /** 远端非 additive 面板是否每次自动读入当前 live 配置（default 卡） */
++  autoImportDefault?: boolean;
++  onAutoImportDefaultChange?: (next: boolean) => void;
++  /** 远端功能总开关：关 = 还原原生 cc-switch */
++  remoteFeatureEnabled?: boolean;
++  onRemoteFeatureEnabledChange?: (next: boolean) => void;
+ }
+ 
+ export function SettingsPage({
+@@ -70,6 +79,10 @@ export function SettingsPage({
+   onOpenChange,
+   onImportSuccess,
+   defaultTab = "general",
++  autoImportDefault = true,
++  onAutoImportDefaultChange,
++  remoteFeatureEnabled = true,
++  onRemoteFeatureEnabledChange,
+ }: SettingsDialogProps) {
+   const { t } = useTranslation();
+   const {
+@@ -282,6 +295,24 @@ export function SettingsPage({
+                       settings={settings}
+                       onChange={handleAutoSave}
+                     />
++                    <FloatingWindowSettings
++                      settings={settings}
++                      onChange={handleAutoSave}
++                    />
++                    <RemoteProviderSettings
++                      featureEnabled={remoteFeatureEnabled}
++                      onFeatureEnabledChange={(next) =>
++                        onRemoteFeatureEnabledChange?.(next)
++                      }
++                      value={autoImportDefault}
++                      onChange={(next) => onAutoImportDefaultChange?.(next)}
++                    />
++                    <QuotaDisplaySettings
++                      value={settings.quotaDisplayMode ?? "compact"}
++                      onChange={(mode) =>
++                        handleAutoSave({ quotaDisplayMode: mode })
++                      }
++                    />
+                     <TerminalSettings
+                       value={settings.preferredTerminal}
+                       onChange={(terminal) =>
+diff --git a/src/components/skills/SkillsPage.tsx b/src/components/skills/SkillsPage.tsx
+index d2f5306..dd0ba0f 100644
+--- a/src/components/skills/SkillsPage.tsx
++++ b/src/components/skills/SkillsPage.tsx
+@@ -29,6 +29,7 @@ import {
+   useDiscoverableSkills,
+   useInstalledSkills,
+   useInstallSkill,
++  useInstallRemoteSkillFromDiscoverable,
+   useSkillRepos,
+   useAddSkillRepo,
+   useRemoveSkillRepo,
+@@ -47,6 +48,9 @@ export type SkillsPageSource = "repos" | "skillssh";
+ interface SkillsPageProps {
+   initialApp?: AppId;
+   onSourceChange?: (source: SkillsPageSource) => void;
++  /** 远端目标 id：传入时发现面板的「安装」将安装到该远端目标 */
++  remoteTargetId?: string;
++  remoteContainerId?: string;
+ }
+ 
+ export interface SkillsPageHandle {
+@@ -91,7 +95,15 @@ const SKILLSSH_PAGE_SIZE = 20;
+  * 用于浏览和安装来自仓库或 skills.sh 的 Skills
+  */
+ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
+-  ({ initialApp = "claude", onSourceChange }, ref) => {
++  (
++    {
++      initialApp = "claude",
++      onSourceChange,
++      remoteTargetId,
++      remoteContainerId,
++    },
++    ref,
++  ) => {
+     const { t } = useTranslation();
+     const [repoManagerOpen, setRepoManagerOpen] = useState(false);
+     const [searchQuery, setSearchQuery] = useState("");
+@@ -119,7 +131,10 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
+       isFetching: fetchingDiscoverable,
+       refetch: refetchDiscoverable,
+     } = useDiscoverableSkills();
+-    const { data: installedSkills } = useInstalledSkills();
++    const { data: installedSkills } = useInstalledSkills(
++      remoteTargetId,
++      remoteContainerId,
++    );
+     const { data: repos = [], refetch: refetchRepos } = useSkillRepos();
+ 
+     // skills.sh 搜索
+@@ -153,6 +168,11 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
+ 
+     // Mutations
+     const installMutation = useInstallSkill();
++    const remoteInstallMutation = useInstallRemoteSkillFromDiscoverable(
++      remoteTargetId,
++      remoteContainerId,
++      currentApp,
++    );
+     const addRepoMutation = useAddSkillRepo();
+     const removeRepoMutation = useRemoveSkillRepo();
+ 
+@@ -251,10 +271,15 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
+       }
+ 
+       try {
+-        await installMutation.mutateAsync({
+-          skill,
+-          currentApp,
+-        });
++        if (remoteTargetId) {
++          // 远端模式：本机下载仓库 → 安装到远端目标
++          await remoteInstallMutation.mutateAsync({ skill });
++        } else {
++          await installMutation.mutateAsync({
++            skill,
++            currentApp,
++          });
++        }
+         toast.success(t("skills.installSuccess", { name: skill.name }), {
+           closeButton: true,
+         });
+diff --git a/src/components/skills/UnifiedSkillsPanel.tsx b/src/components/skills/UnifiedSkillsPanel.tsx
+index 3959291..4785c1d 100644
+--- a/src/components/skills/UnifiedSkillsPanel.tsx
++++ b/src/components/skills/UnifiedSkillsPanel.tsx
+@@ -1,5 +1,6 @@
+-import React, { useMemo, useState } from "react";
++import React, { useMemo, useRef, useState } from "react";
+ import { useTranslation } from "react-i18next";
++import { useQueryClient } from "@tanstack/react-query";
+ import {
+   Sparkles,
+   Trash2,
+@@ -14,25 +15,31 @@ import { TooltipProvider } from "@/components/ui/tooltip";
+ import {
+   type ImportSkillSelection,
+   type SkillBackupEntry,
++  type DiscoverableSkill,
+   useDeleteSkillBackup,
+   useInstalledSkills,
+   useSkillBackups,
+   useRestoreSkillBackup,
+   useBulkToggleSkillApp,
+   useToggleSkillApp,
++  useToggleRemoteSkillApp,
+   useUninstallSkill,
+   useScanUnmanagedSkills,
++  useRemoteUnmanagedSkillsQuery,
+   useImportSkillsFromApps,
+   useInstallSkillsFromZip,
+   useCheckSkillUpdates,
+   useUpdateSkill,
++  useUpdateRemoteSkill,
+   type InstalledSkill,
+   type SkillUpdateInfo,
+ } from "@/hooks/useSkills";
++import { mergeImportedSkills } from "@/hooks/useSkills.helpers";
+ import type { AppId } from "@/lib/api/types";
+ import { cn } from "@/lib/utils";
+ import { ConfirmDialog } from "@/components/ConfirmDialog";
+ import { settingsApi, skillsApi } from "@/lib/api";
++import { importRemoteSkill } from "@/lib/api/remote";
+ import { toast } from "sonner";
+ import { SKILLS_APP_IDS } from "@/config/appConfig";
+ import { AppCountBar } from "@/components/common/AppCountBar";
+@@ -49,11 +56,17 @@ import {
+   DialogTitle,
+ } from "@/components/ui/dialog";
+ 
+-const IMPORT_SKILLS_APP_IDS = SKILLS_APP_IDS.filter((app) => app !== "pi");
++// 本机导入勾选 Pi 时，后端 services/skill.rs 会把技能真正部署到 ~/.pi/agent/skills/
++// （Pi 的 exists=active 规则：目录在即启用），与远端导入语义一致，故本机/远端都显示 Pi 徽章。
++const IMPORT_SKILLS_APP_IDS = SKILLS_APP_IDS;
+ 
+ interface UnifiedSkillsPanelProps {
+   onOpenDiscovery: () => void;
+   currentApp: AppId;
++  /** 选中远端目标时，Skills 面板直接操作该主机 ~/.claude/skills/ */
++  remoteTargetId?: string;
++  /** 目标细化到 Docker 容器时，操作容器内 ~/.claude/skills/ */
++  remoteContainerId?: string;
+   onInteractionBlockedChange?: (blocked: boolean) => void;
+   onNavigationBlockedChange?: (blocked: boolean) => void;
+   onCheckUpdatesStateChange?: (state: SkillsCheckUpdatesState) => void;
+@@ -82,679 +95,878 @@ function formatSkillBackupDate(unixSeconds: number): string {
+ const UnifiedSkillsPanel = React.forwardRef<
+   UnifiedSkillsPanelHandle,
+   UnifiedSkillsPanelProps
+->((props, ref) => {
+-  const {
+-    onOpenDiscovery,
+-    currentApp,
+-    onInteractionBlockedChange,
+-    onNavigationBlockedChange,
+-    onCheckUpdatesStateChange,
+-  } = props;
+-  const { t } = useTranslation();
+-  const [confirmDialog, setConfirmDialog] = useState<{
+-    isOpen: boolean;
+-    title: string;
+-    message: string;
+-    confirmText?: string;
+-    variant?: "destructive" | "info";
+-    onConfirm: () => void;
+-  } | null>(null);
+-  const [importDialogOpen, setImportDialogOpen] = useState(false);
+-  const [restoreDialogOpen, setRestoreDialogOpen] = useState(false);
+-  const [searchQuery, setSearchQuery] = useState("");
+-  const [writePending, setWritePending] = useState(false);
+-  const writeLockRef = React.useRef(false);
+-  const checkUpdatesLockRef = React.useRef(false);
+-
+-  const { data: skills, isLoading } = useInstalledSkills();
+-  const {
+-    data: skillBackups = [],
+-    refetch: refetchSkillBackups,
+-    isFetching: isFetchingSkillBackups,
+-  } = useSkillBackups();
+-  const deleteBackupMutation = useDeleteSkillBackup();
+-  const toggleAppMutation = useToggleSkillApp();
+-  const bulkToggleAppMutation = useBulkToggleSkillApp();
+-  const uninstallMutation = useUninstallSkill();
+-  const restoreBackupMutation = useRestoreSkillBackup();
+-  // enabled: true —— 进入 Skill 页面时自动静默扫描一次（绿点提示来源）
+-  const { data: unmanagedSkills, refetch: scanUnmanaged } =
+-    useScanUnmanagedSkills({ enabled: true });
+-  const importMutation = useImportSkillsFromApps();
+-  const installFromZipMutation = useInstallSkillsFromZip();
+-  const {
+-    data: skillUpdates,
+-    refetch: checkUpdates,
+-    isFetching: isCheckingUpdates,
+-  } = useCheckSkillUpdates();
+-  const updateSkillMutation = useUpdateSkill();
+-  const [isUpdatingAll, setIsUpdatingAll] = useState(false);
+-  const visibleSkillAppIds =
+-    currentApp === "pi" ? SKILLS_APP_IDS : IMPORT_SKILLS_APP_IDS;
+-
+-  const mutationPending =
+-    deleteBackupMutation.isPending ||
+-    toggleAppMutation.isPending ||
+-    bulkToggleAppMutation.isPending ||
+-    uninstallMutation.isPending ||
+-    restoreBackupMutation.isPending ||
+-    importMutation.isPending ||
+-    installFromZipMutation.isPending ||
+-    updateSkillMutation.isPending ||
+-    isUpdatingAll;
+-  const dialogOpen =
+-    importDialogOpen || restoreDialogOpen || confirmDialog !== null;
+-  const navigationBlocked = writePending || mutationPending || dialogOpen;
+-  const interactionBlocked = navigationBlocked || isCheckingUpdates;
+-
+-  React.useEffect(() => {
+-    onInteractionBlockedChange?.(interactionBlocked);
+-  }, [interactionBlocked, onInteractionBlockedChange]);
+-
+-  React.useEffect(() => {
+-    onNavigationBlockedChange?.(navigationBlocked);
+-  }, [navigationBlocked, onNavigationBlockedChange]);
+-
+-  React.useEffect(
+-    () => () => {
+-      onInteractionBlockedChange?.(false);
+-      onNavigationBlockedChange?.(false);
++>(
++  (
++    {
++      onOpenDiscovery,
++      currentApp,
++      remoteTargetId,
++      remoteContainerId,
++      onInteractionBlockedChange,
++      onNavigationBlockedChange,
++      onCheckUpdatesStateChange,
+     },
+-    [onInteractionBlockedChange, onNavigationBlockedChange],
+-  );
+-
+-  const hasSkills = (skills?.length ?? 0) > 0;
+-
+-  React.useEffect(() => {
+-    onCheckUpdatesStateChange?.({
+-      isChecking: isCheckingUpdates,
+-      hasSkills,
+-    });
+-  }, [hasSkills, isCheckingUpdates, onCheckUpdatesStateChange]);
+-
+-  React.useEffect(
+-    () => () =>
+-      onCheckUpdatesStateChange?.({ isChecking: false, hasSkills: false }),
+-    [onCheckUpdatesStateChange],
+-  );
++    ref,
++  ) => {
++    const { t } = useTranslation();
++    const isRemote = Boolean(remoteTargetId);
++    const [confirmDialog, setConfirmDialog] = useState<{
++      isOpen: boolean;
++      title: string;
++      message: string;
++      confirmText?: string;
++      variant?: "destructive" | "info";
++      onConfirm: () => void;
++    } | null>(null);
++    const queryClient = useQueryClient();
++    const [importDialogOpen, setImportDialogOpen] = useState(false);
++    const [restoreDialogOpen, setRestoreDialogOpen] = useState(false);
++    /** 远端导入时暂存扫描结果（替代 unmanagedSkills） */
++    const unmanagedSkillsOverride = useRef<Array<{
++      directory: string;
++      name: string;
++      description?: string;
++      foundIn: string[];
++      path: string;
++    }> | null>(null);
++    const [searchQuery, setSearchQuery] = useState("");
++    const [writePending, setWritePending] = useState(false);
++    const writeLockRef = React.useRef(false);
++    const checkUpdatesLockRef = React.useRef(false);
++
++    const { data: skills, isLoading } = useInstalledSkills(
++      remoteTargetId,
++      remoteContainerId,
++    );
++    const {
++      data: skillBackups = [],
++      refetch: refetchSkillBackups,
++      isFetching: isFetchingSkillBackups,
++    } = useSkillBackups();
++    const deleteBackupMutation = useDeleteSkillBackup();
++    const toggleAppMutation = useToggleSkillApp();
++    const toggleRemoteAppMutation = useToggleRemoteSkillApp(
++      remoteTargetId,
++      remoteContainerId,
++    );
++    const bulkToggleAppMutation = useBulkToggleSkillApp(
++      remoteTargetId,
++      remoteContainerId,
++    );
++    const uninstallMutation = useUninstallSkill(
++      remoteTargetId,
++      remoteContainerId,
++    );
++    const restoreBackupMutation = useRestoreSkillBackup();
++    // enabled: true —— 进入 Skill 页面时自动静默扫描一次（绿点提示来源）
++    // 远端模式下也扫描本机未管理技能（"导入已有"会部署到远端）
++    const { data: unmanagedSkills, refetch: scanUnmanaged } =
++      useScanUnmanagedSkills({ enabled: true });
++    // 对齐本机：远端目标下挂载时自动扫一次「当前所选目标」的未管理技能。
++    // query key 精确到 host+container，App「导入」圆点订阅同一 key；切换目标即自动重扫。
++    const { refetch: scanRemoteUnmanaged } = useRemoteUnmanagedSkillsQuery(
++      isRemote && remoteTargetId ? remoteTargetId : undefined,
++      isRemote ? remoteContainerId : undefined,
++      { enabled: isRemote && Boolean(remoteTargetId) },
++    );
++    const importMutation = useImportSkillsFromApps(
++      remoteTargetId,
++      remoteContainerId,
++    );
++    const installFromZipMutation = useInstallSkillsFromZip(
++      remoteTargetId,
++      remoteContainerId,
++    );
++    const {
++      data: skillUpdates,
++      refetch: checkUpdates,
++      isFetching: isCheckingUpdates,
++    } = useCheckSkillUpdates(
++      isRemote ? remoteTargetId : undefined,
++      isRemote ? remoteContainerId : undefined,
++    );
++    const updateSkillMutation = useUpdateSkill();
++    const updateRemoteSkillMutation = useUpdateRemoteSkill(
++      isRemote ? remoteTargetId : undefined,
++      isRemote ? remoteContainerId : undefined,
++    );
++    const activeUpdateMutation = isRemote
++      ? updateRemoteSkillMutation
++      : updateSkillMutation;
++    const [isUpdatingAll, setIsUpdatingAll] = useState(false);
++
++    const mutationPending =
++      deleteBackupMutation.isPending ||
++      toggleAppMutation.isPending ||
++      bulkToggleAppMutation.isPending ||
++      uninstallMutation.isPending ||
++      restoreBackupMutation.isPending ||
++      importMutation.isPending ||
++      installFromZipMutation.isPending ||
++      activeUpdateMutation.isPending ||
++      isUpdatingAll;
++    const dialogOpen =
++      importDialogOpen || restoreDialogOpen || confirmDialog !== null;
++    const navigationBlocked = writePending || mutationPending || dialogOpen;
++    const interactionBlocked = navigationBlocked || isCheckingUpdates;
++
++    React.useEffect(() => {
++      onInteractionBlockedChange?.(interactionBlocked);
++    }, [interactionBlocked, onInteractionBlockedChange]);
++
++    React.useEffect(() => {
++      onNavigationBlockedChange?.(navigationBlocked);
++    }, [navigationBlocked, onNavigationBlockedChange]);
++
++    React.useEffect(
++      () => () => {
++        onInteractionBlockedChange?.(false);
++        onNavigationBlockedChange?.(false);
++      },
++      [onInteractionBlockedChange, onNavigationBlockedChange],
++    );
+ 
+-  const beginWrite = (allowOpenDialog = false) => {
+-    if (
+-      checkUpdatesLockRef.current ||
+-      isCheckingUpdates ||
+-      writeLockRef.current ||
+-      mutationPending ||
+-      (!allowOpenDialog && dialogOpen)
+-    ) {
+-      return false;
+-    }
+-    writeLockRef.current = true;
+-    setWritePending(true);
+-    return true;
+-  };
++    const hasSkills = (skills?.length ?? 0) > 0;
+ 
+-  const endWrite = () => {
+-    writeLockRef.current = false;
+-    setWritePending(false);
+-  };
++    React.useEffect(() => {
++      onCheckUpdatesStateChange?.({
++        isChecking: isCheckingUpdates,
++        hasSkills,
++      });
++    }, [hasSkills, isCheckingUpdates, onCheckUpdatesStateChange]);
+ 
+-  const applicableSkillUpdates = useMemo(() => {
+-    const installedIds = new Set((skills ?? []).map((skill) => skill.id));
+-    return (skillUpdates ?? []).filter((update) => installedIds.has(update.id));
+-  }, [skillUpdates, skills]);
++    React.useEffect(
++      () => () =>
++        onCheckUpdatesStateChange?.({ isChecking: false, hasSkills: false }),
++      [onCheckUpdatesStateChange],
++    );
+ 
+-  const updatesMap = useMemo(() => {
+-    const map: Record<string, SkillUpdateInfo> = {};
+-    for (const update of applicableSkillUpdates) {
+-      map[update.id] = update;
+-    }
+-    return map;
+-  }, [applicableSkillUpdates]);
+-
+-  const enabledCounts = useMemo(() => {
+-    const counts = {
+-      claude: 0,
+-      "claude-desktop": 0,
+-      codex: 0,
+-      gemini: 0,
+-      grokbuild: 0,
+-      opencode: 0,
+-      openclaw: 0,
+-      hermes: 0,
+-      pi: 0,
+-    };
+-    if (!skills) return counts;
+-    skills.forEach((skill) => {
+-      for (const app of SKILLS_APP_IDS) {
+-        if (skill.apps[app]) {
+-          counts[app]++;
+-        }
++    const beginWrite = (allowOpenDialog = false) => {
++      if (
++        checkUpdatesLockRef.current ||
++        isCheckingUpdates ||
++        writeLockRef.current ||
++        mutationPending ||
++        (!allowOpenDialog && dialogOpen)
++      ) {
++        return false;
+       }
+-    });
+-    return counts;
+-  }, [skills]);
+-
+-  const filteredSkills = useMemo(() => {
+-    if (!skills) return [];
++      writeLockRef.current = true;
++      setWritePending(true);
++      return true;
++    };
+ 
+-    const query = searchQuery.trim().toLocaleLowerCase();
+-    if (!query) return skills;
++    const endWrite = () => {
++      writeLockRef.current = false;
++      setWritePending(false);
++    };
+ 
+-    return skills.filter((skill) => {
+-      const searchableValues = [
+-        skill.name,
+-        skill.id,
+-        skill.description,
+-        skill.directory,
+-        skill.repoOwner,
+-        skill.repoName,
+-        skill.repoOwner && skill.repoName
+-          ? `${skill.repoOwner}/${skill.repoName}`
+-          : undefined,
+-      ];
+-
+-      return searchableValues.some((value) =>
+-        value?.toLocaleLowerCase().includes(query),
++    const applicableSkillUpdates = useMemo(() => {
++      const installedIds = new Set((skills ?? []).map((skill) => skill.id));
++      return (skillUpdates ?? []).filter((update) =>
++        installedIds.has(update.id),
+       );
+-    });
+-  }, [searchQuery, skills]);
++    }, [skillUpdates, skills]);
+ 
+-  const pendingApp = bulkToggleAppMutation.isPending
+-    ? bulkToggleAppMutation.variables?.app
+-    : toggleAppMutation.isPending
+-      ? toggleAppMutation.variables?.app
+-      : null;
+-
+-  const handleToggleApp = async (id: string, app: AppId, enabled: boolean) => {
+-    if (!beginWrite()) return;
++    const updatesMap = useMemo(() => {
++      const map: Record<string, SkillUpdateInfo> = {};
++      for (const update of applicableSkillUpdates) {
++        map[update.id] = update;
++      }
++      return map;
++    }, [applicableSkillUpdates]);
++
++    const enabledCounts = useMemo(() => {
++      const counts = {
++        claude: 0,
++        "claude-desktop": 0,
++        codex: 0,
++        gemini: 0,
++        grokbuild: 0,
++        opencode: 0,
++        openclaw: 0,
++        hermes: 0,
++        pi: 0,
++      };
++      if (!skills) return counts;
++      skills.forEach((skill) => {
++        for (const app of SKILLS_APP_IDS) {
++          if (skill.apps[app]) counts[app]++;
++        }
++      });
++      return counts;
++    }, [skills]);
++
++    const filteredSkills = useMemo(() => {
++      if (!skills) return [];
++
++      const query = searchQuery.trim().toLocaleLowerCase();
++      if (!query) return skills;
++
++      return skills.filter((skill) => {
++        const searchableValues = [
++          skill.name,
++          skill.id,
++          skill.description,
++          skill.directory,
++          skill.repoOwner,
++          skill.repoName,
++          skill.repoOwner && skill.repoName
++            ? `${skill.repoOwner}/${skill.repoName}`
++            : undefined,
++        ];
++
++        return searchableValues.some((value) =>
++          value?.toLocaleLowerCase().includes(query),
++        );
++      });
++    }, [searchQuery, skills]);
++
++    const pendingApp = bulkToggleAppMutation.isPending
++      ? bulkToggleAppMutation.variables?.app
++      : toggleAppMutation.isPending
++        ? toggleAppMutation.variables?.app
++        : null;
++
++    const handleToggleApp = async (
++      id: string,
++      app: AppId,
++      enabled: boolean,
++    ) => {
++      if (!beginWrite()) return;
++
++      try {
++        if (isRemote) {
++          await toggleRemoteAppMutation.mutateAsync({ id, app, enabled });
++        } else {
++          await toggleAppMutation.mutateAsync({ id, app, enabled });
++        }
++      } catch (error) {
++        toast.error(t("common.error"), { description: String(error) });
++      } finally {
++        endWrite();
++      }
++    };
+ 
+-    try {
+-      await toggleAppMutation.mutateAsync({ id, app, enabled });
+-    } catch (error) {
+-      toast.error(t("common.error"), { description: String(error) });
+-    } finally {
+-      endWrite();
+-    }
+-  };
++    const handleToggleAll = async (app: AppId, enabled: boolean) => {
++      if (!skills || !beginWrite()) return;
+ 
+-  const handleToggleAll = async (app: AppId, enabled: boolean) => {
+-    if (!skills || !beginWrite()) return;
++      const ids = skills
++        .filter((skill) => Boolean(skill.apps[app]) !== enabled)
++        .map((skill) => skill.id);
++      if (ids.length === 0) {
++        endWrite();
++        return;
++      }
+ 
+-    const ids = skills
+-      .filter((skill) => Boolean(skill.apps[app]) !== enabled)
+-      .map((skill) => skill.id);
+-    if (ids.length === 0) {
+-      endWrite();
+-      return;
+-    }
++      try {
++        const result = await bulkToggleAppMutation.mutateAsync({
++          ids,
++          app,
++          enabled,
++        });
++        if (result.failed.length > 0) {
++          toast.error(
++            t("common.bulkToggleFailed", { count: result.failed.length }),
++            { description: String(result.failed[0].error) },
++          );
++        }
++      } catch (error) {
++        toast.error(t("common.bulkToggleFailed", { count: ids.length }), {
++          description: String(error),
++        });
++      } finally {
++        endWrite();
++      }
++    };
+ 
+-    try {
+-      const result = await bulkToggleAppMutation.mutateAsync({
+-        ids,
+-        app,
+-        enabled,
++    const handleUninstall = (skill: InstalledSkill) => {
++      if (
++        checkUpdatesLockRef.current ||
++        writeLockRef.current ||
++        interactionBlocked
++      ) {
++        return;
++      }
++      setConfirmDialog({
++        isOpen: true,
++        title: t("skills.uninstall"),
++        message: t("skills.uninstallConfirm", { name: skill.name }),
++        onConfirm: async () => {
++          if (!beginWrite(true)) return;
++          let toastId: string | number | undefined;
++          setConfirmDialog(null);
++          try {
++            toastId = toast.loading(t("skills.uninstalling"));
++
++            // 构建 skillKey 用于更新 discoverable 缓存
++            const installName =
++              skill.directory.split(/[/\\]/).pop()?.toLowerCase() ||
++              skill.directory.toLowerCase();
++            const skillKey = `${installName}:${skill.repoOwner?.toLowerCase() || ""}:${skill.repoName?.toLowerCase() || ""}`;
++
++            const result = await uninstallMutation.mutateAsync(skill.id);
++            // 本地模式：同步 discoverable 的 installed 标志
++            if (!isRemote) {
++              queryClient.setQueryData<DiscoverableSkill[]>(
++                ["skills", "discoverable"],
++                (oldData) =>
++                  oldData?.map((s) =>
++                    s.key === skillKey ? { ...s, installed: false } : s,
++                  ),
++              );
++            }
++            toast.dismiss(toastId);
++            setConfirmDialog(null);
++            toast.success(t("skills.uninstallSuccess", { name: skill.name }), {
++              description: result.backupPath
++                ? t("skills.backup.location", { path: result.backupPath })
++                : undefined,
++              closeButton: true,
++            });
++          } catch (error) {
++            if (toastId) toast.dismiss(toastId);
++            toast.error(t("common.error"), { description: String(error) });
++          } finally {
++            endWrite();
++          }
++        },
+       });
+-      if (result.failed.length > 0) {
+-        toast.error(
+-          t("common.bulkToggleFailed", { count: result.failed.length }),
+-          { description: String(result.failed[0].error) },
++    };
++
++    const handleOpenImport = async () => {
++      if (!beginWrite()) return;
++      let toastId: string | number | undefined;
++      try {
++        toastId = toast.loading(
++          t("skills.scanning", { defaultValue: "正在扫描..." }),
+         );
++        if (isRemote && remoteTargetId) {
++          // 远端：扫描远端文件系统（refetch 当前目标的共享 key，对齐本机 scanUnmanaged）
++          const result = await scanRemoteUnmanaged();
++          const remoteUnmanaged = result.data ?? [];
++          if (remoteUnmanaged.length === 0) {
++            toast.success(t("skills.noUnmanagedFound"), { closeButton: true });
++            return;
++          }
++          // 适配为 ImportSkillsDialog 期望的格式
++          unmanagedSkillsOverride.current = remoteUnmanaged.map((s) => ({
++            directory: s.directory,
++            name: s.name,
++            description: s.description ?? undefined,
++            foundIn: s.foundIn,
++            path: s.path,
++          }));
++          setImportDialogOpen(true);
++          return;
++        }
++
++        // 本机：扫描本机文件系统
++        const result = await scanUnmanaged();
++        if (!result.data || result.data.length === 0) {
++          toast.success(t("skills.noUnmanagedFound"), { closeButton: true });
++          return;
++        }
++        unmanagedSkillsOverride.current = null;
++        setImportDialogOpen(true);
++      } catch (error) {
++        toast.error(t("common.error"), { description: String(error) });
++      } finally {
++        toast.dismiss(toastId);
++        endWrite();
+       }
+-    } catch (error) {
+-      toast.error(t("common.bulkToggleFailed", { count: ids.length }), {
+-        description: String(error),
+-      });
+-    } finally {
+-      endWrite();
+-    }
+-  };
++    };
+ 
+-  const handleUninstall = (skill: InstalledSkill) => {
+-    if (
+-      checkUpdatesLockRef.current ||
+-      writeLockRef.current ||
+-      interactionBlocked
+-    ) {
+-      return;
+-    }
+-    setConfirmDialog({
+-      isOpen: true,
+-      title: t("skills.uninstall"),
+-      message: t("skills.uninstallConfirm", { name: skill.name }),
+-      onConfirm: async () => {
+-        if (!beginWrite(true)) return;
+-        try {
+-          const result = await uninstallMutation.mutateAsync(skill.id);
+-          setConfirmDialog(null);
+-          const piCleanupIncomplete =
+-            result.piCleanupIncomplete || Boolean(result.preservedPiPath);
+-          const toastOptions = {
+-            description: result.preservedPiPath
+-              ? t("skills.uninstallPiPreserved", {
+-                  path: result.preservedPiPath,
+-                })
+-              : result.piCleanupIncomplete
+-                ? t("skills.uninstallPiCleanupIncomplete")
+-                : result.backupPath
+-                  ? t("skills.backup.location", { path: result.backupPath })
+-                  : undefined,
+-            closeButton: true,
+-          };
+-          if (piCleanupIncomplete) {
+-            toast.warning(
+-              t("skills.uninstallSuccess", { name: skill.name }),
+-              toastOptions,
++    const handleImport = async (imports: ImportSkillSelection[]) => {
++      if (!beginWrite(true)) return;
++      let toastId: string | number | undefined;
++      try {
++        if (isRemote && remoteTargetId) {
++          // 远端：逐个 cp -r → SSOT → skills.json → symlink
++          setImportDialogOpen(false);
++          toastId = toast.loading(
++            t("skills.importing", { defaultValue: "正在导入 skill..." }),
++          );
++          const installed: InstalledSkill[] = [];
++          for (const imp of imports) {
++            try {
++              const record = await importRemoteSkill(
++                remoteTargetId,
++                imp.path || imp.directory,
++                imp.directory,
++                remoteContainerId || undefined,
++                currentApp,
++              );
++              installed.push({
++                id: record.id,
++                name: record.name,
++                description: record.description,
++                directory: record.directory,
++                apps: {
++                  claude: record.apps.claude,
++                  codex: record.apps.codex ?? false,
++                  gemini: record.apps.gemini ?? false,
++                  opencode: record.apps.opencode ?? false,
++                  openclaw: record.apps.openclaw ?? false,
++                  hermes: record.apps.hermes ?? false,
++                  pi: record.apps.pi ?? false,
++                },
++                installedAt: record.installedAt,
++                updatedAt: record.updatedAt,
++              });
++            } catch (e) {
++              toast.error(`${imp.directory}: ${String(e)}`);
++            }
++          }
++          unmanagedSkillsOverride.current = null;
++          const count = installed.length;
++          toast.dismiss(toastId);
++          if (count > 0) {
++            const installedKey = [
++              "skills",
++              "installed",
++              "remote",
++              remoteTargetId,
++              remoteContainerId ?? "__host__",
++            ];
++            // 即时更新 UI（对齐本机 mergeImportedSkills：按 id 去重，新记录覆盖旧）
++            queryClient.setQueryData<InstalledSkill[]>(installedKey, (old) =>
++              mergeImportedSkills(old, installed),
+             );
+-          } else {
++            // 后台拉取完整元数据
++            queryClient.invalidateQueries({ queryKey: installedKey });
++            // 刷新当前目标「可导入技能」圆点（key 与 useRemoteUnmanagedSkillsQuery 一致，
++            // 精确到 host + container，不误伤其他目标）
++            queryClient.invalidateQueries({
++              queryKey: [
++                "skills",
++                "unmanaged-remote",
++                remoteTargetId,
++                remoteContainerId ?? "__host__",
++              ],
++            });
+             toast.success(
+-              t("skills.uninstallSuccess", { name: skill.name }),
+-              toastOptions,
++              t("skills.importSuccessRemote", {
++                defaultValue: "已将 {{count}} 个技能导入远端",
++                count,
++              }),
++              { closeButton: true },
+             );
+           }
+-        } catch (error) {
+-          toast.error(t("common.error"), { description: String(error) });
+-        } finally {
+-          endWrite();
++        } else {
++          // 本机：走 importMutation
++          setImportDialogOpen(false);
++          toastId = toast.loading(
++            t("skills.importing", { defaultValue: "正在导入 skill..." }),
++          );
++          await importMutation.mutateAsync(imports);
++          toast.dismiss(toastId);
++          toast.success(t("skills.importSuccess", { count: imports.length }), {
++            closeButton: true,
++          });
+         }
+-      },
+-    });
+-  };
+-
+-  const handleOpenImport = async () => {
+-    if (!beginWrite()) return;
+-    try {
+-      const result = await scanUnmanaged();
+-      if (!result.data || result.data.length === 0) {
+-        toast.success(t("skills.noUnmanagedFound"), { closeButton: true });
+-        return;
++      } catch (error) {
++        if (toastId) toast.dismiss(toastId);
++        toast.error(t("common.error"), { description: String(error) });
++      } finally {
++        endWrite();
+       }
+-      setImportDialogOpen(true);
+-    } catch (error) {
+-      toast.error(t("common.error"), { description: String(error) });
+-    } finally {
+-      endWrite();
+-    }
+-  };
++    };
+ 
+-  const handleImport = async (imports: ImportSkillSelection[]) => {
+-    if (!beginWrite(true)) return;
+-    try {
+-      const imported = await importMutation.mutateAsync(imports);
+-      setImportDialogOpen(false);
+-      toast.success(t("skills.importSuccess", { count: imported.length }), {
+-        closeButton: true,
+-      });
+-    } catch (error) {
+-      toast.error(t("common.error"), { description: String(error) });
+-    } finally {
+-      endWrite();
+-    }
+-  };
++    const handleInstallFromZip = async () => {
++      if (!beginWrite()) return;
++      let toastId: string | number | undefined;
++      try {
++        const filePath = await skillsApi.openZipFileDialog();
++        if (!filePath) return;
++
++        toastId = toast.loading(t("skills.installing"));
++        const installed = await installFromZipMutation.mutateAsync({
++          filePath,
++          currentApp,
++        });
++        toast.dismiss(toastId);
+ 
+-  const handleInstallFromZip = async () => {
+-    if (!beginWrite()) return;
+-    try {
+-      const filePath = await skillsApi.openZipFileDialog();
+-      if (!filePath) return;
++        if (installed.length === 0) {
++          toast.info(t("skills.installFromZip.noSkillsFound"), {
++            closeButton: true,
++          });
++        } else if (installed.length === 1) {
++          toast.success(
++            t("skills.installFromZip.successSingle", {
++              name: installed[0].name,
++            }),
++            { closeButton: true },
++          );
++        } else {
++          toast.success(
++            t("skills.installFromZip.successMultiple", {
++              count: installed.length,
++            }),
++            { closeButton: true },
++          );
++        }
++      } catch (error) {
++        if (toastId) toast.dismiss(toastId);
++        toast.error(t("skills.installFailed"), { description: String(error) });
++      } finally {
++        endWrite();
++      }
++    };
+ 
+-      const installed = await installFromZipMutation.mutateAsync({
+-        filePath,
+-        currentApp,
+-      });
++    const handleCheckUpdates = async () => {
++      if (
++        checkUpdatesLockRef.current ||
++        writeLockRef.current ||
++        interactionBlocked
++      ) {
++        return;
++      }
++      checkUpdatesLockRef.current = true;
++      try {
++        const result = await checkUpdates();
++        const updates = result.data || [];
++        if (updates.length === 0) {
++          toast.success(t("skills.noUpdates"), { closeButton: true });
++        } else {
++          toast.info(t("skills.updatesFound", { count: updates.length }), {
++            closeButton: true,
++          });
++        }
++      } catch (error) {
++        toast.error(t("common.error"), { description: String(error) });
++      } finally {
++        checkUpdatesLockRef.current = false;
++      }
++    };
+ 
+-      if (installed.length === 0) {
+-        toast.info(t("skills.installFromZip.noSkillsFound"), {
++    const handleUpdateSkill = async (skill: InstalledSkill) => {
++      if (!beginWrite()) return;
++      try {
++        const updated = await activeUpdateMutation.mutateAsync(skill.id);
++        toast.success(t("skills.updateSuccess", { name: updated.name }), {
+           closeButton: true,
+         });
+-      } else if (installed.length === 1) {
+-        toast.success(
+-          t("skills.installFromZip.successSingle", {
+-            name: installed[0].name,
+-          }),
+-          { closeButton: true },
+-        );
+-      } else {
+-        toast.success(
+-          t("skills.installFromZip.successMultiple", {
+-            count: installed.length,
+-          }),
+-          { closeButton: true },
+-        );
++      } catch (error) {
++        toast.error(t("skills.updateFailed"), { description: String(error) });
++      } finally {
++        endWrite();
+       }
+-    } catch (error) {
+-      toast.error(t("skills.installFailed"), { description: String(error) });
+-    } finally {
+-      endWrite();
+-    }
+-  };
++    };
+ 
+-  const handleCheckUpdates = async () => {
+-    if (
+-      checkUpdatesLockRef.current ||
+-      writeLockRef.current ||
+-      interactionBlocked
+-    ) {
+-      return;
+-    }
+-    checkUpdatesLockRef.current = true;
+-    try {
+-      const result = await checkUpdates();
+-      const updates = result.data || [];
+-      if (updates.length === 0) {
+-        toast.success(t("skills.noUpdates"), { closeButton: true });
+-      } else {
+-        toast.info(t("skills.updatesFound", { count: updates.length }), {
++    const handleUpdateAll = async () => {
++      if (applicableSkillUpdates.length === 0 || !beginWrite()) {
++        return;
++      }
++      setIsUpdatingAll(true);
++      let successCount = 0;
++      try {
++        for (const update of applicableSkillUpdates) {
++          try {
++            await activeUpdateMutation.mutateAsync(update.id);
++            successCount++;
++          } catch (error) {
++            toast.error(t("skills.updateFailed"), {
++              description: `${update.name}: ${String(error)}`,
++            });
++          }
++        }
++      } finally {
++        setIsUpdatingAll(false);
++        endWrite();
++      }
++      if (successCount > 0) {
++        toast.success(t("skills.updateAllSuccess", { count: successCount }), {
+           closeButton: true,
+         });
+       }
+-    } catch (error) {
+-      toast.error(t("common.error"), { description: String(error) });
+-    } finally {
+-      checkUpdatesLockRef.current = false;
+-    }
+-  };
+-
+-  const handleUpdateSkill = async (skill: InstalledSkill) => {
+-    if (!beginWrite()) return;
+-    try {
+-      const updated = await updateSkillMutation.mutateAsync(skill.id);
+-      toast.success(t("skills.updateSuccess", { name: updated.name }), {
+-        closeButton: true,
+-      });
+-    } catch (error) {
+-      toast.error(t("skills.updateFailed"), { description: String(error) });
+-    } finally {
+-      endWrite();
+-    }
+-  };
++    };
+ 
+-  const handleUpdateAll = async () => {
+-    if (applicableSkillUpdates.length === 0 || !beginWrite()) {
+-      return;
+-    }
+-    setIsUpdatingAll(true);
+-    let successCount = 0;
+-    try {
+-      for (const update of applicableSkillUpdates) {
+-        try {
+-          await updateSkillMutation.mutateAsync(update.id);
+-          successCount++;
+-        } catch (error) {
+-          toast.error(t("skills.updateFailed"), {
+-            description: `${update.name}: ${String(error)}`,
+-          });
+-        }
++    const handleOpenRestoreFromBackup = async () => {
++      if (!beginWrite()) return;
++      setRestoreDialogOpen(true);
++      try {
++        await refetchSkillBackups({ throwOnError: true });
++      } catch (error) {
++        setRestoreDialogOpen(false);
++        toast.error(t("common.error"), { description: String(error) });
++      } finally {
++        endWrite();
+       }
+-    } finally {
+-      setIsUpdatingAll(false);
+-      endWrite();
+-    }
+-    if (successCount > 0) {
+-      toast.success(t("skills.updateAllSuccess", { count: successCount }), {
+-        closeButton: true,
+-      });
+-    }
+-  };
+-
+-  const handleOpenRestoreFromBackup = async () => {
+-    if (!beginWrite()) return;
+-    setRestoreDialogOpen(true);
+-    try {
+-      await refetchSkillBackups({ throwOnError: true });
+-    } catch (error) {
+-      setRestoreDialogOpen(false);
+-      toast.error(t("common.error"), { description: String(error) });
+-    } finally {
+-      endWrite();
+-    }
+-  };
++    };
+ 
+-  const handleRestoreFromBackup = async (backupId: string) => {
+-    if (!beginWrite(true)) return;
+-    try {
+-      const restored = await restoreBackupMutation.mutateAsync({
+-        backupId,
+-        currentApp,
+-      });
+-      setRestoreDialogOpen(false);
+-      toast.success(
+-        t("skills.restoreFromBackup.success", { name: restored.name }),
+-        {
+-          closeButton: true,
+-        },
+-      );
+-    } catch (error) {
+-      toast.error(t("skills.restoreFromBackup.failed"), {
+-        description: String(error),
+-      });
+-    } finally {
+-      endWrite();
+-    }
+-  };
++    const handleRestoreFromBackup = async (backupId: string) => {
++      if (!beginWrite(true)) return;
++      try {
++        const restored = await restoreBackupMutation.mutateAsync({
++          backupId,
++          currentApp,
++        });
++        setRestoreDialogOpen(false);
++        toast.success(
++          t("skills.restoreFromBackup.success", { name: restored.name }),
++          {
++            closeButton: true,
++          },
++        );
++      } catch (error) {
++        toast.error(t("skills.restoreFromBackup.failed"), {
++          description: String(error),
++        });
++      } finally {
++        endWrite();
++      }
++    };
+ 
+-  const handleDeleteBackup = (backup: SkillBackupEntry) => {
+-    if (checkUpdatesLockRef.current || writeLockRef.current) return;
+-    setConfirmDialog({
+-      isOpen: true,
+-      title: t("skills.restoreFromBackup.deleteConfirmTitle"),
+-      message: t("skills.restoreFromBackup.deleteConfirmMessage", {
+-        name: backup.skill.name,
+-      }),
+-      confirmText: t("skills.restoreFromBackup.delete"),
+-      variant: "destructive",
+-      onConfirm: async () => {
+-        if (!beginWrite(true)) return;
+-        try {
+-          let deleteSucceeded = false;
+-          let deleteError: unknown;
++    const handleDeleteBackup = (backup: SkillBackupEntry) => {
++      if (checkUpdatesLockRef.current || writeLockRef.current) return;
++      setConfirmDialog({
++        isOpen: true,
++        title: t("skills.restoreFromBackup.deleteConfirmTitle"),
++        message: t("skills.restoreFromBackup.deleteConfirmMessage", {
++          name: backup.skill.name,
++        }),
++        confirmText: t("skills.restoreFromBackup.delete"),
++        variant: "destructive",
++        onConfirm: async () => {
++          if (!beginWrite(true)) return;
+           try {
+-            await deleteBackupMutation.mutateAsync(backup.backupId);
+-            deleteSucceeded = true;
+-          } catch (error) {
+-            deleteError = error;
+-          }
++            let deleteSucceeded = false;
++            let deleteError: unknown;
++            try {
++              await deleteBackupMutation.mutateAsync(backup.backupId);
++              deleteSucceeded = true;
++            } catch (error) {
++              deleteError = error;
++            }
+ 
+-          // The backups query is disabled by default, so invalidation alone
+-          // does not fetch authoritative data. Explicitly refresh after both
+-          // success and failure (remove_dir_all may have made partial progress).
+-          let refreshedBackups: SkillBackupEntry[] | undefined;
+-          try {
+-            const result = await refetchSkillBackups({ throwOnError: true });
+-            refreshedBackups = result.data;
+-          } catch (error) {
+-            // A refresh failure must not turn a completed deletion into a false
+-            // "delete failed" report, or replace the original deletion error.
+-            console.error(
+-              "Failed to refresh Skill backups after deletion:",
+-              error,
+-            );
+-          }
++            // The backups query is disabled by default, so invalidation alone
++            // does not fetch authoritative data. Explicitly refresh after both
++            // success and failure (remove_dir_all may have made partial progress).
++            let refreshedBackups: SkillBackupEntry[] | undefined;
++            try {
++              const result = await refetchSkillBackups({ throwOnError: true });
++              refreshedBackups = result.data;
++            } catch (error) {
++              // A refresh failure must not turn a completed deletion into a false
++              // "delete failed" report, or replace the original deletion error.
++              console.error(
++                "Failed to refresh Skill backups after deletion:",
++                error,
++              );
++            }
+ 
+-          if (!deleteSucceeded) {
+-            // remove_dir_all may finish removing the directory but still
+-            // report an error. If the authoritative refresh confirms that the
+-            // item is gone, close the now-stale confirmation dialog.
+-            if (
+-              refreshedBackups &&
+-              !refreshedBackups.some(
+-                (entry) => entry.backupId === backup.backupId,
+-              )
+-            ) {
++            if (!deleteSucceeded) {
++              // remove_dir_all may finish removing the directory but still
++              // report an error. If the authoritative refresh confirms that the
++              // item is gone, close the now-stale confirmation dialog.
++              if (
++                refreshedBackups &&
++                !refreshedBackups.some(
++                  (entry) => entry.backupId === backup.backupId,
++                )
++              ) {
++                setConfirmDialog(null);
++              }
++              toast.error(t("skills.restoreFromBackup.deleteFailed"), {
++                description: String(deleteError),
++              });
++            } else {
+               setConfirmDialog(null);
++              toast.success(
++                t("skills.restoreFromBackup.deleteSuccess", {
++                  name: backup.skill.name,
++                }),
++                {
++                  closeButton: true,
++                },
++              );
+             }
+-            toast.error(t("skills.restoreFromBackup.deleteFailed"), {
+-              description: String(deleteError),
+-            });
+-          } else {
+-            setConfirmDialog(null);
+-            toast.success(
+-              t("skills.restoreFromBackup.deleteSuccess", {
+-                name: backup.skill.name,
+-              }),
+-              {
+-                closeButton: true,
+-              },
+-            );
++          } finally {
++            endWrite();
+           }
+-        } finally {
+-          endWrite();
++        },
++      });
++    };
++
++    React.useImperativeHandle(ref, () => ({
++      openDiscovery: () => {
++        if (
++          !checkUpdatesLockRef.current &&
++          !writeLockRef.current &&
++          !interactionBlocked
++        ) {
++          onOpenDiscovery();
+         }
+       },
+-    });
+-  };
+-
+-  React.useImperativeHandle(ref, () => ({
+-    openDiscovery: () => {
+-      if (
+-        !checkUpdatesLockRef.current &&
+-        !writeLockRef.current &&
+-        !interactionBlocked
+-      ) {
+-        onOpenDiscovery();
+-      }
+-    },
+-    openImport: handleOpenImport,
+-    openInstallFromZip: handleInstallFromZip,
+-    openRestoreFromBackup: handleOpenRestoreFromBackup,
+-    checkUpdates: handleCheckUpdates,
+-  }));
+-
+-  return (
+-    <div className="px-6 flex flex-col flex-1 min-h-0 overflow-hidden">
+-      <div className="flex items-center justify-between gap-2">
+-        <div className="min-w-0 flex-1">
+-          <AppCountBar
+-            totalLabel={t("skills.installed", { count: skills?.length || 0 })}
+-            counts={enabledCounts}
+-            appIds={visibleSkillAppIds}
+-            totalCount={skills?.length ?? 0}
+-            onToggleAll={handleToggleAll}
+-            pendingApp={pendingApp}
+-            disabled={interactionBlocked}
+-          />
+-        </div>
+-        <div
+-          className="mb-4 overflow-hidden transition-all duration-300 ease-out"
+-          style={{
+-            maxWidth: applicableSkillUpdates.length > 0 ? "200px" : "0px",
+-            opacity: applicableSkillUpdates.length > 0 ? 1 : 0,
+-          }}
+-        >
+-          <Button
+-            type="button"
+-            variant="outline"
+-            size="sm"
+-            className="h-7 text-xs gap-1 whitespace-nowrap disabled:opacity-100"
+-            onClick={handleUpdateAll}
+-            disabled={interactionBlocked}
++      openImport: handleOpenImport,
++      openInstallFromZip: handleInstallFromZip,
++      openRestoreFromBackup: isRemote
++        ? () => undefined
++        : handleOpenRestoreFromBackup,
++      checkUpdates: handleCheckUpdates,
++    }));
++
++    return (
++      <div className="px-6 flex flex-col flex-1 min-h-0 overflow-hidden">
++        <div className="flex items-center justify-between gap-2">
++          <div className="min-w-0 flex-1">
++            <AppCountBar
++              totalLabel={
++                isRemote
++                  ? t("remote.skillsInstalled", {
++                      defaultValue: "远端技能 {{count}}",
++                      count: skills?.length || 0,
++                    })
++                  : t("skills.installed", { count: skills?.length || 0 })
++              }
++              counts={enabledCounts}
++              appIds={SKILLS_APP_IDS}
++              totalCount={skills?.length ?? 0}
++              onToggleAll={handleToggleAll}
++              pendingApp={pendingApp}
++              disabled={interactionBlocked}
++            />
++          </div>
++          <div
++            className="mb-4 overflow-hidden transition-all duration-300 ease-out"
++            style={{
++              maxWidth: applicableSkillUpdates.length > 0 ? "200px" : "0px",
++              opacity: applicableSkillUpdates.length > 0 ? 1 : 0,
++            }}
+           >
+-            {isUpdatingAll ? (
+-              <Loader2 size={12} className="animate-spin" />
+-            ) : (
+-              <RefreshCw size={12} />
+-            )}
+-            {isUpdatingAll
+-              ? t("skills.updatingAll")
+-              : t("skills.updateAll", {
+-                  count: applicableSkillUpdates.length,
+-                })}
+-          </Button>
++            <Button
++              type="button"
++              variant="outline"
++              size="sm"
++              className="h-7 text-xs gap-1 whitespace-nowrap disabled:opacity-100"
++              onClick={handleUpdateAll}
++              disabled={interactionBlocked}
++            >
++              {isUpdatingAll ? (
++                <Loader2 size={12} className="animate-spin" />
++              ) : (
++                <RefreshCw size={12} />
++              )}
++              {isUpdatingAll
++                ? t("skills.updatingAll")
++                : t("skills.updateAll", {
++                    count: applicableSkillUpdates.length,
++                  })}
++            </Button>
++          </div>
+         </div>
+-      </div>
+ 
+-      <ManagementListSearch
+-        value={searchQuery}
+-        onValueChange={setSearchQuery}
+-        placeholder={t("skills.installedSearchPlaceholder")}
+-        ariaLabel={t("skills.installedSearchAriaLabel")}
+-        clearLabel={t("common.clear")}
+-      />
++        <ManagementListSearch
++          value={searchQuery}
++          onValueChange={setSearchQuery}
++          placeholder={t("skills.installedSearchPlaceholder")}
++          ariaLabel={t("skills.installedSearchAriaLabel")}
++          clearLabel={t("common.clear")}
++        />
+ 
+-      <ScrollArea className="-mr-3 flex-1 min-h-0" type="auto">
+-        <div className="pb-24 pr-3">
+-          {isLoading ? (
+-            <div className="text-center py-12 text-muted-foreground">
+-              {t("skills.loading")}
+-            </div>
+-          ) : !skills || skills.length === 0 ? (
+-            <div className="text-center py-12">
+-              <div className="w-16 h-16 mx-auto mb-4 bg-muted rounded-full flex items-center justify-center">
+-                <Sparkles size={24} className="text-muted-foreground" />
++        <ScrollArea className="-mr-3 flex-1 min-h-0" type="auto">
++          <div className="pb-24 pr-3">
++            {isLoading ? (
++              <div className="text-center py-12 text-muted-foreground">
++                {t("skills.loading")}
+               </div>
+-              <h3 className="text-lg font-medium text-foreground mb-2">
+-                {t("skills.noInstalled")}
+-              </h3>
+-              <p className="text-muted-foreground text-sm">
+-                {t("skills.noInstalledDescription")}
+-              </p>
+-            </div>
+-          ) : filteredSkills.length === 0 ? (
+-            <div className="flex flex-col items-center justify-center py-12 text-center text-muted-foreground">
+-              <Search className="mb-4 h-10 w-10 opacity-40" />
+-              <p className="text-sm">{t("skills.noInstalledSearchResults")}</p>
+-            </div>
+-          ) : (
+-            <TooltipProvider delayDuration={300}>
+-              <div className="rounded-xl border border-border-default overflow-hidden">
+-                {filteredSkills.map((skill, index) => (
+-                  <InstalledSkillListItem
+-                    key={skill.id}
+-                    skill={skill}
+-                    hasUpdate={!!updatesMap[skill.id]}
+-                    isUpdating={
+-                      updateSkillMutation.isPending &&
+-                      updateSkillMutation.variables === skill.id
+-                    }
+-                    actionsDisabled={interactionBlocked}
+-                    appIds={visibleSkillAppIds}
+-                    onToggleApp={handleToggleApp}
+-                    onUninstall={() => handleUninstall(skill)}
+-                    onUpdate={() => handleUpdateSkill(skill)}
+-                    isLast={index === filteredSkills.length - 1}
+-                  />
+-                ))}
++            ) : !skills || skills.length === 0 ? (
++              <div className="text-center py-12">
++                <div className="w-16 h-16 mx-auto mb-4 bg-muted rounded-full flex items-center justify-center">
++                  <Sparkles size={24} className="text-muted-foreground" />
++                </div>
++                <h3 className="text-lg font-medium text-foreground mb-2">
++                  {isRemote
++                    ? t("remote.skillsEmptyTitle", {
++                        defaultValue: "远端没有已安装的技能",
++                      })
++                    : t("skills.noInstalled")}
++                </h3>
++                <p className="text-muted-foreground text-sm">
++                  {isRemote
++                    ? t("remote.skillsEmptyHint", {
++                        defaultValue:
++                          "点击「从 ZIP 安装」部署技能到远端，或「导入已有」将远端已有技能目录纳入管理",
++                      })
++                    : t("skills.noInstalledDescription")}
++                </p>
+               </div>
+-            </TooltipProvider>
++            ) : filteredSkills.length === 0 ? (
++              <div className="flex flex-col items-center justify-center py-12 text-center text-muted-foreground">
++                <Search className="mb-4 h-10 w-10 opacity-40" />
++                <p className="text-sm">
++                  {t("skills.noInstalledSearchResults")}
++                </p>
++              </div>
++            ) : (
++              <TooltipProvider delayDuration={300}>
++                <div className="rounded-xl border border-border-default overflow-hidden">
++                  {filteredSkills.map((skill, index) => (
++                    <InstalledSkillListItem
++                      key={skill.id}
++                      skill={skill}
++                      hasUpdate={!!updatesMap[skill.id]}
++                      isUpdating={
++                        activeUpdateMutation.isPending &&
++                        activeUpdateMutation.variables === skill.id
++                      }
++                      isRemote={isRemote}
++                      actionsDisabled={interactionBlocked}
++                      appIds={SKILLS_APP_IDS}
++                      onToggleApp={handleToggleApp}
++                      onUninstall={() => handleUninstall(skill)}
++                      onUpdate={() => handleUpdateSkill(skill)}
++                      isLast={index === filteredSkills.length - 1}
++                    />
++                  ))}
++                </div>
++              </TooltipProvider>
++            )}
++          </div>
++        </ScrollArea>
++
++        {confirmDialog && (
++          <ConfirmDialog
++            isOpen={confirmDialog.isOpen}
++            title={confirmDialog.title}
++            message={confirmDialog.message}
++            confirmText={confirmDialog.confirmText}
++            variant={confirmDialog.variant}
++            zIndex="top"
++            pending={writePending}
++            onConfirm={confirmDialog.onConfirm}
++            onCancel={() => setConfirmDialog(null)}
++          />
++        )}
++
++        {importDialogOpen &&
++          (unmanagedSkillsOverride.current || unmanagedSkills) && (
++            <ImportSkillsDialog
++              skills={unmanagedSkillsOverride.current ?? unmanagedSkills!}
++              isImporting={importMutation.isPending}
++              onImport={handleImport}
++              onClose={() => setImportDialogOpen(false)}
++              appIds={IMPORT_SKILLS_APP_IDS}
++            />
+           )}
+-        </div>
+-      </ScrollArea>
+-
+-      {confirmDialog && (
+-        <ConfirmDialog
+-          isOpen={confirmDialog.isOpen}
+-          title={confirmDialog.title}
+-          message={confirmDialog.message}
+-          confirmText={confirmDialog.confirmText}
+-          variant={confirmDialog.variant}
+-          zIndex="top"
+-          pending={writePending}
+-          onConfirm={confirmDialog.onConfirm}
+-          onCancel={() => setConfirmDialog(null)}
+-        />
+-      )}
+-
+-      {importDialogOpen && unmanagedSkills && (
+-        <ImportSkillsDialog
+-          skills={unmanagedSkills}
+-          isImporting={importMutation.isPending}
+-          onImport={handleImport}
+-          onClose={() => setImportDialogOpen(false)}
+-        />
+-      )}
+-
+-      <RestoreSkillsDialog
+-        backups={skillBackups}
+-        isDeleting={deleteBackupMutation.isPending}
+-        isLoading={isFetchingSkillBackups}
+-        onDelete={handleDeleteBackup}
+-        isRestoring={restoreBackupMutation.isPending}
+-        onRestore={handleRestoreFromBackup}
+-        onClose={() => setRestoreDialogOpen(false)}
+-        open={restoreDialogOpen}
+-      />
+-    </div>
+-  );
+-});
++
++        {!isRemote && (
++          <RestoreSkillsDialog
++            backups={skillBackups}
++            isDeleting={deleteBackupMutation.isPending}
++            isLoading={isFetchingSkillBackups}
++            onDelete={handleDeleteBackup}
++            isRestoring={restoreBackupMutation.isPending}
++            onRestore={handleRestoreFromBackup}
++            onClose={() => setRestoreDialogOpen(false)}
++            open={restoreDialogOpen}
++          />
++        )}
++      </div>
++    );
++  },
++);
+ 
+ UnifiedSkillsPanel.displayName = "UnifiedSkillsPanel";
+ 
+@@ -763,6 +975,7 @@ interface InstalledSkillListItemProps {
+   appIds: AppId[];
+   hasUpdate?: boolean;
+   isUpdating?: boolean;
++  isRemote?: boolean;
+   actionsDisabled?: boolean;
+   onToggleApp: (id: string, app: AppId, enabled: boolean) => void;
+   onUninstall: () => void;
+@@ -775,6 +988,7 @@ const InstalledSkillListItem: React.FC<InstalledSkillListItemProps> = ({
+   appIds,
+   hasUpdate,
+   isUpdating,
++  isRemote,
+   actionsDisabled,
+   onToggleApp,
+   onUninstall,
+@@ -848,7 +1062,7 @@ const InstalledSkillListItem: React.FC<InstalledSkillListItemProps> = ({
+         className="flex-shrink-0 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
+         style={hasUpdate ? { opacity: 1 } : undefined}
+       >
+-        {hasUpdate && onUpdate && (
++        {hasUpdate && onUpdate && (!isRemote || Boolean(skill.repoOwner)) && (
+           <Button
+             type="button"
+             variant="ghost"
+@@ -895,6 +1109,8 @@ interface ImportSkillsDialogProps {
+   isImporting: boolean;
+   onImport: (imports: ImportSkillSelection[]) => void;
+   onClose: () => void;
++  /** 导入时可选的目标应用徽章：本机排除 pi（本地不持久化），远端保留 pi */
++  appIds?: AppId[];
+ }
+ 
+ interface RestoreSkillsDialogProps {
+@@ -1029,6 +1245,7 @@ const ImportSkillsDialog: React.FC<ImportSkillsDialogProps> = ({
+   isImporting,
+   onImport,
+   onClose,
++  appIds = IMPORT_SKILLS_APP_IDS,
+ }) => {
+   const { t } = useTranslation();
+   const [selected, setSelected] = useState<Set<string>>(
+@@ -1066,19 +1283,23 @@ const ImportSkillsDialog: React.FC<ImportSkillsDialogProps> = ({
+ 
+   const handleImport = () => {
+     onImport(
+-      Array.from(selected).map((directory) => ({
+-        directory,
+-        apps: selectedApps[directory] ?? {
+-          claude: false,
+-          codex: false,
+-          gemini: false,
+-          grokbuild: false,
+-          opencode: false,
+-          openclaw: false,
+-          hermes: false,
+-          pi: false,
+-        },
+-      })),
++      Array.from(selected).map((directory) => {
++        const skill = skills.find((s) => s.directory === directory);
++        return {
++          directory,
++          apps: selectedApps[directory] ?? {
++            claude: false,
++            codex: false,
++            gemini: false,
++            grokbuild: false,
++            opencode: false,
++            openclaw: false,
++            hermes: false,
++            pi: false,
++          },
++          path: skill?.path,
++        };
++      }),
+     );
+   };
+ 
+@@ -1140,7 +1361,7 @@ const ImportSkillsDialog: React.FC<ImportSkillsDialogProps> = ({
+                           },
+                         }));
+                       }}
+-                      appIds={IMPORT_SKILLS_APP_IDS}
++                      appIds={appIds}
+                     />
+                   </div>
+                   <div
+diff --git a/src/components/ui/dropdown-menu.tsx b/src/components/ui/dropdown-menu.tsx
+index dd60662..0373e67 100644
+--- a/src/components/ui/dropdown-menu.tsx
++++ b/src/components/ui/dropdown-menu.tsx
+@@ -126,14 +126,24 @@ const DropdownMenuRadioItem = React.forwardRef<
+   <DropdownMenuPrimitive.RadioItem
+     ref={ref}
+     className={cn(
+-      "relative flex cursor-default select-none items-center gap-2 rounded-sm py-1.5 pl-2 pr-8 text-sm outline-none transition-colors focus:bg-accent focus:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
++      "relative flex cursor-default select-none items-center gap-2 rounded-sm py-1.5 pl-8 pr-8 text-sm outline-none transition-colors focus:bg-accent focus:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
+       className,
+     )}
+     {...props}
+   >
+     <span className="absolute left-2 flex h-3.5 w-3.5 items-center justify-center">
+       <DropdownMenuPrimitive.ItemIndicator>
+-        <div className="h-2 w-2 rounded-full bg-current" />
++        <svg
++          className="h-4 w-4"
++          viewBox="0 0 20 20"
++          fill="none"
++          xmlns="http://www.w3.org/2000/svg"
++        >
++          <path
++            d="M16.704 5.292a1 1 0 0 1 .083 1.32l-.083.094-8 8a1 1 0 0 1-1.32.083l-.094-.083-4-4a1 1 0 0 1 1.32-1.497l.094.083L8 12.585l7.293-7.292a1 1 0 0 1 1.32-.083l.094.083Z"
++            fill="currentColor"
++          />
++        </svg>
+       </DropdownMenuPrimitive.ItemIndicator>
+     </span>
+     {children}
+diff --git a/src/components/ui/input.tsx b/src/components/ui/input.tsx
+index 7c47852..ece8030 100644
+--- a/src/components/ui/input.tsx
++++ b/src/components/ui/input.tsx
+@@ -9,7 +9,7 @@ const Input = React.forwardRef<HTMLInputElement, InputProps>(
+       <input
+         type={type}
+         className={cn(
+-          "flex h-9 w-full rounded-md border border-border-default bg-background text-foreground px-3 py-1 text-sm shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-blue-500/20 dark:focus:ring-blue-400/20 disabled:cursor-not-allowed disabled:opacity-50",
++          "flex h-9 w-full rounded-md border border-border-default bg-background text-foreground px-3 py-1 text-sm shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-blue-500/20 dark:focus:ring-blue-400/20 disabled:cursor-not-allowed disabled:opacity-50",
+           className,
+         )}
+         autoComplete="off"
+diff --git a/src/components/ui/popover.tsx b/src/components/ui/popover.tsx
+index d979a52..24e9bf9 100644
+--- a/src/components/ui/popover.tsx
++++ b/src/components/ui/popover.tsx
+@@ -5,6 +5,7 @@ import { cn } from "@/lib/utils";
+ const Popover = PopoverPrimitive.Root;
+ const PopoverTrigger = PopoverPrimitive.Trigger;
+ const PopoverAnchor = PopoverPrimitive.Anchor;
++const PopoverArrow = PopoverPrimitive.Arrow;
+ 
+ const PopoverContent = React.forwardRef<
+   React.ComponentRef<typeof PopoverPrimitive.Content>,
+@@ -25,4 +26,4 @@ const PopoverContent = React.forwardRef<
+ ));
+ PopoverContent.displayName = PopoverPrimitive.Content.displayName;
+ 
+-export { Popover, PopoverTrigger, PopoverContent, PopoverAnchor };
++export { Popover, PopoverTrigger, PopoverContent, PopoverAnchor, PopoverArrow };
+diff --git a/src/components/ui/sonner.tsx b/src/components/ui/sonner.tsx
+index 9cd7cc1..9f850b5 100644
+--- a/src/components/ui/sonner.tsx
++++ b/src/components/ui/sonner.tsx
+@@ -1,6 +1,21 @@
++import { createPortal } from "react-dom";
+ import { Toaster as SonnerToaster } from "sonner";
+ import { useTheme } from "@/components/theme-provider";
+ 
++/**
++ * Sonner 提示容器。
++ *
++ * 通过 Portal 挂到 document.body 顶层：Sonner 默认就地渲染，若应用内有
++ * 任意祖先创建 stacking context（position+z-index / transform / filter 等），
++ * toast 的高 z-index 会被困在那一层之下，导致被 Dialog/Sheet 遮罩盖住而点不到
++ * 关闭按钮。Portaling 到 body 顶层 + 内联 z-index 兜底，确保 toast 永远浮在所有
++ * 浮层之上。
++ *
++ * 关键：Radix 模态 Dialog（如远程主机抽屉）打开时会设置 body 的
++ * `pointer-events: none` 以禁用模态外交互。该值会传播到 body 所有后代，
++ * 若 toast 容器不显式设回 `pointer-events: auto`，即使 z-index 再高也会被连带
++ * 禁用点击。因此这里必须显式声明 pointerEvents: "auto"。
++ */
+ export function Toaster() {
+   const { theme } = useTheme();
+ 
+@@ -8,11 +23,13 @@ export function Toaster() {
+   // 如果是 "system"，Sonner 会自己处理
+   const sonnerTheme = theme === "system" ? "system" : theme;
+ 
+-  return (
++  return createPortal(
+     <SonnerToaster
+       position="top-center"
+       richColors
+       theme={sonnerTheme}
++      closeButton
++      style={{ zIndex: 999999999, pointerEvents: "auto" }}
+       toastOptions={{
+         duration: 2000,
+         classNames: {
+@@ -20,12 +37,11 @@ export function Toaster() {
+             "group rounded-md border bg-background text-foreground shadow-lg",
+           title: "text-sm font-semibold",
+           description: "text-sm text-muted-foreground",
+-          closeButton:
+-            "absolute right-2 top-2 rounded-full p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground",
+           actionButton:
+             "rounded-md bg-primary px-3 py-1 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90",
+         },
+       }}
+-    />
++    />,
++    document.body,
+   );
+ }
+diff --git a/src/components/usage/RequestLogTable.tsx b/src/components/usage/RequestLogTable.tsx
+index dc7e3da..6593fdf 100644
+--- a/src/components/usage/RequestLogTable.tsx
++++ b/src/components/usage/RequestLogTable.tsx
+@@ -17,6 +17,12 @@ import {
+   SelectTrigger,
+   SelectValue,
+ } from "@/components/ui/select";
++import {
++  Tooltip,
++  TooltipContent,
++  TooltipProvider,
++  TooltipTrigger,
++} from "@/components/ui/tooltip";
+ import { useRequestLogs } from "@/lib/query/usage";
+ import {
+   getFreshInputTokens,
+@@ -33,6 +39,32 @@ import {
+   parseFiniteNumber,
+ } from "./format";
+ 
++const STATUS_CODE_HINTS: Record<number, string> = {
++  200: "请求成功",
++  301: "地址已永久变更，请更新链接",
++  302: "地址临时变更，自动跳转",
++  304: "内容未变化，使用缓存",
++  400: "请求格式有误，请检查参数",
++  401: "未登录或 Token 已过期",
++  403: "已登录但无权访问",
++  404: "资源不存在或已删除",
++  408: "服务器等待超时，请重试",
++  429: "请求太频繁，请稍后再试",
++  500: "服务器内部异常",
++  502: "上游服务返回了无效数据",
++  503: "上游服务暂时不可用，请稍后重试",
++  504: "上游服务响应超时",
++};
++
++function getStatusHint(code: number): string {
++  if (STATUS_CODE_HINTS[code]) return STATUS_CODE_HINTS[code];
++  if (code >= 200 && code < 300) return "成功";
++  if (code >= 300 && code < 400) return "重定向";
++  if (code >= 400 && code < 500) return "客户端错误";
++  if (code >= 500 && code < 600) return "服务器错误";
++  return "HTTP 状态码";
++}
++
+ interface RequestLogTableProps {
+   range: UsageRangeSelection;
+   rangeLabel: string;
+@@ -109,6 +141,7 @@ export function RequestLogTable({
+   const locale = getLocaleFromLanguage(language);
+ 
+   return (
++    <TooltipProvider delayDuration={300}>
+     <div className="space-y-4">
+       <div className="rounded-lg border bg-card/50 p-2 backdrop-blur-sm">
+         <div className="flex flex-wrap items-center gap-1.5">
+@@ -299,15 +332,25 @@ export function RequestLogTable({
+                           )}
+                         </TableCell>
+                         <TableCell className="text-center">
+-                          <span
+-                            className={
+-                              log.statusCode >= 200 && log.statusCode < 300
+-                                ? "text-green-600"
+-                                : "text-red-600"
+-                            }
+-                          >
+-                            {log.statusCode}
+-                          </span>
++                          <Tooltip>
++                            <TooltipTrigger asChild>
++                              <span
++                                className={
++                                  log.statusCode >= 200 && log.statusCode < 300
++                                    ? "text-green-600"
++                                    : "text-red-600"
++                                }
++                              >
++                                {log.statusCode}
++                              </span>
++                            </TooltipTrigger>
++                            <TooltipContent className={log.statusCode >= 200 && log.statusCode < 300
++                                ? "bg-green-600/80 backdrop-blur-sm text-white"
++                                : "bg-red-600/80 backdrop-blur-sm text-white"
++                              }>
++                              {log.statusCode} {getStatusHint(log.statusCode)}
++                            </TooltipContent>
++                          </Tooltip>
+                         </TableCell>
+                         <TableCell className="text-center text-xs text-muted-foreground">
+                           {log.dataSource || "proxy"}
+@@ -400,5 +443,6 @@ export function RequestLogTable({
+         </>
+       )}
+     </div>
++    </TooltipProvider>
+   );
+ }
+diff --git a/src/components/workspace/DailyMemoryPanel.tsx b/src/components/workspace/DailyMemoryPanel.tsx
+index 8b2008c..06753ea 100644
+--- a/src/components/workspace/DailyMemoryPanel.tsx
++++ b/src/components/workspace/DailyMemoryPanel.tsx
+@@ -358,7 +358,7 @@ const DailyMemoryPanel: React.FC<DailyMemoryPanelProps> = ({
+               title={t("workspace.openDirectory")}
+             >
+               ~/.openclaw/workspace/memory/
+-              <FolderOpen className="w-3.5 h-3.5" />
++              <FolderOpen className="w-3.5 h-3.5 translate-y-[1px]" />
+             </p>
+             <div className="flex items-center gap-1.5">
+               <Button
+diff --git a/src/components/workspace/WorkspaceFilesPanel.tsx b/src/components/workspace/WorkspaceFilesPanel.tsx
+index adf9c79..2feaf82 100644
+--- a/src/components/workspace/WorkspaceFilesPanel.tsx
++++ b/src/components/workspace/WorkspaceFilesPanel.tsx
+@@ -90,7 +90,7 @@ const WorkspaceFilesPanel: React.FC = () => {
+         title={t("workspace.openDirectory")}
+       >
+         ~/.openclaw/workspace/
+-        <FolderOpen className="w-3.5 h-3.5" />
++        <FolderOpen className="w-3.5 h-3.5 translate-y-[1px]" />
+       </p>
+ 
+       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">

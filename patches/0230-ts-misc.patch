@@ -1,0 +1,238 @@
+diff --git a/src/config/appConfig.tsx b/src/config/appConfig.tsx
+index e619f02..0dd5ba1 100644
+--- a/src/config/appConfig.tsx
++++ b/src/config/appConfig.tsx
+@@ -28,6 +28,7 @@ export const APP_IDS: AppId[] = [
+   "pi",
+ ];
+ 
++/** App IDs shown in Skills panels */
+ export const DEFAULT_VISIBLE_APPS: VisibleApps = {
+   claude: true,
+   "claude-desktop": true,
+@@ -47,6 +48,7 @@ export const SKILLS_APP_IDS: AppId[] = [
+   "gemini",
+   "grokbuild",
+   "opencode",
++  "openclaw",
+   "hermes",
+   "pi",
+ ];
+@@ -99,6 +101,48 @@ export function isMcpAppId(appId: string): appId is McpAppId {
+   return (MCP_APP_IDS as string[]).includes(appId);
+ }
+ 
++/**
++ * 各 app 的 CLI 安装命令（本机 / 远端），key 与 APP_ICON_MAP 一致。
++ * 包名如有出入请按各 CLI 官方文档修正。
++ */
++export const APP_INSTALL_CMDS: Record<
++  string,
++  { local: string; remote: string }
++> = {
++  claude: {
++    local: "npm i -g @anthropic-ai/claude-code",
++    remote: "npm i -g @anthropic-ai/claude-code",
++  },
++  codex: {
++    local: "npm i -g @openai/codex",
++    remote: "npm i -g @openai/codex",
++  },
++  gemini: {
++    local: "npm i -g @google/gemini-cli",
++    remote: "npm i -g @google/gemini-cli",
++  },
++  grokbuild: {
++    local: "npm i -g @grok/grok-cli",
++    remote: "npm i -g @grok/grok-cli",
++  },
++  opencode: {
++    local: "npm i -g opencode-ai",
++    remote: "npm i -g opencode-ai",
++  },
++  openclaw: {
++    local: "npm i -g openclaw",
++    remote: "npm i -g openclaw",
++  },
++  hermes: {
++    local: "npm i -g hermes-cli",
++    remote: "npm i -g hermes-cli",
++  },
++  pi: {
++    local: "npm i -g @earendil-works/pi-coding-agent@latest",
++    remote: "npm i -g @earendil-works/pi-coding-agent@latest",
++  },
++};
++
+ export const APP_ICON_MAP: Record<AppId, AppConfig> = {
+   claude: {
+     label: "Claude",
+diff --git a/src/contexts/UpdateContext.tsx b/src/contexts/UpdateContext.tsx
+index bdc7fb6..3e1facf 100644
+--- a/src/contexts/UpdateContext.tsx
++++ b/src/contexts/UpdateContext.tsx
+@@ -66,6 +66,7 @@ export function UpdateProvider({ children }: { children: React.ReactNode }) {
+ 
+     try {
+       const result = await checkForUpdate({ timeout: 30000 });
++      console.log("[Update] checkForUpdate result:", result);
+ 
+       if (result.status === "available") {
+         setHasUpdate(true);
+@@ -90,7 +91,7 @@ export function UpdateProvider({ children }: { children: React.ReactNode }) {
+         return false; // 已是最新
+       }
+     } catch (err) {
+-      console.error("检查更新失败:", err);
++      console.error("[Update] 检查更新失败:", err);
+       setError(err instanceof Error ? err.message : "检查更新失败");
+       setHasUpdate(false);
+       throw err; // 抛出错误让调用方处理
+diff --git a/src/index.css b/src/index.css
+index 99821ee..60e321c 100644
+--- a/src/index.css
++++ b/src/index.css
+@@ -162,6 +162,59 @@ html[data-window-active="false"] .status-heartbeat {
+   transition-duration: 0s;
+ }
+ 
++/* 路由服务（总开关）运行中：开关周围绿色走马灯边框，严格沿灰色圆角框轮廓流动
++   实现：::before 画一圈 conic 光斑，用 @property --angle 只旋转渐变角度
++   （不旋转元素本身——旋转方形元素会让四角偏离圆角轮廓），
++   mask 只保留边框环（content-box xor），环贴合元素边缘（inset: 0） */
++@property --route-border-angle {
++  syntax: "<angle>";
++  initial-value: 0deg;
++  inherits: false;
++}
++
++.route-service-live {
++  position: relative;
++}
++
++.route-service-live::before {
++  content: "";
++  position: absolute;
++  inset: 0;
++  border-radius: inherit;
++  padding: 2px;
++  background: conic-gradient(
++    from var(--route-border-angle),
++    transparent 0deg,
++    transparent 280deg,
++    #10b981 330deg,
++    transparent 360deg
++  );
++  -webkit-mask:
++    linear-gradient(#000 0 0) content-box,
++    linear-gradient(#000 0 0);
++  -webkit-mask-composite: xor;
++  mask:
++    linear-gradient(#000 0 0) content-box,
++    linear-gradient(#000 0 0);
++  mask-composite: exclude;
++  animation: route-border-spin 2s linear infinite;
++  pointer-events: none;
++  z-index: 0;
++}
++
++@keyframes route-border-spin {
++  to {
++    --route-border-angle: 360deg;
++  }
++}
++
++@media (prefers-reduced-motion: reduce) {
++  .route-service-live::before {
++    animation: none;
++    background: #10b981;
++  }
++}
++
+ @keyframes pi-thinking-popover-in {
+   0% {
+     opacity: 0;
+@@ -200,7 +253,6 @@ html[data-window-active="false"] .status-heartbeat {
+ .pi-thinking-popover[data-state="closed"] {
+   animation: pi-thinking-popover-out 150ms cubic-bezier(0.4, 0, 1, 1);
+ }
+-
+ @media (prefers-reduced-motion: reduce) {
+   .status-heartbeat {
+     opacity: 1;
+diff --git a/src/types.ts b/src/types.ts
+index 560d3cf..fb51a7a 100644
+--- a/src/types.ts
++++ b/src/types.ts
+@@ -66,6 +66,8 @@ export interface UsageScript {
+   secretAccessKey?: string; // 火山方舟 SecretAccessKey
+   teamOrganizationId?: string; // 智谱团队套餐组织 ID（请求头 bigmodel-organization）
+   teamProjectId?: string; // 智谱团队套餐项目 ID（请求头 bigmodel-project）
++  workspaceId?: string; // OpenCode Go：workspace ID（抓 /workspace/{id}/usage）
++  authCookie?: string; // OpenCode Go：网页登录态 auth cookie（抓 /usage 页）
+   codingPlanProvider?: string; // Coding Plan 供应商标识（如 "kimi", "zhipu", "minimax"）
+   autoQueryInterval?: number; // 自动查询间隔（单位：分钟，0 表示禁用）
+   autoIntervalMinutes?: number; // 自动查询间隔（分钟）- 别名字段
+@@ -366,6 +368,22 @@ export interface Settings {
+   enableClaudePluginIntegration?: boolean;
+   // 跳过 Claude Code 初次安装确认（写入 ~/.claude.json 的 hasCompletedOnboarding）
+   skipClaudeOnboarding?: boolean;
++  // 是否启用桌面悬浮窗（加速球）
++  enableFloatingWindow?: boolean;
++  // 悬浮窗位置（逻辑像素坐标）
++  floatingWindowPosition?: { x: number; y: number };
++  // 吸附动画时长（毫秒）；0 = 立即吸附
++  floatingSnapSpeedMs?: number;
++  // 悬浮窗是否固定当前位置（固定后不可拖动/不吸附）
++  floatingLocked?: boolean;
++  // 悬浮窗置顶显示的 app（None = 跟随最近活跃 app）
++  floatingPinApp?: string;
++  // 最近一次活跃的 app（provider-switched 更新，供球跟随）
++  floatingLastApp?: string;
++  // 悬浮窗背景/边框不透明度（0.2~1.0；设置页滑块）
++  floatingOpacity?: number;
++  // 边缘自动收起：拖到屏幕边缘松手后收起为色条
++  floatingAutoCollapse?: boolean;
+   // 是否开机自启
+   launchOnStartup?: boolean;
+   // 静默启动（程序启动时不显示主窗口）
+@@ -404,6 +422,9 @@ export interface Settings {
+   // 主页面显示的应用（默认全部显示）
+   visibleApps?: VisibleApps;
+ 
++  // 是否在 header 显示「有新版本」入口图标；undefined/true = 显示，false = 隐藏
++  showUpdateBadge?: boolean;
++
+   // ===== 设备级目录覆盖 =====
+   // 覆盖 Claude Code 配置目录（可选）
+   claudeConfigDir?: string;
+@@ -457,6 +478,10 @@ export interface Settings {
+   // Linux: "gnome-terminal" | "konsole" | "xfce4-terminal" | "alacritty" | "kitty" | "ghostty"
+   preferredTerminal?: string;
+ 
++  // ===== 套餐用量显示模式 =====
++  // compact（紧凑，默认）或 expanded（展开详情）
++  quotaDisplayMode?: string;
++
+   // ===== 本机自动迁移状态 =====
+   localMigrations?: {
+     codexThirdPartyHistoryProviderBucketV1?: {
+diff --git a/vite.config.ts b/vite.config.ts
+index c1e431a..67ad8bc 100644
+--- a/vite.config.ts
++++ b/vite.config.ts
+@@ -16,6 +16,14 @@ export default defineConfig(({ command }) => ({
+   build: {
+     outDir: "../dist",
+     emptyOutDir: true,
++    // 多页入口：主应用 + 悬浮窗（加速球）独立 HTML，
++    // 让悬浮窗窗口只加载悬浮球/面板组件，彻底避免路由分派到主 App。
++    rollupOptions: {
++      input: {
++        main: path.resolve(__dirname, "src/index.html"),
++        floating: path.resolve(__dirname, "src/floating.html"),
++      },
++    },
+   },
+   server: {
+     port: 3000,

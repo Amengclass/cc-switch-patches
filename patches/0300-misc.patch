@@ -1,0 +1,27 @@
+diff --git a/.gitignore b/.gitignore
+index 525d4a7..577bb3f 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -29,3 +29,10 @@ copilot-api
+ .history
+ CODEBUDDY.md
+ mainWindow.js
++
++# Reasonix Desktop 本地会话元数据
++.reasonix/
++
++reasonix.toml
++ci_logs/
++ci_logs.zip
+diff --git a/pnpm-workspace.yaml b/pnpm-workspace.yaml
+index 435b40e..791db22 100644
+--- a/pnpm-workspace.yaml
++++ b/pnpm-workspace.yaml
+@@ -6,3 +6,7 @@ onlyBuiltDependencies:
+ 
+ ignoredBuiltDependencies:
+   - msw
++
++allowBuilds:
++  esbuild: true
++  msw: false

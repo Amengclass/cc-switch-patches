@@ -1,0 +1,703 @@
+/* 悬浮窗（加速球）独立样式：透明背景 + 小球 + 面板。不依赖主应用的 Tailwind。
+ *
+ * 主题：floating-main.tsx 会读主应用的 `cc-switch-theme`，在 <html> 上打
+ * light/dark 类，这里用 CSS 变量切换面板配色，与主应用外观主题一致。
+ * 注意：不要加 box-shadow —— 阴影羽化会溢出到透明窗口的四角，看起来像“底色”。
+ * 外轮廓（--fb-outline）比内部细线（--fb-border）更明显：悬浮窗浮在桌面/壁纸上，
+ * 轮廓必须清晰可辨，否则白色背景上会“融为一体”。
+ */
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  overflow: hidden;
+  /* 撑满窗口，使内容根节点 #floating-root 可占满 */
+  width: 100%;
+  height: 100%;
+  /* 球窗口比胶囊大一圈（阴影留白），这里让胶囊居中 */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family:
+    system-ui,
+    -apple-system,
+    "Segoe UI",
+    "PingFang SC",
+    "Microsoft YaHei",
+    sans-serif;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* 各悬浮窗口内容根节点：占满整个窗口。否则 flex 容器宽度=内容宽度，
+ * .floating-menu 这类 width:100% 的容器只画到内容宽（约 60px），
+ * 窗口加宽后两侧会留下透明空隙（"增宽没显现"）。
+ * 同时是 flex 容器并居中：菜单窗口比菜单白框大一圈（阴影留白），
+ * 白框必须居中，「窗口位置 = 内容位置 − 留白」的对齐才成立，
+ * 否则白框贴窗口左上角、整体偏左上 MENU_SHADOW_MARGIN 像素。 */
+#floating-root {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* 窗口级 hover 覆盖层：占满整个透明窗口（含四周 FLOATING_MARGIN 留白），
+ * 并居中内容。hover 判定绑在此层上，鼠标在窗口内（含球/面板边缘的透明区）
+ * 移动不会误触发 mouseleave；内容元素（.ball/.panel）自身不再绑 hover。 */
+.floating-hover-layer {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* ---- 主题变量 ---- */
+:root {
+  --fb-bg: rgba(255, 255, 255, 0.97);
+  --fb-fg: #18181b;
+  --fb-muted: #71717a;
+  --fb-border: rgba(24, 24, 27, 0.1);
+  --fb-outline: rgba(
+    24,
+    24,
+    27,
+    0.28
+  ); /* 外轮廓：明显但中性，白色背景上清晰可辨 */
+  --fb-hover: rgba(0, 0, 0, 0.07);
+  --fb-primary: #1f8fff; /* 主应用 --primary 蓝色（HSL 210 100% 56%） */
+  --fb-danger-bg: rgba(239, 68, 68, 0.12);
+  --fb-danger-hover: rgba(239, 68, 68, 0.25);
+}
+.dark {
+  --fb-bg: rgba(24, 24, 27, 0.97);
+  --fb-fg: #e4e4e7;
+  --fb-muted: #a1a1aa;
+  --fb-border: rgba(255, 255, 255, 0.12);
+  --fb-outline: rgba(255, 255, 255, 0.32);
+  --fb-hover: rgba(255, 255, 255, 0.09);
+  --fb-primary: #148aff; /* 主应用 dark --primary 蓝色 */
+  --fb-danger-bg: rgba(239, 68, 68, 0.22);
+  --fb-danger-hover: rgba(239, 68, 68, 0.4);
+}
+
+/* ---- 悬浮窗（方案C：180×40 横向胶囊条，cc-switch 风格） ----
+ * 白/深底卡片 + 细边框 + 蓝色强调 + 小字号；用量状态色用左侧小圆点表达。
+ */
+.ball {
+  width: 192px;
+  height: 40px;
+  flex-shrink: 0;
+  border-radius: 20px;
+  /* 背景/边框不透明度：默认 0.97（--fb-bg 同款），设置页滑块通过内联
+     --ball-alpha 覆盖它。用 rgb(from ...) 只改 alpha 通道，文字(--fb-fg)不受影响。 */
+  --ball-alpha: 0.97;
+  background: rgb(from var(--fb-bg) r g b / var(--ball-alpha));
+  border: 1px solid rgb(from var(--fb-outline) r g b / var(--ball-alpha));
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  cursor: pointer;
+  box-sizing: border-box;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    transform 0.1s ease,
+    opacity 0.25s ease;
+}
+/* 悬停：边框提为品牌蓝，提示可点 */
+.ball:hover {
+  border-color: rgb(from var(--fb-primary) r g b / var(--ball-alpha));
+}
+/* 按下/拖动：轻微缩放，给拖动手感 */
+.ball:active {
+  transform: scale(0.97);
+}
+/* 路由纳管中：球的【白底】保持 .ball 原本实色，仅在此基础上叠一层很浅的绿 tint，
+   再加绿色边框。浅绿用 background-image 叠在 background-color 之上（不替换白底），
+   且随 --ball-alpha——不透明度 100% 时是「白底 + 淡淡绿」，透明度调低才随之更淡。 */
+.ball.route-service-live {
+  border-color: rgb(16 185 129 / var(--ball-alpha)); /* emerald-500 */
+  background-image: linear-gradient(
+    to right,
+    rgb(16 185 129 / calc(var(--ball-alpha) * 0.06)),
+    rgb(16 185 129 / calc(var(--ball-alpha) * 0.02))
+  );
+}
+.dark .ball.route-service-live {
+  border-color: rgb(52 211 153 / var(--ball-alpha)); /* emerald-400 */
+  background-image: linear-gradient(
+    to right,
+    rgb(52 211 153 / calc(var(--ball-alpha) * 0.07)),
+    rgb(52 211 153 / calc(var(--ball-alpha) * 0.03))
+  );
+}
+@media (prefers-reduced-motion: reduce) {
+  .ball.route-service-live {
+    border-color: #10b981;
+  }
+  .dark .ball.route-service-live {
+    border-color: #34d399;
+  }
+}
+/* 中区（原左半区）：占满剩余宽度且可收缩，避免固定 98px 时 app 名长短不一
+   造成留白或图钉被挤出。名称过长省略号截断，置顶图钉固定在右端点。 */
+.ball-left {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+/* 中区第一行：app 主标题（图标 + app 名 + 置顶图钉，深色） */
+.ball-app {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--fb-fg);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.1;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.ball-app svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+/* app 名：占满可用宽度，过长省略号截断（给右端图钉让位） */
+.ball-app-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* 置顶图钉：右端固定(margin-left:auto 把图钉推到中区右端点)，不占名宽、永不被裁切 */
+.ball-pin {
+  flex-shrink: 0;
+  color: var(--fb-muted);
+  margin-left: auto;
+}
+.ball-app .ball-pin {
+  width: 9px;
+  height: 9px;
+}
+.ball-model {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  overflow: hidden;
+}
+/* 供应商 / 模型：胶囊状文字标签 */
+.ball-tag {
+  padding: 0px 4px;
+  border-radius: 999px;
+  font-size: 9px;
+  line-height: 1.4;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* 供应商：浅灰底灰字（低调） */
+.ball-tag-provider {
+  background: rgba(0, 0, 0, 0.05);
+  color: var(--fb-muted);
+  flex-shrink: 0;
+}
+.dark .ball-tag-provider {
+  background: rgba(255, 255, 255, 0.1);
+}
+/* 模型名：淡品牌蓝底蓝字（突出核心） */
+.ball-tag-model {
+  background: rgba(31, 143, 255, 0.12);
+  color: var(--fb-primary);
+  min-width: 0;
+}
+.dark .ball-tag-model {
+  background: rgba(31, 143, 255, 0.2);
+}
+/* 右半区：固定宽，不收缩（左半区无法挤压它），内容靠右 */
+.ball-usage {
+  flex: 0 0 62px;
+  width: 62px;
+  margin-left: auto;
+  box-sizing: border-box;
+  border-left: 1px solid var(--fb-border);
+  padding-left: 8px;
+  display: inline-flex;
+  align-items: baseline;
+  justify-content: flex-start;
+  flex-wrap: wrap;
+  gap: 1px;
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1.1;
+  overflow: hidden;
+  font-variant-numeric: tabular-nums;
+}
+/* 多套餐：右半区竖向堆叠，每行一个套餐缩写（h5% / d20% / m30%），左对齐 */
+.ball-usage-multi {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+}
+.ball-usage-multi > span {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* 数值过长时省略号截断，单位保持 */
+.ball-usage > span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* 单位（CNY/GB）：灰色，不带状态色 */
+.ball-usage-unit {
+  color: var(--fb-muted);
+}
+
+/* ---- 面板 ---- */
+.panel {
+  width: 300px;
+  height: 320px;
+  background: var(--fb-bg);
+  border: 1px solid var(--fb-outline);
+  border-radius: 12px;
+  color: var(--fb-fg);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+.panel-header {
+  padding: 12px 14px 10px;
+  border-bottom: 1px solid var(--fb-border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.panel-title {
+  font-size: 14px;
+  font-weight: 700;
+  display: block;
+  letter-spacing: 0.2px;
+}
+.panel-sub {
+  font-size: 11px;
+  color: var(--fb-muted);
+  margin-top: 0;
+  display: block;
+}
+/* 标题 + 副标题 左半区竖排（保留结构类） */
+.panel-header-left {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 2px;
+}
+.panel-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 0;
+}
+/* 悬浮面板行列表滚动条：细、圆角、半透明，浅/深色主题各一套 */
+.panel-list::-webkit-scrollbar {
+  width: 6px;
+}
+.panel-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+.panel-list::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.18);
+  border-radius: 3px;
+}
+.dark .panel-list::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.22);
+}
+.panel-list::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.32);
+}
+.dark .panel-list::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.38);
+}
+.row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  margin: 2px 4px;
+  border-radius: 8px;
+  box-sizing: border-box;
+  /* 用真 `border: 1px`（供应商页面同款细边框），而非 box-shadow：
+     box-shadow 在高 DPI 下 1px 会显粗，真 border 是标准单一线宽，观感最细。 */
+  border: 1px solid var(--fb-border);
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease;
+}
+.dark .row {
+  border-color: rgba(255, 255, 255, 0.14);
+}
+/* hover（未开路由）：边框变蓝，提示当前悬停在这个 app（只换色，线宽不变） */
+.row:hover {
+  border-color: #60a5fa; /* blue-400 */
+}
+.dark .row:hover {
+  border-color: #93c5fd;
+}
+/* 开路由的行：平时常显绿边框 + 浅绿底（不依赖 hover），区别于其它行的灰底 */
+.row-takeover {
+  border-color: #10b981; /* emerald-500 */
+  background: rgba(16, 185, 129, 0.06);
+}
+.dark .row-takeover {
+  border-color: #34d399;
+  background: rgba(16, 185, 129, 0.1);
+}
+/* hover（开路由）：绿框提亮一档，提示聚焦；保持绿系不翻蓝 */
+.row-takeover:hover {
+  border-color: #34d399;
+}
+.dark .row-takeover:hover {
+  border-color: #6ee7b7;
+}
+.row-left {
+  flex: 1 1 auto; /* 左区占满剩余,把余量/图钉推到右侧,形成清晰左中右分区 */
+  min-width: 0;
+  overflow: hidden; /* 内容过长截断,不顶破余量区 */
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.row-app {
+  font-size: 12px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  line-height: 1.3;
+}
+/* app 名前的品牌图标：与文字基线对齐 */
+.row-app-icon {
+  display: inline-flex;
+  align-items: center;
+  color: var(--fb-fg);
+  flex-shrink: 0;
+  margin-right: 1px;
+}
+/* 供应商 + 模型 行内容器：横排，放不下时换行 */
+.row-provider-line {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-width: 0;
+}
+.row-provider {
+  font-size: 10px;
+  color: var(--fb-muted);
+  white-space: nowrap; /* 单行不折行 */
+}
+/* 已设置供应商：淡品牌蓝底胶囊（与悬浮窗供应商球标 .ball-tag-model 一致） */
+.row-provider-set {
+  display: inline-flex;
+  align-items: center;
+  padding: 0px 6px;
+  border-radius: 999px;
+  background: rgba(31, 143, 255, 0.12);
+  color: #1f8fff; /* HSL 210 100% 56% */
+  line-height: 1.6;
+}
+.dark .row-provider-set {
+  background: rgba(31, 143, 255, 0.2);
+  color: #148aff; /* HSL 210 100% 54% */
+}
+/* 模型名：灰小字，与供应商胶囊分开独立显示避免叠合 */
+.row-model {
+  font-size: 10px;
+  color: var(--fb-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  max-width: 160px;
+}
+/* 中区/余量：右对齐独立一列；与左信息仅靠留白分隔（不画分割线） */
+.row-usage {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 46%;
+  flex-shrink: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end; /* 右对齐：时间/主用量/多套餐 chips 统一基准 */
+  text-align: right;
+  gap: 2px;
+  margin-left: 12px;
+  /* 面板空间有限（300px、最多 8 行），余量字号取小保证每行紧凑 */
+  font-size: 10px;
+}
+/* 逐行置顶悬浮窗显示：图钉按钮，激活态着色 */
+.row-pin {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--fb-muted);
+  cursor: pointer;
+  transition:
+    color 0.15s,
+    background 0.15s;
+}
+.row-pin:hover {
+  color: var(--fb-fg);
+  background: var(--fb-border);
+}
+.row-pin-active {
+  color: #1f8fff; /* 主窗口链接蓝，与 .row-provider-set 一致 */
+}
+.dark .row-pin-active {
+  color: #148aff;
+}
+/* 查询时间（主窗口 text-[10px] gray-500/dark:gray-400） */
+.usage-time {
+  font-size: 10px;
+  color: #6b7280;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-bottom: 1px;
+}
+.dark .usage-time {
+  color: #9ca3af;
+}
+/* 行刷新按钮（刷新时间旁边，与主窗口 UsageFooter 同款：小图标 + hover 底色 + 转圈） */
+.row-refresh {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  margin-left: auto;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--fb-muted);
+  cursor: pointer;
+  transition:
+    color 0.15s,
+    background 0.15s;
+}
+.row-refresh:hover {
+  color: var(--fb-fg);
+  background: var(--fb-hover);
+}
+.row-refresh:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+/* 余量结构化渲染（主窗口 UsageFooter 同款配色语言） */
+.usage-line {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: flex-end;
+  gap: 1px 7px;
+  max-width: 100%;
+  text-align: right;
+}
+.usage-plan {
+  color: #4b5563; /* gray-600 */
+  font-weight: 600;
+  white-space: nowrap;
+}
+.dark .usage-plan {
+  color: #9ca3af; /* gray-400 */
+}
+.usage-item {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 2px;
+  white-space: nowrap;
+}
+.usage-label {
+  color: #6b7280; /* gray-500 */
+}
+.dark .usage-label {
+  color: #9ca3af;
+}
+.usage-value {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: #4b5563; /* gray-600：已用等普通数值 */
+}
+.dark .usage-value {
+  color: #9ca3af;
+}
+.usage-unit {
+  color: #6b7280; /* gray-500 */
+}
+.dark .usage-unit {
+  color: #9ca3af;
+}
+.usage-extra {
+  color: #6b7280;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+.dark .usage-extra {
+  color: #9ca3af;
+}
+/* 状态色：与主窗口 Tailwind 类等价（light / dark 各一套） */
+.usage-value-good {
+  color: #16a34a; /* green-600 */
+}
+.dark .usage-value-good {
+  color: #4ade80; /* green-400 */
+}
+.usage-value-warn {
+  color: #f97316; /* orange-500 */
+}
+.dark .usage-value-warn {
+  color: #fb923c; /* orange-400 */
+}
+.usage-value-danger {
+  color: #ef4444; /* red-500 */
+}
+.dark .usage-value-danger {
+  color: #f87171; /* red-400 */
+}
+/* 多套餐 chips 容器：在余量列内横向同行、右对齐（和主用量同一右基准） */
+.usage-chips {
+  display: inline-flex;
+  flex-wrap: nowrap;
+  justify-content: flex-end;
+  gap: 3px;
+  max-width: 100%;
+}
+/* 多套餐缩写 chip：扁平小胶囊，横向铺开省空间（对齐悬浮窗右半区多套餐样式） */
+.usage-chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 3px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(127, 127, 127, 0.12);
+  font-size: 9px;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+.usage-chip-plan {
+  color: var(--fb-muted);
+  font-weight: 600;
+}
+.empty {
+  padding: 20px;
+  text-align: center;
+  color: var(--fb-muted);
+  font-size: 12px;
+}
+
+/* ---- 右键菜单（floating-menu 透明窗，瘦高样式，与面板同款配色）----
+ * 窗口尺寸 80×68 与 MENU_WIDTH/MENU_HEIGHT 对应（比最窄内容 59 留一些余量）；
+ * 项保持正常大小（项高28/图标12/字号12），仅面板内边距取最小以收窄整体宽度；
+ * 内容：padding 2×2 + 2×28 项 + gap 2×2 + 1 分隔线 + 2 边框 = 67（高）
+ *       项内容 53（图标12+gap5+2字24+内边距12）+ padding 4 + 边框 2 = 59（宽）
+ */
+.floating-menu {
+  /* 固定为菜单内容尺寸（与 Rust MENU_WIDTH/MENU_HEIGHT 同步），四周留
+   * MENU_SHADOW_MARGIN=10 空白给阴影完整渲染，避免被透明窗口裁剪 */
+  width: 80px;
+  height: 68px;
+  box-sizing: border-box;
+  padding: 2px;
+  background: var(--fb-bg);
+  /* 边框要比全局 --fb-border 明显：菜单浮在桌面/壁纸上也要能分辨轮廓 */
+  border: 1px solid rgba(24, 24, 27, 0.2);
+  border-radius: 10px;
+  /* 轻微外阴影，增强与桌面的层次（模糊扩散 ≤ 留白，不被窗口裁剪） */
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  color: var(--fb-fg);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.dark .floating-menu {
+  border-color: rgba(255, 255, 255, 0.2);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.55);
+}
+.menu-item {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  height: 28px;
+  padding: 0 6px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fb-fg);
+  font-size: 12px;
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+  flex-shrink: 0;
+}
+.menu-item:hover {
+  background: var(--fb-hover);
+}
+.menu-icon {
+  color: var(--fb-muted);
+  flex-shrink: 0;
+}
+
+.menu-item:hover .menu-icon {
+  color: var(--fb-fg);
+}
+.menu-label {
+  line-height: 1;
+  white-space: nowrap;
+}
+.menu-sep {
+  height: 1px;
+  background: var(--fb-border);
+  flex-shrink: 0;
+}
+
+/* ---- 拖拽收起预览：球半透明（0.4，明显透明但仍可辨认） ---- */
+.ball.drag-previewing {
+  opacity: 0.4 !important;
+}
+
+/* ---- strip（胶囊色条）窗口专用覆盖 ----
+ * strip 窗口只有 5×40 或 40×5 逻辑像素，body 的 flex 居中对这么小的窗口
+ * 可能导致内容偏移。strip 内容（FloatingStrip 的 div）需要精确贴满窗口，
+ * 不做任何居中。由 floating-main.tsx 给 strip 窗口的 body 打 strip-window 类。 */
+body.strip-window {
+  display: block;
+}
+body.strip-window #floating-root {
+  display: block;
+}

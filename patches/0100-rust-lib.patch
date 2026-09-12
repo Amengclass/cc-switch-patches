@@ -1,0 +1,254 @@
+diff --git a/src-tauri/src/lib.rs b/src-tauri/src/lib.rs
+index 36b76cb..825d2f4 100644
+--- a/src-tauri/src/lib.rs
++++ b/src-tauri/src/lib.rs
+@@ -12,6 +12,8 @@ mod config;
+ mod database;
+ mod deeplink;
+ mod error;
++mod floating;
++mod fsops;
+ mod gemini_config;
+ mod gemini_mcp;
+ mod grok_config;
+@@ -22,7 +24,7 @@ mod lightweight;
+ mod linux_fix;
+ mod mcp;
+ mod model_capabilities;
+-mod openclaw_config;
++pub mod openclaw_config;
+ mod opencode_config;
+ mod panic_hook;
+ mod pi_config;
+@@ -30,6 +32,7 @@ mod prompt;
+ mod prompt_files;
+ mod provider;
+ mod proxy;
++mod remote;
+ mod services;
+ mod session_manager;
+ mod settings;
+@@ -408,6 +411,26 @@ pub fn run() {
+         .plugin(tauri_plugin_deep_link::init())
+         // 拦截窗口关闭：根据设置决定是否最小化到托盘
+         .on_window_event(|window, event| {
++            // 右键菜单失去焦点 = 点击了菜单外部（小球/桌面/其他应用）→ 收起菜单。
++            // 菜单打开时会 set_focus，失焦即“点击别处关闭”。
++            if let tauri::WindowEvent::Focused(false) = event {
++                if window.label() == crate::floating::MENU_LABEL {
++                    crate::floating::hide_floating_menu_sync(window.app_handle());
++                }
++            }
++
++            // 悬浮球被拖动时记录新位置（防抖落盘到 settings）
++            if let tauri::WindowEvent::Moved(position) = event {
++                if window.label() == crate::floating::BALL_LABEL {
++                    if let Ok(scale) = window.scale_factor() {
++                        crate::floating::schedule_position_save(
++                            position.x as f64 / scale,
++                            position.y as f64 / scale,
++                        );
++                    }
++                }
++            }
++
+             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                 // 数据库版本过新的恢复模式下没有托盘可唤回，关闭即退出，避免应用隐身后台
+                 let in_db_recovery = crate::init_status::get_init_error()
+@@ -445,6 +468,15 @@ pub fn run() {
+         .plugin(
+             tauri_plugin_window_state::Builder::default()
+                 .with_state_flags(window_state_flags())
++                // 悬浮窗（球/面板/菜单）尺寸和位置完全由 floating 模块自己管理：
++                // 必须用 denylist 完全排除，否则 window-state 插件会把它恢复成
++                // 历史保存的错误尺寸（例如球/菜单被恢复成 133px 宽，导致右缘与
++                // 球不对齐、菜单溢出屏幕）。skip_initial_state 实测拦不住。
++                .with_denylist(&[
++                    crate::floating::BALL_LABEL,
++                    crate::floating::PANEL_LABEL,
++                    crate::floating::MENU_LABEL,
++                ])
+                 .build(),
+         )
+         .setup(|app| {
+@@ -1201,6 +1233,19 @@ pub fn run() {
+                 }
+             }
+ 
++            // 启动后预热用量缓存：悬浮球/悬浮面板/托盘首次展示即有余量数据。
++            // 悬浮窗按设计只读缓存、从不主动发查询，主窗口又可能未挂载用量组件，
++            // 因此启动时兜底查一次（复用托盘刷新逻辑，含 10 秒防抖），结果写入
++            // UsageCache 后经 usage-cache-updated 事件推给悬浮窗。
++            {
++                let app_handle = app.handle().clone();
++                tauri::async_runtime::spawn(async move {
++                    // 稍等片刻，等网络/WebView/DB 就绪再查，减少启动竞态
++                    tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
++                    crate::tray::refresh_all_usage_in_tray(&app_handle).await;
++                });
++            }
++
+             // 异常退出恢复 + 代理状态自动恢复
+             let app_handle = app.handle().clone();
+             tauri::async_runtime::spawn(async move {
+@@ -1365,6 +1410,11 @@ pub fn run() {
+                 }
+             }
+ 
++            // 悬浮窗：开启时创建悬浮球窗口。独立于主窗口，轻量模式销毁主窗口后仍可工作。
++            if settings.enable_floating_window {
++                crate::floating::ensure_floating_window(app.handle());
++            }
++
+ 
+             Ok(())
+         })
+@@ -1467,10 +1517,18 @@ pub fn run() {
+             commands::list_pi_prompt_templates,
+             commands::upsert_pi_prompt_template,
+             commands::delete_pi_prompt_template,
++            // Pi remote prompt file + template commands
++            remote::commands::get_remote_pi_prompt_file,
++            remote::commands::replace_remote_pi_prompt_file,
++            remote::commands::delete_remote_pi_prompt_file,
++            remote::commands::list_remote_pi_prompt_templates,
++            remote::commands::upsert_remote_pi_prompt_template,
++            remote::commands::delete_remote_pi_prompt_template,
+             // Pi native provider and session views
+             commands::get_pi_current_state,
+             commands::update_pi_provider_usage_script,
+             commands::get_pi_session_discovery,
++            commands::get_pi_live_provider_ids,
+             // Profile management (项目配置方案)
+             commands::list_profiles,
+             commands::create_profile,
+@@ -1623,6 +1681,71 @@ pub fn run() {
+             commands::probe_tool_installations,
+             // Provider terminal
+             commands::open_provider_terminal,
++            // Remote host management (SSH)
++            remote::commands::list_remote_hosts,
++            remote::commands::save_remote_host,
++            remote::commands::delete_remote_host,
++            remote::commands::test_remote_connection,
++            remote::commands::test_remote_connection_info,
++            remote::commands::set_remote_openclaw_default_model,
++            remote::commands::get_remote_openclaw_default_model,
++            remote::commands::get_remote_openclaw_env,
++            remote::commands::set_remote_openclaw_env,
++            remote::commands::get_remote_openclaw_tools,
++            remote::commands::set_remote_openclaw_tools,
++            remote::commands::get_remote_openclaw_agents_defaults,
++            remote::commands::set_remote_openclaw_agents_defaults,
++            remote::commands::get_remote_hermes_model_config,
++            remote::commands::set_remote_route_proxy_app,
++            remote::commands::probe_hosts_online,
++            remote::commands::test_remote_provider_connection,
++            remote::commands::remove_remote_provider_from_live,
++            remote::commands::clear_remote_provider_record,
++            remote::commands::read_remote_settings,
++            remote::commands::switch_remote_provider,
++            remote::commands::broadcast_switch_provider,
++        remote::commands::reapply_remote_provider,
++            remote::commands::scan_remote_env_conflicts,
++            remote::commands::clean_remote_env_conflicts,
++            remote::commands::list_remote_sessions,
++            remote::commands::list_remote_sessions_detailed,
++            remote::commands::list_remote_sessions_all,
++            remote::commands::get_remote_session_messages,
++            remote::commands::delete_remote_session,
++            remote::commands::get_remote_providers,
++            remote::commands::query_remote_provider_usage,
++            remote::commands::stream_check_remote_provider,
++            remote::commands::add_remote_provider,
++            remote::commands::update_remote_provider,
++            remote::commands::delete_remote_provider,
++            remote::commands::update_remote_provider_sort_order,
++            remote::commands::update_remote_provider_meta,
++            remote::commands::get_remote_current_provider,
++            remote::commands::check_remote_cli_installed,
++            remote::commands::check_local_cli_installed,
++            remote::commands::read_remote_mcp_servers,
++            remote::commands::read_remote_mcp_json,
++            remote::commands::upsert_remote_mcp_server,
++            remote::commands::delete_remote_mcp_server,
++            remote::commands::toggle_remote_mcp_app,
++            remote::commands::bulk_toggle_remote_mcp_app,
++            remote::commands::import_remote_mcp_from_apps,
++            remote::commands::read_remote_prompt,
++            remote::commands::write_remote_prompt,
++            remote::commands::list_remote_prompts,
++            remote::commands::save_remote_prompts,
++            remote::commands::list_remote_skills,
++            remote::commands::delete_remote_skill,
++            remote::commands::install_remote_skills_from_zip,
++            remote::commands::install_remote_skill_from_dir,
++            remote::commands::install_remote_skill_from_discoverable,
++            remote::commands::update_remote_skill,
++            remote::commands::check_remote_skill_updates,
++            remote::commands::scan_remote_unmanaged_skills,
++            remote::commands::import_remote_skill,
++            remote::commands::toggle_remote_skill_app,
++            remote::commands::bulk_toggle_remote_skill_app,
++            remote::commands::list_docker_containers,
+             // Universal Provider management
+             commands::get_universal_providers,
+             commands::get_universal_provider,
+@@ -1666,6 +1789,27 @@ pub fn run() {
+             commands::scan_local_proxies,
+             // Window theme control
+             commands::set_window_theme,
++            // Floating window (加速球)
++            floating::get_floating_window_data,
++            floating::get_floating_ball_detail,
++            floating::get_floating_ball_target,
++            floating::floating_set_pin_app,
++            floating::floating_record_active_app,
++            floating::floating_refresh_usage,
++            floating::floating_set_remote_takeover,
++            floating::floating_set_remote_context,
++            floating::show_floating_panel,
++            floating::hide_floating_panel,
++            floating::floating_set_hover,
++            floating::set_floating_ball_position,
++            floating::open_main_window,
++            floating::disable_floating_window,
++            floating::floating_drag_begin,
++            floating::floating_drag_end,
++            floating::floating_expand_from_strip,
++            floating::show_floating_context_menu,
++            floating::hide_floating_menu,
++            floating::floating_open_settings,
+             // Generic managed auth commands
+             commands::auth_start_login,
+             commands::auth_poll_for_account,
+@@ -1880,6 +2024,9 @@ pub fn run() {
+ /// 确保 Claude Code/Codex/Gemini 的配置不会处于损坏状态。
+ /// 使用 stop_with_restore_keep_state 保留 settings 表中的代理状态，下次启动时自动恢复。
+ pub async fn cleanup_before_exit(app_handle: &tauri::AppHandle) {
++    // 悬浮球位置最后落盘一次（防抖任务可能还没跑完）
++    crate::floating::save_ball_position_now(app_handle);
++
+     if let Some(state) = app_handle.try_state::<store::AppState>() {
+         let proxy_service = &state.proxy_service;
+ 
+@@ -1965,7 +2112,18 @@ async fn restore_proxy_state_on_startup(state: &store::AppState) {
+     let apps_to_restore = enabled_proxy_apps_on_startup(&state.db).await;
+ 
+     if apps_to_restore.is_empty() {
+-        log::debug!("启动时无需恢复代理状态");
++        // 本机无接管要恢复；但远端可能有「远端接管」意图（route_proxy_apps /
++        // route_proxy_container_apps 非空）——重启后开关显示开、代理却没跑，
++        // 流心不亮且远端连不上。此处按意图拉起代理进程（隧道由下次取连接时
++        // sync_route_tunnel 对账自动建立，无需在此主动建）。
++        if crate::remote::commands::any_route_consumer(state).await {
++            log::info!("检测到远端接管意图，启动代理服务");
++            if let Err(e) = state.proxy_service.start().await {
++                log::error!("按远端接管意图启动代理服务失败: {e}");
++            }
++        } else {
++            log::debug!("启动时无需恢复代理状态");
++        }
+         return;
+     }
+ 

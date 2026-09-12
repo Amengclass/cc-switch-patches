@@ -1,0 +1,14 @@
+# 由 repack.ps1 克隆的官方源码（临时）
+tmp-official/
+
+# 若在本仓库内组装/构建
+node_modules/
+target/
+dist/
+
+# 系统
+Thumbs.db
+.DS_Store
+
+# 日志
+*.log

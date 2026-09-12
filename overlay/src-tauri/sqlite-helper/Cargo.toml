@@ -1,0 +1,18 @@
+[package]
+name = "sqlite-helper"
+version = "0.1.0"
+edition = "2021"
+description = "CC Switch 远端会话读取 helper：静态编译（musl + bundled SQLite），经 SSH 部署到远端执行白名单 SQL，stdout 输出 JSON"
+
+[[bin]]
+name = "sqlite-helper"
+path = "src/main.rs"
+
+[dependencies]
+rusqlite = { version = "0.31", features = ["bundled"] }
+serde_json = "1.0"
+
+[profile.release]
+strip = true
+lto = true
+codegen-units = 1

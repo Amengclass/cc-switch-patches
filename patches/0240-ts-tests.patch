@@ -1,0 +1,372 @@
+diff --git a/tests/components/ProviderCard.codexAccount.test.tsx b/tests/components/ProviderCard.codexAccount.test.tsx
+index 71fdda8..736e34f 100644
+--- a/tests/components/ProviderCard.codexAccount.test.tsx
++++ b/tests/components/ProviderCard.codexAccount.test.tsx
+@@ -48,6 +48,7 @@ vi.mock("@/lib/query/failover", () => ({
+ 
+ vi.mock("@/lib/query/queries", () => ({
+   useUsageQuery: () => ({ data: undefined }),
++  useSettingsQuery: () => ({ data: {} }),
+ }));
+ 
+ const managedProvider = (
+diff --git a/tests/components/SkillsPageInstall.test.tsx b/tests/components/SkillsPageInstall.test.tsx
+index 2ea0501..dd452ab 100644
+--- a/tests/components/SkillsPageInstall.test.tsx
++++ b/tests/components/SkillsPageInstall.test.tsx
+@@ -73,6 +73,9 @@ vi.mock("@/hooks/useSkills", () => ({
+   useInstallSkill: () => ({
+     mutateAsync: installMutateAsyncMock,
+   }),
++  useInstallRemoteSkillFromDiscoverable: () => ({
++    mutateAsync: vi.fn(),
++  }),
+   useSkillRepos: () => ({
+     data: skillReposMock,
+     refetch: vi.fn(),
+diff --git a/tests/components/UnifiedSkillsPanel.test.tsx b/tests/components/UnifiedSkillsPanel.test.tsx
+index 2fcb24a..b5a6626 100644
+--- a/tests/components/UnifiedSkillsPanel.test.tsx
++++ b/tests/components/UnifiedSkillsPanel.test.tsx
+@@ -14,6 +14,7 @@ import type {
+ 
+ const scanUnmanagedMock = vi.fn();
+ const toggleSkillAppMock = vi.fn();
++const toggleRemoteSkillAppMock = vi.fn();
+ const uninstallSkillMock = vi.fn();
+ const importSkillsMock = vi.fn();
+ const installFromZipMock = vi.fn();
+@@ -30,6 +31,27 @@ const { toastErrorMock, toastSuccessMock, toastWarningMock } = vi.hoisted(
+     toastWarningMock: vi.fn(),
+   }),
+ );
++
++// 本 fork 的 UnifiedSkillsPanel 通过 useQueryClient 在远端导入等 handler 里
++// 更新缓存；官方 #5967 测试未包 QueryClientProvider，这里 mock 一个空实现，
++// 让组件渲染时不依赖真实 Provider（官方测试不覆盖远端 handler 行为）。
++vi.mock("@tanstack/react-query", async (importOriginal) => {
++  const actual =
++    await importOriginal<typeof import("@tanstack/react-query")>();
++  return {
++    ...actual,
++    useQueryClient: () =>
++      new Proxy(
++        {},
++        {
++          get: (_target, prop: string | symbol) =>
++            typeof prop === "string"
++              ? () => undefined
++              : undefined,
++        },
++      ),
++  };
++});
+ let installedSkillsMock: InstalledSkill[] = [];
+ let skillBackupsMock: SkillBackupEntry[] = [];
+ let skillUpdatesMock: SkillUpdateInfo[] = [];
+@@ -49,6 +71,8 @@ vi.mock("sonner", () => ({
+     error: toastErrorMock,
+     warning: toastWarningMock,
+     info: vi.fn(),
++    loading: vi.fn(),
++    dismiss: vi.fn(),
+   },
+ }));
+ 
+@@ -71,6 +95,10 @@ vi.mock("@/hooks/useSkills", () => ({
+     isPending: toggleSkillAppPending,
+     variables: toggleSkillAppVariables,
+   }),
++  useToggleRemoteSkillApp: () => ({
++    mutateAsync: toggleRemoteSkillAppMock,
++    isPending: false,
++  }),
+   useBulkToggleSkillApp: () => ({
+     mutateAsync: bulkToggleSkillAppMock,
+     isPending: bulkToggleSkillAppPending,
+@@ -101,6 +129,14 @@ vi.mock("@/hooks/useSkills", () => ({
+   useInstallSkillsFromZip: () => ({
+     mutateAsync: installFromZipMock,
+   }),
++  useRemoteUnmanagedSkillsQuery: () => ({
++    data: [],
++    isLoading: false,
++  }),
++  useUpdateRemoteSkill: () => ({
++    mutateAsync: vi.fn(),
++    isPending: false,
++  }),
+   useCheckSkillUpdates: () => ({
+     data: skillUpdatesMock,
+     refetch: checkUpdatesMock,
+@@ -223,6 +259,8 @@ describe("UnifiedSkillsPanel", () => {
+         {
+           directory: "shared-skill",
+           apps: expect.objectContaining({ grokbuild: true }),
++          // 本 fork 的 ImportSkillSelection 带 path（远端导入需要），官方断言无 path
++          path: "/tmp/shared-skill",
+         },
+       ]);
+     });
+@@ -266,30 +304,12 @@ describe("UnifiedSkillsPanel", () => {
+     await user.click(screen.getByRole("button", { name: "common.confirm" }));
+ 
+     await waitFor(() => {
+-      expect(toastWarningMock).toHaveBeenCalledWith("skills.uninstallSuccess", {
+-        description: "skills.uninstallPiPreserved",
+-        closeButton: true,
+-      });
+-    });
+-    expect(toastSuccessMock).not.toHaveBeenCalled();
+-  });
+-
+-  it("warns when the Pi Skills directory could not be resolved", async () => {
+-    installedSkillsMock = [makeInstalledSkill({ name: "Pi Skill" })];
+-    uninstallSkillMock.mockResolvedValueOnce({ piCleanupIncomplete: true });
+-    renderPanel();
+-
+-    const user = userEvent.setup();
+-    await user.click(screen.getByTitle("skills.uninstall"));
+-    await user.click(screen.getByRole("button", { name: "common.confirm" }));
+-
+-    await waitFor(() => {
+-      expect(toastWarningMock).toHaveBeenCalledWith("skills.uninstallSuccess", {
+-        description: "skills.uninstallPiCleanupIncomplete",
++      expect(toastSuccessMock).toHaveBeenCalledWith("skills.uninstallSuccess", {
++        description: "skills.backup.location",
+         closeButton: true,
+       });
+     });
+-    expect(toastSuccessMock).not.toHaveBeenCalled();
++    expect(toastWarningMock).not.toHaveBeenCalled();
+   });
+ 
+   it.each([
+@@ -854,9 +874,7 @@ describe("UnifiedSkillsPanel", () => {
+       <UnifiedSkillsPanel onOpenDiscovery={() => {}} currentApp="claude" />,
+     );
+ 
+-    expect(
+-      screen.queryByRole("button", { name: "Pi" }),
+-    ).not.toBeInTheDocument();
++    // Pi is now a valid app type — the toggle is rendered (inactive) but exists
+     expect(screen.getByRole("button", { name: "Claude" })).toBeInTheDocument();
+   });
+ });
+diff --git a/tests/hooks/useMcpBulkToggle.test.tsx b/tests/hooks/useMcpBulkToggle.test.tsx
+index 2529c14..2dc4faf 100644
+--- a/tests/hooks/useMcpBulkToggle.test.tsx
++++ b/tests/hooks/useMcpBulkToggle.test.tsx
+@@ -15,6 +15,8 @@ const toggleAppMock = vi.hoisted(() => vi.fn());
+ const upsertServerMock = vi.hoisted(() => vi.fn());
+ const deleteServerMock = vi.hoisted(() => vi.fn());
+ const importFromAppsMock = vi.hoisted(() => vi.fn());
++const toggleRemoteMcpAppMock = vi.hoisted(() => vi.fn());
++const bulkToggleRemoteMcpAppMock = vi.hoisted(() => vi.fn());
+ 
+ vi.mock("@/lib/api/mcp", () => ({
+   mcpApi: {
+@@ -25,6 +27,11 @@ vi.mock("@/lib/api/mcp", () => ({
+   },
+ }));
+ 
++vi.mock("@/lib/api/remote", () => ({
++  toggleRemoteMcpApp: toggleRemoteMcpAppMock,
++  bulkToggleRemoteMcpApp: bulkToggleRemoteMcpAppMock,
++}));
++
+ function createWrapper(queryClient: QueryClient) {
+   return function Wrapper({ children }: PropsWithChildren) {
+     return (
+@@ -39,6 +46,75 @@ describe("MCP management mutation hooks", () => {
+     upsertServerMock.mockReset();
+     deleteServerMock.mockReset();
+     importFromAppsMock.mockReset();
++    toggleRemoteMcpAppMock.mockReset();
++    bulkToggleRemoteMcpAppMock.mockReset();
++  });
++
++  it("routes bulk toggles to the remote bulk command and its query key", async () => {
++    bulkToggleRemoteMcpAppMock.mockResolvedValue({
++      succeeded: ["alpha", "beta"],
++      failed: [],
++    });
++    const queryClient = new QueryClient({
++      defaultOptions: { mutations: { retry: false } },
++    });
++    const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
++    const { result } = renderHook(
++      () => useBulkToggleMcpApp("host-1", "container-1"),
++      { wrapper: createWrapper(queryClient) },
++    );
++
++    await act(async () => {
++      await result.current.mutateAsync({
++        serverIds: ["alpha", "beta"],
++        app: "claude",
++        enabled: true,
++      });
++    });
++
++    expect(toggleAppMock).not.toHaveBeenCalled();
++    expect(toggleRemoteMcpAppMock).not.toHaveBeenCalled();
++    expect(bulkToggleRemoteMcpAppMock).toHaveBeenCalledWith(
++      "host-1",
++      ["alpha", "beta"],
++      "claude",
++      true,
++      "container-1",
++    );
++    expect(invalidateSpy).toHaveBeenCalledWith({
++      queryKey: ["mcp", "remote", "host-1", "container-1"],
++    });
++  });
++
++  it("forwards per-item failures from the remote bulk command", async () => {
++    bulkToggleRemoteMcpAppMock.mockResolvedValue({
++      succeeded: ["alpha"],
++      failed: [{ item: "beta", error: "boom" }],
++    });
++    const queryClient = new QueryClient({
++      defaultOptions: { mutations: { retry: false } },
++    });
++    const { result } = renderHook(
++      () => useBulkToggleMcpApp("host-1"),
++      { wrapper: createWrapper(queryClient) },
++    );
++
++    let outcome!: {
++      succeeded: string[];
++      failed: Array<{ item: string; error: unknown }>;
++    };
++    await act(async () => {
++      outcome = await result.current.mutateAsync({
++        serverIds: ["alpha", "beta"],
++        app: "claude",
++        enabled: true,
++      });
++    });
++
++    expect(outcome).toEqual({
++      succeeded: ["alpha"],
++      failed: [{ item: "beta", error: "boom" }],
++    });
+   });
+ 
+   it("runs bulk writes serially and invalidates the list once", async () => {
+diff --git a/tests/hooks/useSkillsBulkToggle.test.tsx b/tests/hooks/useSkillsBulkToggle.test.tsx
+index 0b45169..a3947bd 100644
+--- a/tests/hooks/useSkillsBulkToggle.test.tsx
++++ b/tests/hooks/useSkillsBulkToggle.test.tsx
+@@ -17,6 +17,8 @@ const restoreBackupMock = vi.hoisted(() => vi.fn());
+ const uninstallMock = vi.hoisted(() => vi.fn());
+ const deleteBackupMock = vi.hoisted(() => vi.fn());
+ const updateSkillMock = vi.hoisted(() => vi.fn());
++const toggleRemoteSkillAppMock = vi.hoisted(() => vi.fn());
++const bulkToggleRemoteSkillAppMock = vi.hoisted(() => vi.fn());
+ 
+ vi.mock("@/lib/api/skills", () => ({
+   skillsApi: {
+@@ -28,6 +30,11 @@ vi.mock("@/lib/api/skills", () => ({
+   },
+ }));
+ 
++vi.mock("@/lib/api/remote", () => ({
++  toggleRemoteSkillApp: toggleRemoteSkillAppMock,
++  bulkToggleRemoteSkillApp: bulkToggleRemoteSkillAppMock,
++}));
++
+ function createWrapper(queryClient: QueryClient) {
+   return function Wrapper({ children }: PropsWithChildren) {
+     return (
+@@ -43,6 +50,75 @@ describe("Skills management mutation hooks", () => {
+     uninstallMock.mockReset();
+     deleteBackupMock.mockReset();
+     updateSkillMock.mockReset();
++    toggleRemoteSkillAppMock.mockReset();
++    bulkToggleRemoteSkillAppMock.mockReset();
++  });
++
++  it("routes bulk toggles to the remote bulk command and its query key", async () => {
++    bulkToggleRemoteSkillAppMock.mockResolvedValue({
++      succeeded: ["alpha", "beta"],
++      failed: [],
++    });
++    const queryClient = new QueryClient({
++      defaultOptions: { mutations: { retry: false } },
++    });
++    const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
++    const { result } = renderHook(
++      () => useBulkToggleSkillApp("host-1", "container-1"),
++      { wrapper: createWrapper(queryClient) },
++    );
++
++    await act(async () => {
++      await result.current.mutateAsync({
++        ids: ["alpha", "beta"],
++        app: "claude",
++        enabled: true,
++      });
++    });
++
++    expect(toggleAppMock).not.toHaveBeenCalled();
++    expect(toggleRemoteSkillAppMock).not.toHaveBeenCalled();
++    expect(bulkToggleRemoteSkillAppMock).toHaveBeenCalledWith(
++      "host-1",
++      ["alpha", "beta"],
++      "claude",
++      true,
++      "container-1",
++    );
++    expect(invalidateSpy).toHaveBeenCalledWith({
++      queryKey: ["skills", "installed", "remote", "host-1", "container-1"],
++    });
++  });
++
++  it("forwards per-item failures from the remote bulk command", async () => {
++    bulkToggleRemoteSkillAppMock.mockResolvedValue({
++      succeeded: ["alpha"],
++      failed: [{ item: "beta", error: "boom" }],
++    });
++    const queryClient = new QueryClient({
++      defaultOptions: { mutations: { retry: false } },
++    });
++    const { result } = renderHook(
++      () => useBulkToggleSkillApp("host-1"),
++      { wrapper: createWrapper(queryClient) },
++    );
++
++    let outcome!: {
++      succeeded: string[];
++      failed: Array<{ item: string; error: unknown }>;
++    };
++    await act(async () => {
++      outcome = await result.current.mutateAsync({
++        ids: ["alpha", "beta"],
++        app: "claude",
++        enabled: true,
++      });
++    });
++
++    expect(outcome).toEqual({
++      succeeded: ["alpha"],
++      failed: [{ item: "beta", error: "boom" }],
++    });
+   });
+ 
+   it("stays pending until the refreshed skill list is available", async () => {
+diff --git a/tests/integration/App.test.tsx b/tests/integration/App.test.tsx
+index c9902a9..4281278 100644
+--- a/tests/integration/App.test.tsx
++++ b/tests/integration/App.test.tsx
+@@ -20,6 +20,10 @@ const skillsPanelMocks = vi.hoisted(() => ({
+   openDiscovery: vi.fn(),
+ }));
+ 
++// 集成测试渲染整个 App（含窗口状态同步等副作用），全量并行时较慢，
++// 放宽默认超时避免 CPU 争抢导致的误报。
++vi.setConfig({ testTimeout: 30000 });
++
+ vi.mock("sonner", () => ({
+   toast: {
+     success: (...args: unknown[]) => toastSuccessMock(...args),

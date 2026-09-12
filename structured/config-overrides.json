@@ -1,0 +1,11 @@
+{
+  "_comment": "结构化配置覆盖：按 dot-path（数组用 [n]）覆盖官方 JSON 的指定叶子节点。P2 收敛后此文件应保持极小。",
+  "src-tauri/tauri.conf.json": {
+    "bundle.createUpdaterArtifacts": false
+  },
+  "src-tauri/tauri.windows.conf.json": {
+    "app.windows[0].width": 920,
+    "app.windows[0].height": 650,
+    "app.windows[0].minWidth": 920
+  }
+}

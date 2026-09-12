@@ -1,0 +1,344 @@
+diff --git a/src-tauri/src/database/dao/mcp.rs b/src-tauri/src/database/dao/mcp.rs
+index ad50a89..fef0215 100644
+--- a/src-tauri/src/database/dao/mcp.rs
++++ b/src-tauri/src/database/dao/mcp.rs
+@@ -9,7 +9,7 @@ use indexmap::IndexMap;
+ use rusqlite::{params, OptionalExtension, Row};
+ 
+ const MCP_SERVER_SELECT: &str =
+-    "SELECT id, name, server_config, description, homepage, docs, tags, enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild, enabled_opencode, enabled_hermes FROM mcp_servers";
++    "SELECT id, name, server_config, description, homepage, docs, tags, enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild, enabled_opencode, enabled_openclaw, enabled_hermes FROM mcp_servers";
+ 
+ fn row_to_mcp_server(row: &Row<'_>) -> rusqlite::Result<(String, McpServer)> {
+     let id: String = row.get(0)?;
+@@ -24,7 +24,8 @@ fn row_to_mcp_server(row: &Row<'_>) -> rusqlite::Result<(String, McpServer)> {
+     let enabled_gemini: bool = row.get(9)?;
+     let enabled_grokbuild: bool = row.get(10)?;
+     let enabled_opencode: bool = row.get(11)?;
+-    let enabled_hermes: bool = row.get(12)?;
++    let enabled_openclaw: bool = row.get(12)?;
++    let enabled_hermes: bool = row.get(13)?;
+ 
+     let server = serde_json::from_str(&server_config_str).unwrap_or_default();
+     let tags = serde_json::from_str(&tags_str).unwrap_or_default();
+@@ -41,6 +42,7 @@ fn row_to_mcp_server(row: &Row<'_>) -> rusqlite::Result<(String, McpServer)> {
+                 gemini: enabled_gemini,
+                 grokbuild: enabled_grokbuild,
+                 opencode: enabled_opencode,
++                openclaw: enabled_openclaw,
+                 hermes: enabled_hermes,
+             },
+             description,
+@@ -120,8 +122,8 @@ impl Database {
+         conn.execute(
+             "INSERT OR REPLACE INTO mcp_servers (
+                 id, name, server_config, description, homepage, docs, tags,
+-                enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild, enabled_opencode, enabled_hermes
+-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
++                enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild, enabled_opencode, enabled_openclaw, enabled_hermes
++            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+             params![
+                 server.id,
+                 server.name,
+@@ -138,6 +140,7 @@ impl Database {
+                 server.apps.gemini,
+                 server.apps.grokbuild,
+                 server.apps.opencode,
++                server.apps.openclaw,
+                 server.apps.hermes,
+             ],
+         )
+diff --git a/src-tauri/src/database/dao/mod.rs b/src-tauri/src/database/dao/mod.rs
+index bb78f30..95bcde8 100644
+--- a/src-tauri/src/database/dao/mod.rs
++++ b/src-tauri/src/database/dao/mod.rs
+@@ -9,6 +9,8 @@ pub mod prompts;
+ pub mod providers;
+ pub mod providers_seed;
+ pub mod proxy;
++pub mod remote_current;
++pub mod remote_hosts;
+ pub mod settings;
+ pub mod skills;
+ pub mod stream_check;
+diff --git a/src-tauri/src/database/dao/proxy.rs b/src-tauri/src/database/dao/proxy.rs
+index b2f37c1..dbfffa2 100644
+--- a/src-tauri/src/database/dao/proxy.rs
++++ b/src-tauri/src/database/dao/proxy.rs
+@@ -602,6 +602,20 @@ impl Database {
+     ) -> Result<(), AppError> {
+         let conn = lock_conn!(self.conn);
+ 
++        // 远端接管路由的 provider 属于远端 SSOT，不在本机 providers 表；
++        // 静默跳过健康记录（避免 provider_health 的 FK 约束噪音，也符合
++        // 「远端健康不写本机库」语义——本机同名 provider 不受影响）。
++        let provider_exists: bool = conn
++            .query_row(
++                "SELECT 1 FROM providers WHERE id = ?1 AND app_type = ?2 LIMIT 1",
++                rusqlite::params![provider_id, app_type],
++                |_| Ok(true),
++            )
++            .unwrap_or(false);
++        if !provider_exists {
++            return Ok(());
++        }
++
+         let now = chrono::Utc::now().to_rfc3339();
+ 
+         // 先查询当前状态
+diff --git a/src-tauri/src/database/dao/skills.rs b/src-tauri/src/database/dao/skills.rs
+index be9e9d4..1148d72 100644
+--- a/src-tauri/src/database/dao/skills.rs
++++ b/src-tauri/src/database/dao/skills.rs
+@@ -23,7 +23,7 @@ impl Database {
+             .prepare(
+                 "SELECT id, name, description, directory, repo_owner, repo_name, repo_branch,
+                         readme_url, enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild,
+-                        enabled_opencode, enabled_hermes, installed_at, content_hash, updated_at
++                        enabled_opencode, enabled_openclaw, enabled_hermes, installed_at, content_hash, updated_at
+                  FROM skills ORDER BY name ASC",
+             )
+             .map_err(|e| AppError::Database(e.to_string()))?;
+@@ -45,12 +45,13 @@ impl Database {
+                         gemini: row.get(10)?,
+                         grokbuild: row.get(11)?,
+                         opencode: row.get(12)?,
+-                        hermes: row.get(13)?,
++                        openclaw: row.get(13)?,
++                        hermes: row.get(14)?,
+                         pi: false,
+                     },
+-                    installed_at: row.get(14)?,
+-                    content_hash: row.get(15)?,
+-                    updated_at: row.get::<_, i64>(16).unwrap_or(0),
++                    installed_at: row.get(15)?,
++                    content_hash: row.get(16)?,
++                    updated_at: row.get::<_, i64>(17).unwrap_or(0),
+                 })
+             })
+             .map_err(|e| AppError::Database(e.to_string()))?;
+@@ -70,7 +71,7 @@ impl Database {
+             .prepare(
+                 "SELECT id, name, description, directory, repo_owner, repo_name, repo_branch,
+                         readme_url, enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild,
+-                        enabled_opencode, enabled_hermes, installed_at, content_hash, updated_at
++                        enabled_opencode, enabled_openclaw, enabled_hermes, installed_at, content_hash, updated_at
+                  FROM skills WHERE id = ?1",
+             )
+             .map_err(|e| AppError::Database(e.to_string()))?;
+@@ -91,12 +92,13 @@ impl Database {
+                     gemini: row.get(10)?,
+                     grokbuild: row.get(11)?,
+                     opencode: row.get(12)?,
+-                    hermes: row.get(13)?,
++                    openclaw: row.get(13)?,
++                    hermes: row.get(14)?,
+                     pi: false,
+                 },
+-                installed_at: row.get(14)?,
+-                content_hash: row.get(15)?,
+-                updated_at: row.get::<_, i64>(16).unwrap_or(0),
++                installed_at: row.get(15)?,
++                content_hash: row.get(16)?,
++                updated_at: row.get::<_, i64>(17).unwrap_or(0),
+             })
+         });
+ 
+@@ -113,9 +115,9 @@ impl Database {
+         conn.execute(
+             "INSERT OR REPLACE INTO skills
+              (id, name, description, directory, repo_owner, repo_name, repo_branch,
+-              readme_url, enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild, enabled_opencode, enabled_hermes,
++              readme_url, enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild, enabled_opencode, enabled_openclaw, enabled_hermes,
+               installed_at, content_hash, updated_at)
+-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
++             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
+             params![
+                 skill.id,
+                 skill.name,
+@@ -130,6 +132,7 @@ impl Database {
+                 skill.apps.gemini,
+                 skill.apps.grokbuild,
+                 skill.apps.opencode,
++                skill.apps.openclaw,
+                 skill.apps.hermes,
+                 skill.installed_at,
+                 skill.content_hash,
+@@ -202,8 +205,8 @@ impl Database {
+         let conn = lock_conn!(self.conn);
+         let affected = conn
+             .execute(
+-                "UPDATE skills SET enabled_claude = ?1, enabled_codex = ?2, enabled_gemini = ?3, enabled_grokbuild = ?4, enabled_opencode = ?5, enabled_hermes = ?6 WHERE id = ?7",
+-                params![apps.claude, apps.codex, apps.gemini, apps.grokbuild, apps.opencode, apps.hermes, id],
++                "UPDATE skills SET enabled_claude = ?1, enabled_codex = ?2, enabled_gemini = ?3, enabled_grokbuild = ?4, enabled_opencode = ?5, enabled_openclaw = ?6, enabled_hermes = ?7 WHERE id = ?8",
++                params![apps.claude, apps.codex, apps.gemini, apps.grokbuild, apps.opencode, apps.openclaw, apps.hermes, id],
+             )
+             .map_err(|e| AppError::Database(e.to_string()))?;
+         Ok(affected > 0)
+diff --git a/src-tauri/src/database/mod.rs b/src-tauri/src/database/mod.rs
+index cdd947e..2bde014 100644
+--- a/src-tauri/src/database/mod.rs
++++ b/src-tauri/src/database/mod.rs
+@@ -51,6 +51,8 @@ use std::sync::Mutex;
+ 
+ // DAO 方法通过 impl Database 提供，无需额外导出
+ 
++/// 当前 Schema 版本号
++/// 每次修改表结构时递增，并在 schema.rs 中添加相应的迁移逻辑
+ /// 当前 Schema 版本号
+ /// 每次修改表结构时递增，并在 schema.rs 中添加相应的迁移逻辑
+ pub(crate) const SCHEMA_VERSION: i32 = 18;
+@@ -179,6 +181,7 @@ impl Database {
+         }
+         let conn = Connection::open(db_path).map_err(|e| AppError::Database(e.to_string()))?;
+         let version = Self::get_user_version(&conn)?;
++        // 高于当前 schema 版本的才是来自更高版本应用的库
+         Ok((version > SCHEMA_VERSION).then_some(version))
+     }
+ 
+diff --git a/src-tauri/src/database/schema.rs b/src-tauri/src/database/schema.rs
+index 0af5d99..8e9402e 100644
+--- a/src-tauri/src/database/schema.rs
++++ b/src-tauri/src/database/schema.rs
+@@ -67,6 +67,7 @@ impl Database {
+             enabled_claude BOOLEAN NOT NULL DEFAULT 0, enabled_codex BOOLEAN NOT NULL DEFAULT 0,
+             enabled_gemini BOOLEAN NOT NULL DEFAULT 0, enabled_grokbuild BOOLEAN NOT NULL DEFAULT 0,
+             enabled_opencode BOOLEAN NOT NULL DEFAULT 0,
++            enabled_openclaw BOOLEAN NOT NULL DEFAULT 0,
+             enabled_hermes BOOLEAN NOT NULL DEFAULT 0
+         )",
+             [],
+@@ -96,6 +97,7 @@ impl Database {
+             enabled_gemini BOOLEAN NOT NULL DEFAULT 0,
+             enabled_grokbuild BOOLEAN NOT NULL DEFAULT 0,
+             enabled_opencode BOOLEAN NOT NULL DEFAULT 0,
++            enabled_openclaw BOOLEAN NOT NULL DEFAULT 0,
+             enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
+             installed_at INTEGER NOT NULL DEFAULT 0,
+             content_hash TEXT,
+@@ -105,6 +107,23 @@ impl Database {
+         )
+         .map_err(|e| AppError::Database(e.to_string()))?;
+ 
++        // OpenClaw 支持列：create_tables 阶段幂等补齐，独立于 schema 版本。
++        // 增强版暂时把 SCHEMA_VERSION 标回 v16（兼容原生 app），因此不通过
++        // v17 迁移加列；这里对所有库（新库/原生 v16 库/增强版旧库）统一确保列存在。
++        Self::add_column_if_missing(
++            conn,
++            "skills",
++            "enabled_openclaw",
++            "BOOLEAN NOT NULL DEFAULT 0",
++        )?;
++        // mcp_servers 同款幂等补齐（OpenClaw MCP 支持）。
++        Self::add_column_if_missing(
++            conn,
++            "mcp_servers",
++            "enabled_openclaw",
++            "BOOLEAN NOT NULL DEFAULT 0",
++        )?;
++
+         // 6. Skill Repos 表
+         conn.execute(
+             "CREATE TABLE IF NOT EXISTS skill_repos (
+@@ -351,6 +370,42 @@ impl Database {
+         )
+         .map_err(|e| AppError::Database(e.to_string()))?;
+ 
++        // 20. Remote Hosts 表（增强版：SSH 远程主机管理）
++        //     密码不落库，存系统钥匙串（见 remote::credentials）。
++        conn.execute(
++            "CREATE TABLE IF NOT EXISTS remote_hosts (
++                id TEXT PRIMARY KEY,
++                name TEXT NOT NULL,
++                host TEXT NOT NULL,
++                port INTEGER NOT NULL DEFAULT 22,
++                username TEXT NOT NULL,
++                auth_method TEXT NOT NULL DEFAULT 'password',
++                save_password BOOLEAN NOT NULL DEFAULT 1,
++                route_through_local_proxy BOOLEAN NOT NULL DEFAULT 0,
++                route_proxy_apps TEXT NOT NULL DEFAULT '{}',
++                route_proxy_container_apps TEXT NOT NULL DEFAULT '{}',
++                disabled BOOLEAN NOT NULL DEFAULT 0,
++                created_at INTEGER,
++                updated_at INTEGER
++            )",
++            [],
++        )
++        .map_err(|e| AppError::Database(e.to_string()))?;
++
++        // 远程主机「当前生效供应商」记录（per-app），含完整 provider 配置 JSON
++        // （解耦路由基座）。原 ~/.cc-switch/remote_current_providers.json 已迁入此表。
++        conn.execute(
++            "CREATE TABLE IF NOT EXISTS remote_current_providers (
++                host_id TEXT NOT NULL,
++                app TEXT NOT NULL,
++                provider_id TEXT NOT NULL,
++                provider_config TEXT,
++                updated_at INTEGER NOT NULL DEFAULT 0,
++                PRIMARY KEY (host_id, app)
++            )",
++            [],
++        )
++        .map_err(|e| AppError::Database(e.to_string()))?;
+         // 修复跑过未发布开发版的库：current 标记曾是全局 key，现按应用分组
+         // （随 v12 定稿为 current_profile_id_<scope>，不单独 bump 版本）
+         if conn
+@@ -403,6 +458,43 @@ impl Database {
+             [],
+         );
+ 
++        // 尝试添加"走本机路由"列到 remote_hosts 表（兼容旧库升级；新库建表已含该列）
++        let _ = conn.execute(
++            "ALTER TABLE remote_hosts ADD COLUMN route_through_local_proxy BOOLEAN NOT NULL DEFAULT 0",
++            [],
++        );
++
++        // 尝试添加 per-app 接管列 route_proxy_apps（JSON：{"claude":true,...}）。
++        // 旧数据迁移：route_through_local_proxy=1 的主机 → 4 个接管 app 全开（保留原意图）。
++        let _ = conn.execute(
++            "ALTER TABLE remote_hosts ADD COLUMN route_proxy_apps TEXT NOT NULL DEFAULT '{}'",
++            [],
++        );
++        let _ = conn.execute(
++            "UPDATE remote_hosts SET route_proxy_apps = '{\"claude\":true,\"codex\":true,\"gemini\":true,\"grokbuild\":true}' WHERE route_through_local_proxy = 1 AND route_proxy_apps = '{}'",
++            [],
++        );
++        // 展开后清零旧布尔：route_through_local_proxy 已废弃（per-app 全覆盖），
++        // 不清会残留 1，导致 host_wants_tunnel 误判「需要隧道」（旧库升级场景）。
++        let _ = conn.execute(
++            "UPDATE remote_hosts SET route_through_local_proxy = 0 WHERE route_through_local_proxy = 1",
++            [],
++        );
++
++        // 尝试添加 per-container×app 接管列 route_proxy_container_apps
++        // （JSON：{"<容器名>":{"claude":true,...}}）。旧库升级后容器侧默认空 = 不接管。
++        let _ = conn.execute(
++            "ALTER TABLE remote_hosts ADD COLUMN route_proxy_container_apps TEXT NOT NULL DEFAULT '{}'",
++            [],
++        );
++
++        // 尝试添加 disabled 列（软禁用）：旧库升级补列，新库建表已含。
++        // 禁用 = 目标选择/操作排除 + load_host 拦截兜底，远程管理页仍可见可恢复（不删除）。
++        let _ = conn.execute(
++            "ALTER TABLE remote_hosts ADD COLUMN disabled BOOLEAN NOT NULL DEFAULT 0",
++            [],
++        );
++
+         // 兼容：若旧版 proxy_config 仍为单例结构（无 app_type），则在启动时直接转换为三行结构
+         // 说明：user_version=2 时不会再触发 v1->v2 迁移，但新代码查询依赖 app_type 列。
+         if Self::table_exists(conn, "proxy_config")?
+diff --git a/src-tauri/src/database/tests.rs b/src-tauri/src/database/tests.rs
+index 26ff7d9..4088720 100644
+--- a/src-tauri/src/database/tests.rs
++++ b/src-tauri/src/database/tests.rs
+@@ -205,7 +205,9 @@ fn schema_migration_sets_user_version_when_missing() {
+ fn schema_migration_rejects_future_version() {
+     let conn = Connection::open_in_memory().expect("open memory db");
+     Database::create_tables_on_conn(&conn).expect("create tables");
+-    Database::set_user_version(&conn, SCHEMA_VERSION + 1).expect("set future version");
++    // 真正过新的是高于 SCHEMA_VERSION 的版本。
++    Database::set_user_version(&conn, SCHEMA_VERSION + 1)
++        .expect("set future version");
+ 
+     let err =
+         Database::apply_schema_migrations_on_conn(&conn).expect_err("should reject higher version");
