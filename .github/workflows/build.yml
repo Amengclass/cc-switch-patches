@@ -34,7 +34,7 @@ jobs:
   #   · GitHub 的 job 级 if 里不能用 matrix，只能在矩阵展开前过滤；
   #   · 版本号要能从 tag 名推出来，供下面所有步骤共用。
   plan:
-    name: 规划平台与版本
+    name: 规划
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.m.outputs.matrix }}
@@ -77,7 +77,7 @@ jobs:
   #   · 组装或验证挂了就不该往下编译 —— 出个半成品包更糟
   # ─────────────────────────────────────────────────────────────
   prepare:
-    name: 组装 + 验证 + 源码快照
+    name: 打补丁
     needs: plan
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -203,7 +203,7 @@ jobs:
           if-no-files-found: error
 
   build:
-    name: ${{ matrix.platform }}
+    name: 编译 · ${{ matrix.platform }}
     needs: [plan, prepare]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 180
