@@ -3108,7 +3108,7 @@ index d885449..48f61c2 100644
 +              size="sm"
 +              onClick={() =>
 +                settingsApi.openExternal(
-+                  "https://github.com/Amengclass/cc-switch",
++                  "https://github.com/Amengclass/cc-switch-patches",
 +                )
 +              }
 +              className="h-8 gap-1.5 text-xs"
