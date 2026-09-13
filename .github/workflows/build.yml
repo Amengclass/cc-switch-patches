@@ -222,7 +222,7 @@ jobs:
       - name: 上传组装结果
         uses: actions/upload-artifact@v4
         with:
-          name: assembled-src
+          name: cc-switch-magic-assembled
           path: ${{ runner.temp }}/assembled-src.zip
           if-no-files-found: error
           retention-days: 3
@@ -230,7 +230,7 @@ jobs:
       - name: 上传源码快照（对外产物）
         uses: actions/upload-artifact@v4
         with:
-          name: source-snapshot
+          name: cc-switch-magic-Source
           path: ${{ runner.temp }}/out/*
           if-no-files-found: error
 
@@ -274,7 +274,7 @@ jobs:
       - name: ① 取回组装好的源码
         uses: actions/download-artifact@v4
         with:
-          name: assembled-src
+          name: cc-switch-magic-assembled
           path: ${{ runner.temp }}/src
 
       - name: ② 解压到 build/
@@ -399,8 +399,8 @@ jobs:
           path: all
           merge-multiple: true
           # 只要「安装包 + 源码快照」这两类对外产物。
-          # assembled-src 是 prepare→build 的内部中转，不该出现在 Release 里。
-          pattern: "{cc-switch-magic-*,source-snapshot}"
+          # cc-switch-magic-assembled 是 prepare→build 的内部中转，不该出现在 Release 里。
+          pattern: "{cc-switch-magic-Windows,cc-switch-magic-Linux,cc-switch-magic-macOS,cc-switch-magic-Source}"
 
       - name: 创建 / 更新 Release
         shell: bash
