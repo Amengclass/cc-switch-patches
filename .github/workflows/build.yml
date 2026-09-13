@@ -262,11 +262,23 @@ jobs:
           if (Test-Path $stage) { Remove-Item -LiteralPath $stage -Recurse -Force }
           New-Item -ItemType Directory -Force -Path $stage | Out-Null
 
-          # 排除构建产物 + 工具目录。.git 也排除 —— 下面会用浅克隆重建一个更小的。
-          $skip = @("node_modules", "target", "dist", ".vite", ".git", ".claude", ".reasonix")
-          Get-ChildItem $tree -Force | Where-Object { $skip -notcontains $_.Name } | ForEach-Object {
-            Copy-Item $_.FullName (Join-Path $stage $_.Name) -Recurse -Force
+          # 排除构建产物 + 工具目录。
+          # 关键：target / dist 是**嵌套**的（src-tauri/target），只过滤顶层拦不住 ——
+          # 之前就是这样漏了 src-tauri/target，把源码快照从 65MB 撑到 1GB。
+          # 这里改成「按路径段递归排除」：任何一层目录名命中就整棵跳过。
+          $skipNames = @("node_modules", "target", "dist", ".vite", ".git", ".claude", ".reasonix")
+          $stageLen = $stage.Length
+
+          function Copy-Tree($src, $dst) {
+            New-Item -ItemType Directory -Force -Path $dst | Out-Null
+            Get-ChildItem -LiteralPath $src -Force | ForEach-Object {
+              if ($skipNames -contains $_.Name) { return }
+              $target = Join-Path $dst $_.Name
+              if ($_.PSIsContainer) { Copy-Tree $_.FullName $target }
+              else { Copy-Item -LiteralPath $_.FullName -Destination $target -Force }
+            }
           }
+          Copy-Tree $tree $stage
 
           Push-Location $stage
           git init -q -b main
