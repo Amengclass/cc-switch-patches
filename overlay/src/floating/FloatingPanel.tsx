@@ -226,7 +226,7 @@ export function FloatingPanel() {
       onContextMenu={(e) => e.preventDefault()}
     >
       <div className="panel-header">
-        <span className="panel-title">CC Switch</span>
+        <span className="panel-title">CC Switch Magic</span>
         <span className="panel-sub">{t("floating.currentProviderUsage")}</span>
       </div>
 
