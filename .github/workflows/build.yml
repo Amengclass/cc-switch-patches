@@ -428,11 +428,18 @@ jobs:
           echo "--- 发布说明前 5 行 ---"; head -5 notes.md
 
           TITLE="CC Switch Magic ${VER}"   # VER 自带 v，别再拼一个 v
-          if gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
-            echo "Release 已存在 → 更新标题/说明并覆盖产物"
-            gh release edit "$TAG" --repo "${{ github.repository }}" --title "$TITLE" --notes-file notes.md
-            gh release upload "$TAG" all/* --repo "${{ github.repository }}" --clobber
+          REPO="${{ github.repository }}"
+
+          # 判断 Release 是否已存在：**按 tag 在列表里找**，不用 `gh release view <tag>`。
+          # 为什么：tag 被强推过之后，按 tag 查会 404（实测遇到），于是误判成「不存在」
+          # → 走 create → tag 已被占用 → 失败。而重推 tag 是常态（每次改 CI 都重推）。
+          if gh release list --repo "$REPO" --limit 200 --json tagName -q '.[].tagName' | grep -qx "$TAG"; then
+            echo "Release 已存在（$TAG）→ 更新标题/说明，并补齐/覆盖产物"
+            gh release edit "$TAG" --repo "$REPO" --title "$TITLE" --notes-file notes.md
+            # --clobber：同名附件覆盖，缺的补上；已存在的其它附件不动
+            gh release upload "$TAG" all/* --repo "$REPO" --clobber
           else
-            gh release create "$TAG" all/* --repo "${{ github.repository }}" \
+            echo "Release 不存在（$TAG）→ 新建"
+            gh release create "$TAG" all/* --repo "$REPO" \
               --title "$TITLE" --notes-file notes.md
           fi
