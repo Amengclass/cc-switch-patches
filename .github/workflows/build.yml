@@ -67,9 +67,176 @@ jobs:
           echo "选中平台: $MATRIX"
           echo "matrix={\"include\":$MATRIX}" >> "$GITHUB_OUTPUT"
 
+  # ─────────────────────────────────────────────────────────────
+  # prepare：组装 + 验证 + 出源码快照 —— 只跑一次
+  #
+  # 为什么单开一个 job：
+  #   · 组装结果【三平台完全相同】（源码一份，编译才分平台），没必要三台各跑一遍
+  #   · 组装/验证是【源码层】的事，跟平台无关；编译才是平台的事
+  #   · 源码快照天然是「组装」的产物，放在这里位置正确
+  #   · 组装或验证挂了就不该往下编译 —— 出个半成品包更糟
+  # ─────────────────────────────────────────────────────────────
+  prepare:
+    name: 组装 + 验证 + 源码快照
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      version: ${{ needs.plan.outputs.version }}
+    steps:
+      - name: 检出补丁层
+        uses: actions/checkout@v4
+
+      - name: 准备 Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: ① 组装：官方源码 + 补丁
+        shell: pwsh
+        run: |
+          # 版本号来自 plan job（手填或从 tag 名解析），不再直接读 inputs.version ——
+          # 推 tag 触发时 inputs 是空的，直接读会退回 base.json 的基线版本。
+          $v = "${{ needs.plan.outputs.version }}"
+          # 直接具名调用（已验证）。不用 @a 数组 splat——它只按位置传参，
+          # 会把版本号当命令名执行（报 "The module 'v3.20.1' could not be loaded"）
+          if ([string]::IsNullOrWhiteSpace($v)) {
+            ./scripts/apply.ps1 -TargetDir "${{ github.workspace }}/build"
+          } else {
+            ./scripts/apply.ps1 -TargetDir "${{ github.workspace }}/build" -Version $v
+          }
+
+      - name: ② 验证：功能断言（44 条）
+        shell: pwsh
+        run: ./checks/feature-checks.ps1 -TargetDir "${{ github.workspace }}/build"
+
+      # 打完补丁的源码本身就是一份「可直接开发」的完整仓库快照。
+      # 以前它只存在于 runner 的临时目录里，构建完就销毁 —— 手里只有「diff」和
+      # 「安装包」两个极端，中间那棵树是隐形的。现在把它作为产物发出去。
+      - name: ③ 打包源码快照（浅克隆 .git，可直接续开发）
+        shell: pwsh
+        run: |
+          $tree = "${{ github.workspace }}/build"
+          $out  = "${{ runner.temp }}/out"
+          $v = "${{ needs.plan.outputs.version }}"
+          $stage = Join-Path $env:RUNNER_TEMP "snapshot"
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+
+          # 溯源信息：让人知道这份快照怎么来的、怎么重建
+          $patchSha = "${{ github.sha }}"
+          $patchRef = "${{ github.ref_name }}"
+          $offSha = (git -C $tree rev-parse --short HEAD 2>$null)
+          $offTag = (git -C $tree describe --tags --exact-match 2>$null)
+          $info = @"
+          CC Switch Magic $v —— 源码快照
+          ================================================
+
+          官方上游 : farion1231/cc-switch @ $offTag ($offSha)
+          补丁层   : Amengclass/cc-switch-patches @ $patchSha ($patchRef)
+          组装方式 : scripts/apply.ps1 -Version $v
+          构建时间 : $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') UTC+8
+
+          这份快照 = 官方源码 + 我们的补丁层，已组装完毕，可直接开发：
+            pnpm install
+            pnpm tauri dev          # 开发
+            pnpm tauri build        # 出安装包
+
+          它带一个【浅克隆】的 .git（只含当前这一个提交，无久远历史）：
+            - 可以直接 commit / 开分支 / 继续开发
+            - 想跟官方历史对齐，自己 `git fetch --unshallow` 或重新 clone 官方
+            - 想只更新补丁层：改完功能后跑
+                cc-switch-patches/scripts/repack.ps1 -EditedRepo <本目录> -Version $v
+          "@
+          [IO.File]::WriteAllText("$tree/BUILD-INFO.txt", $info, (New-Object Text.UTF8Encoding($false)))
+
+          # 组装产物里没有 .git（apply.ps1 从官方 clone 拷的是工作区）。
+          # 这里用【浅克隆】重建一个：只含当前快照这一个提交，体积从 ~120MB 降到 ~15MB，
+          # 但 commit / 开分支 / 续开发都照常。
+          if (Test-Path $stage) { Remove-Item -LiteralPath $stage -Recurse -Force }
+          New-Item -ItemType Directory -Force -Path $stage | Out-Null
+
+          # 排除构建产物 + 工具目录。
+          # 关键：target / dist 是**嵌套**的（src-tauri/target），只过滤顶层拦不住 ——
+          # 之前就是这样漏了 src-tauri/target，把源码快照从 65MB 撑到 1GB。
+          # 这里改成「按路径段递归排除」：任何一层目录名命中就整棵跳过。
+          $skipNames = @("node_modules", "target", "dist", ".vite", ".git", ".claude", ".reasonix")
+
+          function Copy-Tree($src, $dst) {
+            New-Item -ItemType Directory -Force -Path $dst | Out-Null
+            Get-ChildItem -LiteralPath $src -Force | ForEach-Object {
+              if ($skipNames -contains $_.Name) { return }
+              $target = Join-Path $dst $_.Name
+              if ($_.PSIsContainer) { Copy-Tree $_.FullName $target }
+              else { Copy-Item -LiteralPath $_.FullName -Destination $target -Force }
+            }
+          }
+          Copy-Tree $tree $stage
+
+          Push-Location $stage
+          git init -q -b main
+          git -c user.email="build@cc-switch-patches" -c user.name="cc-switch-patches CI" add -A
+          git -c user.email="build@cc-switch-patches" -c user.name="cc-switch-patches CI" `
+              commit -q -m "CC Switch Magic $v —— 官方 $offTag + 补丁层 $($patchSha.Substring(0,7))"
+          Pop-Location
+          Write-Host "快照文件数: $((Get-ChildItem $stage -Recurse -File -Force | Measure-Object).Count)"
+
+          $zip = "$out/CC-Switch-Magic-$v-Source.zip"
+          if (Test-Path $zip) { Remove-Item -LiteralPath $zip -Force }
+          Compress-Archive -Path (Join-Path $stage "*") -DestinationPath $zip -Force
+          $mb = [math]::Round((Get-Item $zip).Length/1MB,1)
+          Write-Host "源码快照: $(Split-Path $zip -Leaf)  ($mb MB)"
+
+          # 校验和，方便别人核对下载是否完整
+          $sha = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
+          "$sha  CC-Switch-Magic-$v-Source.zip" | Set-Content "$zip.sha256" -Encoding ascii
+          Write-Host "SHA256: $sha"
+
+      # 组装好的源码给三台编译用。排除 target/node_modules 后再传，
+      # 否则会把几 GB 的构建产物也塞进 artifact。
+      - name: ④ 上传源码（供各平台编译）
+        shell: pwsh
+        run: |
+          $tree = "${{ github.workspace }}/build"
+          $pack = Join-Path $env:RUNNER_TEMP "srcpack"
+          if (Test-Path $pack) { Remove-Item -LiteralPath $pack -Recurse -Force }
+          New-Item -ItemType Directory -Force -Path $pack | Out-Null
+
+          $skipNames = @("node_modules", "target", "dist", ".vite", ".git", ".claude", ".reasonix")
+          function Copy-Tree($src, $dst) {
+            New-Item -ItemType Directory -Force -Path $dst | Out-Null
+            Get-ChildItem -LiteralPath $src -Force | ForEach-Object {
+              if ($skipNames -contains $_.Name) { return }
+              $t = Join-Path $dst $_.Name
+              if ($_.PSIsContainer) { Copy-Tree $_.FullName $t }
+              else { Copy-Item -LiteralPath $_.FullName -Destination $t -Force }
+            }
+          }
+          Copy-Tree $tree $pack
+          Write-Host "待上传文件数: $((Get-ChildItem $pack -Recurse -File -Force | Measure-Object).Count)"
+
+          $zip = Join-Path $env:RUNNER_TEMP "assembled-src.zip"
+          if (Test-Path $zip) { Remove-Item -LiteralPath $zip -Force }
+          Compress-Archive -Path (Join-Path $pack "*") -DestinationPath $zip -Force
+          Write-Host "assembled-src.zip: $([math]::Round((Get-Item $zip).Length/1MB,1)) MB"
+
+      - name: 上传组装结果
+        uses: actions/upload-artifact@v4
+        with:
+          name: assembled-src
+          path: ${{ runner.temp }}/assembled-src.zip
+          if-no-files-found: error
+          retention-days: 3
+
+      - name: 上传源码快照（对外产物）
+        uses: actions/upload-artifact@v4
+        with:
+          name: source-snapshot
+          path: ${{ runner.temp }}/out/*
+          if-no-files-found: error
+
   build:
     name: ${{ matrix.platform }}
-    needs: plan
+    needs: [plan, prepare]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 180
     strategy:
@@ -77,9 +244,6 @@ jobs:
       matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
 
     steps:
-      - name: 检出补丁层
-        uses: actions/checkout@v4
-
       - name: 准备 pnpm
         uses: pnpm/action-setup@v4
         with:
@@ -107,22 +271,23 @@ jobs:
           sudo apt-get install -y --no-install-recommends libsoup-3.0-dev \
             || sudo apt-get install -y --no-install-recommends libsoup2.4-dev
 
+      - name: ① 取回组装好的源码
+        uses: actions/download-artifact@v4
+        with:
+          name: assembled-src
+          path: ${{ runner.temp }}/src
 
-      - name: ① 组装：官方源码 + 补丁
+      - name: ② 解压到 build/
         shell: pwsh
         run: |
-          # 版本号来自 plan job（手填或从 tag 名解析），不再直接读 inputs.version ——
-          # 推 tag 触发时 inputs 是空的，直接读会退回 base.json 的基线版本。
-          $v = "${{ needs.plan.outputs.version }}"
-          # 直接具名调用（已验证）。不用 @a 数组 splat——它只按位置传参，
-          # 会把版本号当命令名执行（报 "The module 'v3.20.1' could not be loaded"）
-          if ([string]::IsNullOrWhiteSpace($v)) {
-            ./scripts/apply.ps1 -TargetDir "${{ github.workspace }}/build"
-          } else {
-            ./scripts/apply.ps1 -TargetDir "${{ github.workspace }}/build" -Version $v
-          }
+          $zip = "${{ runner.temp }}/src/assembled-src.zip"
+          $dst = "${{ github.workspace }}/build"
+          New-Item -ItemType Directory -Force -Path $dst | Out-Null
+          Expand-Archive -LiteralPath $zip -DestinationPath $dst -Force
+          Write-Host "解压文件数: $((Get-ChildItem $dst -Recurse -File -Force | Measure-Object).Count)"
+          Write-Host "工具链文件: $(Test-Path "$dst/rust-toolchain.toml")"
 
-      # 缓存 Rust 编译产物（关键优化）：必须放在「① 组装」之后，
+      # 缓存 Rust 编译产物（关键优化）：必须放在源码就位之后，
       # 因为 target 目录要先存在，rust-cache 才能把缓存恢复进去。
       # 命中后可从「700+ crate 全量编译 ~20 分钟」降到「只编改动部分 ~3 分钟」。
       - name: 缓存 Rust 编译产物
@@ -130,10 +295,6 @@ jobs:
         with:
           workspaces: "build/src-tauri -> target"
           key: ${{ matrix.platform }}
-
-      - name: ② 验证：功能断言（42 条）
-        shell: pwsh
-        run: ./checks/feature-checks.ps1 -TargetDir "${{ github.workspace }}/build"
 
       - name: ③ 安装前端依赖
         working-directory: ${{ github.workspace }}/build
@@ -155,6 +316,7 @@ jobs:
           rustup target add x86_64-apple-darwin
           echo "== 已安装的 target =="
           rustup target list --installed
+
       - name: ④ 打包（release + 安装包）
         working-directory: ${{ github.workspace }}/build
         shell: bash
@@ -213,92 +375,6 @@ jobs:
               Write-Host "产物: $(Split-Path $dest -Leaf)  ($([math]::Round((Get-Item $dest).Length/1MB,1)) MB)"
             }
 
-      # 打完补丁的源码本身就是一份「可直接开发」的完整仓库快照 —— 之前它只存在于
-      # runner 的临时目录里，构建完就销毁了。这里把它也打成产物。
-      # 只在 Windows 那台做（三台内容相同，没必要重复上传）。
-      - name: ⑥ 打包源码快照（浅克隆 .git，可直接续开发）
-        if: matrix.platform == 'Windows'
-        shell: pwsh
-        run: |
-          $tree = "${{ github.workspace }}/build"
-          $out  = "${{ runner.temp }}/out"
-          $v = "${{ needs.plan.outputs.version }}"
-          $stage = Join-Path $env:RUNNER_TEMP "snapshot"
-
-          # 溯源信息：让人知道这份快照怎么来的、怎么重建
-          $patchSha = "${{ github.sha }}"
-          $patchRef = "${{ github.ref_name }}"
-          $offSha = (git -C $tree rev-parse --short HEAD 2>$null)
-          $offTag = (git -C $tree describe --tags --exact-match 2>$null)
-          $info = @"
-          CC Switch Magic $v —— 源码快照
-          ================================================
-
-          官方上游 : farion1231/cc-switch @ $offTag ($offSha)
-          补丁层   : Amengclass/cc-switch-patches @ $patchSha ($patchRef)
-          组装方式 : scripts/apply.ps1 -Version $v
-          构建时间 : $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') UTC+8
-
-          这份快照 = 官方源码 + 我们的补丁层，已组装完毕，可直接开发：
-            pnpm install
-            pnpm tauri dev          # 开发
-            pnpm tauri build        # 出安装包
-
-          它带一个【浅克隆】的 .git（只含当前这一个提交，无久远历史）：
-            - 可以直接 commit / 开分支 / 继续开发
-            - 想跟官方历史对齐，自己 `git fetch --unshallow` 或重新 clone 官方
-            - 想只更新补丁层：改完功能后跑
-                cc-switch-patches/scripts/repack.ps1 -EditedRepo <本目录> -Version $v
-
-          验证状态（构建时）：
-            - 组装 121/121 文件全部命中，零冲突
-            - 功能断言 44/44 通过
-          "@
-          [IO.File]::WriteAllText("$tree/BUILD-INFO.txt", $info, (New-Object Text.UTF8Encoding($false)))
-
-          # 组装产物里没有 .git（apply.ps1 从官方 clone 拷的是工作区）。
-          # 这里用【浅克隆】重建一个：只含当前快照这一个提交，体积从 ~120MB 降到 ~15MB，
-          # 但 commit / 开分支 / 续开发都照常。
-          if (Test-Path $stage) { Remove-Item -LiteralPath $stage -Recurse -Force }
-          New-Item -ItemType Directory -Force -Path $stage | Out-Null
-
-          # 排除构建产物 + 工具目录。
-          # 关键：target / dist 是**嵌套**的（src-tauri/target），只过滤顶层拦不住 ——
-          # 之前就是这样漏了 src-tauri/target，把源码快照从 65MB 撑到 1GB。
-          # 这里改成「按路径段递归排除」：任何一层目录名命中就整棵跳过。
-          $skipNames = @("node_modules", "target", "dist", ".vite", ".git", ".claude", ".reasonix")
-          $stageLen = $stage.Length
-
-          function Copy-Tree($src, $dst) {
-            New-Item -ItemType Directory -Force -Path $dst | Out-Null
-            Get-ChildItem -LiteralPath $src -Force | ForEach-Object {
-              if ($skipNames -contains $_.Name) { return }
-              $target = Join-Path $dst $_.Name
-              if ($_.PSIsContainer) { Copy-Tree $_.FullName $target }
-              else { Copy-Item -LiteralPath $_.FullName -Destination $target -Force }
-            }
-          }
-          Copy-Tree $tree $stage
-
-          Push-Location $stage
-          git init -q -b main
-          git -c user.email="build@cc-switch-patches" -c user.name="cc-switch-patches CI" add -A
-          git -c user.email="build@cc-switch-patches" -c user.name="cc-switch-patches CI" `
-              commit -q -m "CC Switch Magic $v —— 官方 $offTag + 补丁层 $($patchSha.Substring(0,7))"
-          Pop-Location
-          Write-Host "快照文件数: $((Get-ChildItem $stage -Recurse -File -Force | Measure-Object).Count)"
-
-          $zip = "$out/CC-Switch-Magic-$v-Source.zip"
-          if (Test-Path $zip) { Remove-Item -LiteralPath $zip -Force }
-          Compress-Archive -Path (Join-Path $stage "*") -DestinationPath $zip -Force
-          $mb = [math]::Round((Get-Item $zip).Length/1MB,1)
-          Write-Host "源码快照: $(Split-Path $zip -Leaf)  ($mb MB)"
-
-          # 校验和，方便别人核对下载是否完整
-          $sha = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
-          "$sha  CC-Switch-Magic-$v-Source.zip" | Set-Content "$zip.sha256" -Encoding ascii
-          Write-Host "SHA256: $sha"
-
       - name: 上传产物
         uses: actions/upload-artifact@v4
         with:
@@ -308,7 +384,7 @@ jobs:
 
   release:
     name: 发布 Release
-    needs: [plan, build]
+    needs: [plan, prepare, build]
     # 手填 make_release，或推 tag 触发 —— 两种都出 Release
     if: ${{ inputs.make_release || startsWith(github.ref, 'refs/tags/') }}
     runs-on: ubuntu-latest
@@ -322,6 +398,9 @@ jobs:
         with:
           path: all
           merge-multiple: true
+          # 只要「安装包 + 源码快照」这两类对外产物。
+          # assembled-src 是 prepare→build 的内部中转，不该出现在 Release 里。
+          pattern: "{cc-switch-magic-*,source-snapshot}"
 
       - name: 创建 / 更新 Release
         shell: bash
