@@ -186,10 +186,9 @@ jobs:
           $mb = [math]::Round((Get-Item $zip).Length/1MB,1)
           Write-Host "源码快照: $(Split-Path $zip -Leaf)  ($mb MB)"
 
-          # 校验和，方便别人核对下载是否完整
-          $sha = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
-          "$sha  CC-Switch-Magic-$v-Source.zip" | Set-Content "$zip.sha256" -Encoding ascii
-          Write-Host "SHA256: $sha"
+          # 不另发 .sha256 文件：GitHub 会在 Release 附件右侧直接显示 sha256，
+          # 而且它显示的是【GitHub 重新封装后】的哈希 —— 我们自己算的那个跟它对不上，
+          # 发出去只会误导人（实测两者不同）。
 
       # 这一份源码【同时】干两件事：给三台编译用，以及作为对外的源码快照。
       # 以前拆成两份（assembled 无 .git / Source 带 .git），但内容几乎相同 ——
