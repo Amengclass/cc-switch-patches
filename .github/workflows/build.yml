@@ -191,43 +191,11 @@ jobs:
           "$sha  CC-Switch-Magic-$v-Source.zip" | Set-Content "$zip.sha256" -Encoding ascii
           Write-Host "SHA256: $sha"
 
-      # 组装好的源码给三台编译用。排除 target/node_modules 后再传，
-      # 否则会把几 GB 的构建产物也塞进 artifact。
-      - name: ④ 上传源码（供各平台编译）
-        shell: pwsh
-        run: |
-          $tree = "${{ github.workspace }}/build"
-          $pack = Join-Path $env:RUNNER_TEMP "srcpack"
-          if (Test-Path $pack) { Remove-Item -LiteralPath $pack -Recurse -Force }
-          New-Item -ItemType Directory -Force -Path $pack | Out-Null
-
-          $skipNames = @("node_modules", "target", "dist", ".vite", ".git", ".claude", ".reasonix")
-          function Copy-Tree($src, $dst) {
-            New-Item -ItemType Directory -Force -Path $dst | Out-Null
-            Get-ChildItem -LiteralPath $src -Force | ForEach-Object {
-              if ($skipNames -contains $_.Name) { return }
-              $t = Join-Path $dst $_.Name
-              if ($_.PSIsContainer) { Copy-Tree $_.FullName $t }
-              else { Copy-Item -LiteralPath $_.FullName -Destination $t -Force }
-            }
-          }
-          Copy-Tree $tree $pack
-          Write-Host "待上传文件数: $((Get-ChildItem $pack -Recurse -File -Force | Measure-Object).Count)"
-
-          $zip = Join-Path $env:RUNNER_TEMP "assembled-src.zip"
-          if (Test-Path $zip) { Remove-Item -LiteralPath $zip -Force }
-          Compress-Archive -Path (Join-Path $pack "*") -DestinationPath $zip -Force
-          Write-Host "assembled-src.zip: $([math]::Round((Get-Item $zip).Length/1MB,1)) MB"
-
-      - name: 上传组装结果
-        uses: actions/upload-artifact@v4
-        with:
-          name: cc-switch-magic-assembled
-          path: ${{ runner.temp }}/assembled-src.zip
-          if-no-files-found: error
-          retention-days: 3
-
-      - name: 上传源码快照（对外产物）
+      # 这一份源码【同时】干两件事：给三台编译用，以及作为对外的源码快照。
+      # 以前拆成两份（assembled 无 .git / Source 带 .git），但内容几乎相同 ——
+      # 实测 1308 vs 2760 文件，差的就是 .git 那 1452 个对象，压缩后体积还一样。
+      # 合成一份：build 那三台多下 31MB（在 20 分钟编译面前可忽略），换来少一次打包。
+      - name: ④ 上传源码（供编译 + 对外发布）
         uses: actions/upload-artifact@v4
         with:
           name: cc-switch-magic-Source
@@ -274,18 +242,25 @@ jobs:
       - name: ① 取回组装好的源码
         uses: actions/download-artifact@v4
         with:
-          name: cc-switch-magic-assembled
+          name: cc-switch-magic-Source
           path: ${{ runner.temp }}/src
 
       - name: ② 解压到 build/
         shell: pwsh
         run: |
-          $zip = "${{ runner.temp }}/src/assembled-src.zip"
+          $v = "${{ needs.plan.outputs.version }}"
+          $zip = "${{ runner.temp }}/src/CC-Switch-Magic-$v-Source.zip"
+          if (-not (Test-Path $zip)) {
+            # 兜底：版本号解析异常时，按名字找一下
+            $zip = (Get-ChildItem "${{ runner.temp }}/src" -Filter "*-Source.zip" | Select-Object -First 1).FullName
+          }
+          Write-Host "解压: $zip"
           $dst = "${{ github.workspace }}/build"
           New-Item -ItemType Directory -Force -Path $dst | Out-Null
           Expand-Archive -LiteralPath $zip -DestinationPath $dst -Force
-          Write-Host "解压文件数: $((Get-ChildItem $dst -Recurse -File -Force | Measure-Object).Count)"
+          Write-Host "解压文件数: $((Get-ChildItem $dst -Recurse -File -Force -ErrorAction SilentlyContinue | Measure-Object).Count)"
           Write-Host "工具链文件: $(Test-Path "$dst/rust-toolchain.toml")"
+          Write-Host "Cargo.toml: $(Test-Path "$dst/src-tauri/Cargo.toml")"
 
       # 缓存 Rust 编译产物（关键优化）：必须放在源码就位之后，
       # 因为 target 目录要先存在，rust-cache 才能把缓存恢复进去。
