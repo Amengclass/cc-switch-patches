@@ -1,13 +1,13 @@
 diff --git a/src-tauri/src/database/dao/mcp.rs b/src-tauri/src/database/dao/mcp.rs
-index ad50a89..fef0215 100644
+index ddddfa92..7f813637 100644
 --- a/src-tauri/src/database/dao/mcp.rs
 +++ b/src-tauri/src/database/dao/mcp.rs
 @@ -9,7 +9,7 @@ use indexmap::IndexMap;
  use rusqlite::{params, OptionalExtension, Row};
  
  const MCP_SERVER_SELECT: &str =
--    "SELECT id, name, server_config, description, homepage, docs, tags, enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild, enabled_opencode, enabled_hermes FROM mcp_servers";
-+    "SELECT id, name, server_config, description, homepage, docs, tags, enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild, enabled_opencode, enabled_openclaw, enabled_hermes FROM mcp_servers";
+-    "SELECT id, name, server_config, description, homepage, docs, tags, enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild, enabled_opencode, enabled_hermes, enabled_mcode FROM mcp_servers";
++    "SELECT id, name, server_config, description, homepage, docs, tags, enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild, enabled_opencode, enabled_openclaw, enabled_hermes, enabled_mcode FROM mcp_servers";
  
  fn row_to_mcp_server(row: &Row<'_>) -> rusqlite::Result<(String, McpServer)> {
      let id: String = row.get(0)?;
@@ -21,35 +21,38 @@ index ad50a89..fef0215 100644
  
      let server = serde_json::from_str(&server_config_str).unwrap_or_default();
      let tags = serde_json::from_str(&tags_str).unwrap_or_default();
-@@ -41,6 +42,7 @@ fn row_to_mcp_server(row: &Row<'_>) -> rusqlite::Result<(String, McpServer)> {
+@@ -41,8 +42,9 @@ fn row_to_mcp_server(row: &Row<'_>) -> rusqlite::Result<(String, McpServer)> {
                  gemini: enabled_gemini,
                  grokbuild: enabled_grokbuild,
                  opencode: enabled_opencode,
 +                openclaw: enabled_openclaw,
                  hermes: enabled_hermes,
+-                mcode: row.get(13)?,
++                mcode: row.get(14)?,
              },
              description,
-@@ -120,8 +122,8 @@ impl Database {
+             homepage,
+@@ -122,8 +124,8 @@ impl Database {
          conn.execute(
              "INSERT OR REPLACE INTO mcp_servers (
                  id, name, server_config, description, homepage, docs, tags,
--                enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild, enabled_opencode, enabled_hermes
--            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
-+                enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild, enabled_opencode, enabled_openclaw, enabled_hermes
-+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+-                enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild, enabled_opencode, enabled_hermes, enabled_mcode
+-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
++                enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild, enabled_opencode, enabled_openclaw, enabled_hermes, enabled_mcode
++            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
              params![
                  server.id,
                  server.name,
-@@ -138,6 +140,7 @@ impl Database {
+@@ -140,6 +142,7 @@ impl Database {
                  server.apps.gemini,
                  server.apps.grokbuild,
                  server.apps.opencode,
 +                server.apps.openclaw,
                  server.apps.hermes,
+                 server.apps.mcode,
              ],
-         )
 diff --git a/src-tauri/src/database/dao/mod.rs b/src-tauri/src/database/dao/mod.rs
-index bb78f30..95bcde8 100644
+index bb78f307..95bcde86 100644
 --- a/src-tauri/src/database/dao/mod.rs
 +++ b/src-tauri/src/database/dao/mod.rs
 @@ -9,6 +9,8 @@ pub mod prompts;
@@ -62,7 +65,7 @@ index bb78f30..95bcde8 100644
  pub mod skills;
  pub mod stream_check;
 diff --git a/src-tauri/src/database/dao/proxy.rs b/src-tauri/src/database/dao/proxy.rs
-index b2f37c1..dbfffa2 100644
+index b2f37c12..dbfffa2e 100644
 --- a/src-tauri/src/database/dao/proxy.rs
 +++ b/src-tauri/src/database/dao/proxy.rs
 @@ -602,6 +602,20 @@ impl Database {
@@ -87,19 +90,19 @@ index b2f37c1..dbfffa2 100644
  
          // 先查询当前状态
 diff --git a/src-tauri/src/database/dao/skills.rs b/src-tauri/src/database/dao/skills.rs
-index be9e9d4..1148d72 100644
+index 9c14f21f..44a6a465 100644
 --- a/src-tauri/src/database/dao/skills.rs
 +++ b/src-tauri/src/database/dao/skills.rs
 @@ -23,7 +23,7 @@ impl Database {
              .prepare(
                  "SELECT id, name, description, directory, repo_owner, repo_name, repo_branch,
                          readme_url, enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild,
--                        enabled_opencode, enabled_hermes, installed_at, content_hash, updated_at
-+                        enabled_opencode, enabled_openclaw, enabled_hermes, installed_at, content_hash, updated_at
+-                        enabled_opencode, enabled_hermes, installed_at, content_hash, updated_at, enabled_mcode
++                        enabled_opencode, enabled_openclaw, enabled_hermes, installed_at, content_hash, updated_at, enabled_mcode
                   FROM skills ORDER BY name ASC",
              )
              .map_err(|e| AppError::Database(e.to_string()))?;
-@@ -45,12 +45,13 @@ impl Database {
+@@ -45,13 +45,14 @@ impl Database {
                          gemini: row.get(10)?,
                          grokbuild: row.get(11)?,
                          opencode: row.get(12)?,
@@ -107,6 +110,8 @@ index be9e9d4..1148d72 100644
 +                        openclaw: row.get(13)?,
 +                        hermes: row.get(14)?,
                          pi: false,
+-                        mcode: row.get(17)?,
++                        mcode: row.get(18)?,
                      },
 -                    installed_at: row.get(14)?,
 -                    content_hash: row.get(15)?,
@@ -117,16 +122,16 @@ index be9e9d4..1148d72 100644
                  })
              })
              .map_err(|e| AppError::Database(e.to_string()))?;
-@@ -70,7 +71,7 @@ impl Database {
+@@ -71,7 +72,7 @@ impl Database {
              .prepare(
                  "SELECT id, name, description, directory, repo_owner, repo_name, repo_branch,
                          readme_url, enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild,
--                        enabled_opencode, enabled_hermes, installed_at, content_hash, updated_at
-+                        enabled_opencode, enabled_openclaw, enabled_hermes, installed_at, content_hash, updated_at
+-                        enabled_opencode, enabled_hermes, installed_at, content_hash, updated_at, enabled_mcode
++                        enabled_opencode, enabled_openclaw, enabled_hermes, installed_at, content_hash, updated_at, enabled_mcode
                   FROM skills WHERE id = ?1",
              )
              .map_err(|e| AppError::Database(e.to_string()))?;
-@@ -91,12 +92,13 @@ impl Database {
+@@ -92,13 +93,14 @@ impl Database {
                      gemini: row.get(10)?,
                      grokbuild: row.get(11)?,
                      opencode: row.get(12)?,
@@ -134,6 +139,8 @@ index be9e9d4..1148d72 100644
 +                    openclaw: row.get(13)?,
 +                    hermes: row.get(14)?,
                      pi: false,
+-                    mcode: row.get(17)?,
++                    mcode: row.get(18)?,
                  },
 -                installed_at: row.get(14)?,
 -                content_hash: row.get(15)?,
@@ -144,19 +151,19 @@ index be9e9d4..1148d72 100644
              })
          });
  
-@@ -113,9 +115,9 @@ impl Database {
+@@ -115,9 +117,9 @@ impl Database {
          conn.execute(
              "INSERT OR REPLACE INTO skills
               (id, name, description, directory, repo_owner, repo_name, repo_branch,
 -              readme_url, enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild, enabled_opencode, enabled_hermes,
 +              readme_url, enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild, enabled_opencode, enabled_openclaw, enabled_hermes,
-               installed_at, content_hash, updated_at)
--             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
-+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
+               installed_at, content_hash, updated_at, enabled_mcode)
+-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
++             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
              params![
                  skill.id,
                  skill.name,
-@@ -130,6 +132,7 @@ impl Database {
+@@ -132,6 +134,7 @@ impl Database {
                  skill.apps.gemini,
                  skill.apps.grokbuild,
                  skill.apps.opencode,
@@ -164,31 +171,22 @@ index be9e9d4..1148d72 100644
                  skill.apps.hermes,
                  skill.installed_at,
                  skill.content_hash,
-@@ -202,8 +205,8 @@ impl Database {
+@@ -205,8 +208,8 @@ impl Database {
          let conn = lock_conn!(self.conn);
          let affected = conn
              .execute(
--                "UPDATE skills SET enabled_claude = ?1, enabled_codex = ?2, enabled_gemini = ?3, enabled_grokbuild = ?4, enabled_opencode = ?5, enabled_hermes = ?6 WHERE id = ?7",
--                params![apps.claude, apps.codex, apps.gemini, apps.grokbuild, apps.opencode, apps.hermes, id],
-+                "UPDATE skills SET enabled_claude = ?1, enabled_codex = ?2, enabled_gemini = ?3, enabled_grokbuild = ?4, enabled_opencode = ?5, enabled_openclaw = ?6, enabled_hermes = ?7 WHERE id = ?8",
-+                params![apps.claude, apps.codex, apps.gemini, apps.grokbuild, apps.opencode, apps.openclaw, apps.hermes, id],
+-                "UPDATE skills SET enabled_claude = ?1, enabled_codex = ?2, enabled_gemini = ?3, enabled_grokbuild = ?4, enabled_opencode = ?5, enabled_hermes = ?6, enabled_mcode = ?8 WHERE id = ?7",
+-                params![apps.claude, apps.codex, apps.gemini, apps.grokbuild, apps.opencode, apps.hermes, id, apps.mcode],
++                "UPDATE skills SET enabled_claude = ?1, enabled_codex = ?2, enabled_gemini = ?3, enabled_grokbuild = ?4, enabled_opencode = ?5, enabled_openclaw = ?6, enabled_hermes = ?7, enabled_mcode = ?8 WHERE id = ?9",
++                params![apps.claude, apps.codex, apps.gemini, apps.grokbuild, apps.opencode, apps.openclaw, apps.hermes, apps.mcode, id],
              )
              .map_err(|e| AppError::Database(e.to_string()))?;
          Ok(affected > 0)
 diff --git a/src-tauri/src/database/mod.rs b/src-tauri/src/database/mod.rs
-index cdd947e..2bde014 100644
+index a6407a33..977799f7 100644
 --- a/src-tauri/src/database/mod.rs
 +++ b/src-tauri/src/database/mod.rs
-@@ -51,6 +51,8 @@ use std::sync::Mutex;
- 
- // DAO 方法通过 impl Database 提供，无需额外导出
- 
-+/// 当前 Schema 版本号
-+/// 每次修改表结构时递增，并在 schema.rs 中添加相应的迁移逻辑
- /// 当前 Schema 版本号
- /// 每次修改表结构时递增，并在 schema.rs 中添加相应的迁移逻辑
- pub(crate) const SCHEMA_VERSION: i32 = 18;
-@@ -179,6 +181,7 @@ impl Database {
+@@ -179,6 +179,7 @@ impl Database {
          }
          let conn = Connection::open(db_path).map_err(|e| AppError::Database(e.to_string()))?;
          let version = Self::get_user_version(&conn)?;
@@ -197,10 +195,10 @@ index cdd947e..2bde014 100644
      }
  
 diff --git a/src-tauri/src/database/schema.rs b/src-tauri/src/database/schema.rs
-index 0af5d99..757fc79 100644
+index 9c3ecfaa..16124102 100644
 --- a/src-tauri/src/database/schema.rs
 +++ b/src-tauri/src/database/schema.rs
-@@ -430,6 +430,10 @@ impl Database {
+@@ -432,6 +432,10 @@ impl Database {
              [],
          );
  
@@ -212,7 +210,7 @@ index 0af5d99..757fc79 100644
      }
  
 diff --git a/src-tauri/src/database/tests.rs b/src-tauri/src/database/tests.rs
-index 26ff7d9..4088720 100644
+index 5da2e4a7..9cfe8601 100644
 --- a/src-tauri/src/database/tests.rs
 +++ b/src-tauri/src/database/tests.rs
 @@ -205,7 +205,9 @@ fn schema_migration_sets_user_version_when_missing() {

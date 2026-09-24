@@ -1,5 +1,22 @@
 {
   "settings": {
+    "advanced": {
+      "proxy": {
+        "enableFeature": "Show App Takeover Toggles on Main Page",
+        "enableFeatureDescription": "When enabled, per-app takeover toggles (send that app's requests through the local route) will appear at the top of the main page; a flowing border on a toggle means the routing master switch is on",
+        "marqueeHint": "When the app switches at the top of the main page show a flowing border, it means the local proxy service (routing master switch) is running"
+      },
+      "quotaDisplay": {
+        "title": "Quota Display",
+        "description": "Control how quota usage is displayed on provider cards",
+        "expanded": "Expanded Mode",
+        "expandedDescription": "When enabled: quota usage displays in a separate panel below the card (with total/used/remaining/reset time); when disabled: quota is embedded inline (e.g. '5h: 5%')"
+      }
+    },
+    "appVisibility": {
+      "showUpdateBadge": "Show Update Indicator",
+      "showUpdateBadgeDescription": "Show a green icon in the header when a new version is available. Background checks still run when disabled; you can check manually on the About page"
+    },
     "section": {
       "remote": "SSH Remote Settings"
     },
@@ -13,19 +30,6 @@
         "title": "Auto-read current config from SSH remote",
         "description": "When enabled, the default card shows the remote machine's current app config in real time; when off, it no longer actively pulls the latest config so the UI refreshes faster.",
         "note": "Note: this setting only applies to Claude, Codex, Gemini, Grok Build; OpenCode, OpenClaw, Hermes always follow the current app."
-      }
-    },
-    "advanced": {
-      "proxy": {
-        "enableFeature": "Show App Takeover Toggles on Main Page",
-        "enableFeatureDescription": "When enabled, per-app takeover toggles (send that app's requests through the local route) will appear at the top of the main page; a flowing border on a toggle means the routing master switch is on",
-        "marqueeHint": "When the app switches at the top of the main page show a flowing border, it means the local proxy service (routing master switch) is running"
-      },
-      "quotaDisplay": {
-        "title": "Quota Display",
-        "description": "Control how quota usage is displayed on provider cards",
-        "expanded": "Expanded Mode",
-        "expandedDescription": "When enabled: quota usage displays in a separate panel below the card (with total/used/remaining/reset time); when disabled: quota is embedded inline (e.g. '5h: 5%')"
       }
     },
     "floatingWindow": "Floating widget",
@@ -46,13 +50,25 @@
     "floatingOpacityDesc": "Adjust the opacity of the floating window background and border (20% ~ 100%)",
     "floatingAutoCollapseTitle": "Edge auto-collapse",
     "floatingAutoCollapseDesc": "Collapse to a color strip when dropped near screen edge; auto-expand on mouse hover",
-    "appVisibility": {
-      "showUpdateBadge": "Show Update Indicator",
-      "showUpdateBadgeDescription": "Show a green icon in the header when a new version is available. Background checks still run when disabled; you can check manually on the About page"
-    },
     "modifiedGithub": "Modified GitHub",
     "modifiedAppTitle": "CC Switch Modified",
     "modifiedVersionSuffix": "Modified"
+  },
+  "proxy": {
+    "takeover": {
+      "hint": "Affects local apps only. Select local apps to route; once enabled, requests from that app will go through local routing. Remote takeover is configured per-host in the target selector or host form.",
+      "enabled": "{{app}} takeover enabled",
+      "disabled": "{{app}} takeover disabled",
+      "failed": "Failed to toggle takeover: {{detail}}",
+      "tooltip": {
+        "active": "{{appLabel}} taken over - {{address}}:{{port}}\nSwitch provider for hot switching",
+        "broken": "{{appLabel}} taken over, but proxy service is not running",
+        "inactive": "Take over {{appLabel}}'s requests through the local proxy"
+      }
+    }
+  },
+  "proxyConfig": {
+    "appTakeover": "Local App Takeover Enabled"
   },
   "remote": {
     "readingConfigPrefix": "Reading ",
@@ -215,21 +231,5 @@
     "pinnedAria": "Pinned",
     "menuSettings": "Settings",
     "menuHide": "Hide"
-  },
-  "proxy": {
-    "takeover": {
-      "hint": "Affects local apps only. Select local apps to route; once enabled, requests from that app will go through local routing. Remote takeover is configured per-host in the target selector or host form.",
-      "enabled": "{{app}} takeover enabled",
-      "disabled": "{{app}} takeover disabled",
-      "failed": "Failed to toggle takeover: {{detail}}",
-      "tooltip": {
-        "active": "{{appLabel}} taken over - {{address}}:{{port}}\nSwitch provider for hot switching",
-        "broken": "{{appLabel}} taken over, but proxy service is not running",
-        "inactive": "Take over {{appLabel}}'s requests through the local proxy"
-      }
-    }
-  },
-  "proxyConfig": {
-    "appTakeover": "Local App Takeover Enabled"
   }
 }

@@ -1,5 +1,5 @@
 diff --git a/tests/components/ProviderCard.codexAccount.test.tsx b/tests/components/ProviderCard.codexAccount.test.tsx
-index 71fdda8..736e34f 100644
+index 32211f61..c9484ab1 100644
 --- a/tests/components/ProviderCard.codexAccount.test.tsx
 +++ b/tests/components/ProviderCard.codexAccount.test.tsx
 @@ -48,6 +48,7 @@ vi.mock("@/lib/query/failover", () => ({
@@ -11,7 +11,7 @@ index 71fdda8..736e34f 100644
  
  const managedProvider = (
 diff --git a/tests/components/ProviderList.test.tsx b/tests/components/ProviderList.test.tsx
-index 1369074..5af65e7 100644
+index 13690747..5af65e70 100644
 --- a/tests/components/ProviderList.test.tsx
 +++ b/tests/components/ProviderList.test.tsx
 @@ -262,9 +262,12 @@ describe("ProviderList Component", () => {
@@ -28,7 +28,7 @@ index 1369074..5af65e7 100644
    });
  
 diff --git a/tests/components/SkillsPageInstall.test.tsx b/tests/components/SkillsPageInstall.test.tsx
-index 2ea0501..dd452ab 100644
+index 2ea05017..dd452ab6 100644
 --- a/tests/components/SkillsPageInstall.test.tsx
 +++ b/tests/components/SkillsPageInstall.test.tsx
 @@ -73,6 +73,9 @@ vi.mock("@/hooks/useSkills", () => ({
@@ -42,7 +42,7 @@ index 2ea0501..dd452ab 100644
      data: skillReposMock,
      refetch: vi.fn(),
 diff --git a/tests/components/UnifiedSkillsPanel.test.tsx b/tests/components/UnifiedSkillsPanel.test.tsx
-index 2fcb24a..b5a6626 100644
+index 2fcb24ad..b5a66268 100644
 --- a/tests/components/UnifiedSkillsPanel.test.tsx
 +++ b/tests/components/UnifiedSkillsPanel.test.tsx
 @@ -14,6 +14,7 @@ import type {
@@ -171,7 +171,7 @@ index 2fcb24a..b5a6626 100644
    });
  });
 diff --git a/tests/hooks/useDragSort.test.tsx b/tests/hooks/useDragSort.test.tsx
-index e3bdf68..b44a869 100644
+index e3bdf68f..b44a869e 100644
 --- a/tests/hooks/useDragSort.test.tsx
 +++ b/tests/hooks/useDragSort.test.tsx
 @@ -86,10 +86,11 @@ describe("useDragSort", () => {
@@ -205,7 +205,7 @@ index e3bdf68..b44a869 100644
      expect(toastSuccessMock).toHaveBeenCalledTimes(1);
      expect(toastErrorMock).not.toHaveBeenCalled();
 diff --git a/tests/hooks/useMcpBulkToggle.test.tsx b/tests/hooks/useMcpBulkToggle.test.tsx
-index 2529c14..2dc4faf 100644
+index 2529c142..2dc4fafb 100644
 --- a/tests/hooks/useMcpBulkToggle.test.tsx
 +++ b/tests/hooks/useMcpBulkToggle.test.tsx
 @@ -15,6 +15,8 @@ const toggleAppMock = vi.hoisted(() => vi.fn());
@@ -306,7 +306,7 @@ index 2529c14..2dc4faf 100644
  
    it("runs bulk writes serially and invalidates the list once", async () => {
 diff --git a/tests/hooks/useSkillsBulkToggle.test.tsx b/tests/hooks/useSkillsBulkToggle.test.tsx
-index 0b45169..a3947bd 100644
+index 0b45169d..a3947bd1 100644
 --- a/tests/hooks/useSkillsBulkToggle.test.tsx
 +++ b/tests/hooks/useSkillsBulkToggle.test.tsx
 @@ -17,6 +17,8 @@ const restoreBackupMock = vi.hoisted(() => vi.fn());
@@ -407,7 +407,7 @@ index 0b45169..a3947bd 100644
  
    it("stays pending until the refreshed skill list is available", async () => {
 diff --git a/tests/integration/App.test.tsx b/tests/integration/App.test.tsx
-index c9902a9..4281278 100644
+index b111b41d..502cb0a8 100644
 --- a/tests/integration/App.test.tsx
 +++ b/tests/integration/App.test.tsx
 @@ -20,6 +20,10 @@ const skillsPanelMocks = vi.hoisted(() => ({

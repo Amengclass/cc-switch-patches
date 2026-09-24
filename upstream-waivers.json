@@ -1,17 +1,71 @@
 {
-  "$comment": "check-upstream-sync.mjs 的显式豁免表。每条必须写明『官方这一行被等价改写成什么』—— 不允许静默放行。只在『我们重构了官方同一处代码、语义等价』时使用。",
-  "src-tauri/src/session_manager/providers/claude.rs": [
+  "$comment": "check-upstream-sync.mjs 的显式豁免表。每条必须写明『官方这一行被等价改写成什么』—— 不允许静默放行。只在『我们扩展/重构了官方同一处、语义等价或更宽』时使用。每次升级后跑门禁，凡报出来的都要逐条核实并补进这里（或修代码）。",
+  "src/App.tsx": [
     {
-      "line": ".map(|name| name.starts_with(\"agent-\") || name == \"journal.jsonl\")",
-      "why": "等价改写：我们把 is_agent_session(&Path) 重构成 is_agent_session_str(&str)（为了本机/远端共用解析逻辑），官方这次新增的 journal.jsonl 条件已原样保留在新函数体内：name.starts_with(\"agent-\") || name == \"journal.jsonl\""
+      "line": "import { useEffect, useLayoutEffect, useMemo, useRef, useState } from \"react\";",
+      "why": "等价改写（超集 + 换行格式）：官方这版给 react import 加了 useLayoutEffect；我们这侧另外用了 useCallback，且因为列表变长被 prettier 拆成多行。合并后为 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from \"react\";（多行写法），是官方那行的超集。"
+    }
+  ],
+  "src/components/providers/ProviderCard.tsx": [
+    {
+      "line": "const isAdditiveMode =",
+      "why": "等价改写（超集）：官方 v3.20.4 把 isAdditiveMode 从『opencode(!omo) || pi』扩到再加 mcode；我们这侧早已替换成通用判定 isAdditiveAppId(appId) && (appId !== \"opencode\" || !isAnyOmo)，它遍历 ADDITIVE_APP_IDS = [mcode, opencode, openclaw, hermes, pi]，是官方写法的超集（额外覆盖 openclaw/hermes —— 那是我们的功能）。已确认 ADDITIVE_APP_IDS 合并后含 mcode。"
     },
     {
-      "line": "assert!(is_agent_session(&path));",
-      "why": "等价改写：官方新增测试随函数改名改为 assert!(is_agent_session_str(&path.to_string_lossy()))"
+      "line": "(appId === \"opencode\" && !isAnyOmo) || appId === \"pi\" || appId === \"mcode\";",
+      "why": "同上：这一行被上面的通用判定取代。"
+    }
+  ],
+  "src/components/providers/ProviderList.tsx": [
+    {
+      "line": "[appId, opencodeLiveIds, openclawLiveIds, hermesLiveIds, providers],",
+      "why": "等价改写（超集）：官方这版给 useCallback 依赖数组加了 providers（mcode 的 isProviderInConfig 要读它）；我们的依赖数组在官方基础上另有 remoteTargetId / remoteLiveIds / piLiveIds，并同样包含 providers。"
+    }
+  ],
+  "src-tauri/src/database/dao/mcp.rs": [
+    {
+      "line": "\"SELECT id, name, server_config, description, homepage, docs, tags, enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild, enabled_opencode, enabled_hermes, enabled_mcode FROM mcp_servers\";",
+      "why": "等价改写（超集）：官方在末尾加 enabled_mcode；我们另加了 enabled_openclaw，最终列序为 ...enabled_opencode, enabled_openclaw, enabled_hermes, enabled_mcode。"
     },
     {
-      "line": "assert!(!is_agent_session(&path));",
-      "why": "等价改写：同上（取反断言）"
+      "line": "mcode: row.get(13)?,",
+      "why": "等价改写（重新编号）：我们的 enabled_openclaw 占 12、hermes 顺延到 13，故 mcode 落到 14。SELECT 列序与全部 row.get 下标已逐个核对一致。"
+    },
+    {
+      "line": "enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild, enabled_opencode, enabled_hermes, enabled_mcode",
+      "why": "同 SELECT：INSERT 列清单同样多一个 enabled_openclaw。"
+    },
+    {
+      "line": ") VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)\",",
+      "why": "等价改写：列数 14→15，占位符随之扩到 ?1..?15，与 params 项数核对一致。"
+    }
+  ],
+  "src-tauri/src/database/dao/skills.rs": [
+    {
+      "line": "enabled_opencode, enabled_hermes, installed_at, content_hash, updated_at, enabled_mcode",
+      "why": "等价改写（超集）：官方在末尾加 enabled_mcode；我们另加 enabled_openclaw，最终 ...enabled_opencode, enabled_openclaw, enabled_hermes, installed_at, content_hash, updated_at, enabled_mcode。"
+    },
+    {
+      "line": "mcode: row.get(17)?,",
+      "why": "等价改写（重新编号）：openclaw 占 13、hermes 14、installed_at 15、content_hash 16、updated_at 17，故 mcode 落到 18。全量列表与单条查询两处都已核对。"
+    },
+    {
+      "line": "VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)\",",
+      "why": "等价改写：列数 18→19，占位符扩到 ?1..?19。"
+    },
+    {
+      "line": "\"UPDATE skills SET enabled_claude = ?1, enabled_codex = ?2, enabled_gemini = ?3, enabled_grokbuild = ?4, enabled_opencode = ?5, enabled_hermes = ?6, enabled_mcode = ?8 WHERE id = ?7\",",
+      "why": "等价改写（编号顺延）：我们多一列 enabled_openclaw，故 enabled_hermes = ?7、enabled_mcode = ?8、id = ?9。官方把 mcode 编成 ?8 / id ?7 是它自己没有 openclaw 时的排法。"
+    },
+    {
+      "line": "params![apps.claude, apps.codex, apps.gemini, apps.grokbuild, apps.opencode, apps.hermes, id, apps.mcode],",
+      "why": "同上：我们的 params 顺序为 [claude, codex, gemini, grokbuild, opencode, openclaw, hermes, mcode, id]，与 UPDATE 的 ?1..?9 一一对应。"
+    }
+  ],
+  "src-tauri/src/services/mcp.rs": [
+    {
+      "line": "let results: [(&str, Result<usize, AppError>); 7] = [",
+      "why": "等价改写：官方这个数组是 7 项（含新加的 mcode）；我们另加了 openclaw 一项，故类型标注为 8，数组字面量同步为 8 项。"
     }
   ]
 }

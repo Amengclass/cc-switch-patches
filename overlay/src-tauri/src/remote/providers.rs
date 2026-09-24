@@ -20,7 +20,10 @@ use crate::provider::{Provider, ProviderMeta};
 
 /// 是否 additive 模式 app（live 即完整供应商集合）。
 pub fn is_additive_app(app: &str) -> bool {
-    matches!(app, "opencode" | "openclaw" | "hermes" | "pi")
+    matches!(
+        app,
+        "opencode" | "openclaw" | "hermes" | "pi" | "mcode"
+    )
 }
 
 /// SSOT 文件路径。
@@ -333,6 +336,52 @@ async fn parse_remote_live_providers<F: FileOps>(
                 // Validate they are objects (consistent with pi_config::validate_provider_node).
                 if !config_value.is_object() {
                     log::warn!("远端 Pi provider '{id}' 不是对象，跳过");
+                    continue;
+                }
+                let display_name = config_value
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .filter(|n| !n.trim().is_empty())
+                    .unwrap_or(id)
+                    .to_string();
+                let mut p = Provider::with_id(id.clone(), display_name, config_value.clone(), None);
+                p.meta = Some(ProviderMeta {
+                    live_config_managed: Some(true),
+                    ..Default::default()
+                });
+                out.push(p);
+            }
+        }
+        "mcode" => {
+            // MCode 的 live 是 YAML（~/.minimax/config.yaml），供应商在 custom_provider 映射下。
+            let path = format!("{root}/.minimax/config.yaml");
+            let Some(text) = fs.read_text_optional(&path).await? else {
+                return Ok(out);
+            };
+            if text.trim().is_empty() {
+                return Ok(out);
+            }
+            let Ok(document) = serde_yaml::from_str::<serde_yaml::Value>(&text) else {
+                log::warn!("解析远端 MCode config.yaml 失败，跳过");
+                return Ok(out);
+            };
+            let Some(custom) = document.get("custom_provider") else {
+                return Ok(out);
+            };
+            let Ok(json) = crate::hermes_config::yaml_to_json(custom) else {
+                log::warn!("转换远端 MCode custom_provider 失败，跳过");
+                return Ok(out);
+            };
+            let Some(providers_obj) = json.as_object() else {
+                return Ok(out);
+            };
+            for (id, config_value) in providers_obj {
+                if id.trim().is_empty() {
+                    continue;
+                }
+                // 对齐官方 get_providers：kind 缺失或 "custom" 才算 CC Switch 管理的供应商
+                let kind = config_value.get("kind").and_then(Value::as_str);
+                if !matches!(kind, None | Some("custom")) {
                     continue;
                 }
                 let display_name = config_value
@@ -841,6 +890,18 @@ pub async fn apply_remote_provider_to_live(
             )
             .await
         }
+        "mcode" => {
+            crate::remote::mcode::apply_mcode_provider_settings(
+                session,
+                container,
+                home,
+                host_name,
+                &provider.name,
+                &provider.settings_config,
+                &provider.id,
+            )
+            .await
+        }
         other => Err(format!("远程切换暂不支持应用: {other}")),
     }?;
     // 隧道未建立而降级直连时，把原因追加进 warnings 让前端以醒目样式提示用户
@@ -912,6 +973,31 @@ pub async fn read_remote_live_provider_ids<F: FileOps>(
                     .map(|p| p.keys().cloned().collect())
                     .unwrap_or_default(),
                 None => Vec::new(),
+            }
+        }
+        "mcode" => {
+            let path = format!("{root}/.minimax/config.yaml");
+            match fs.read_text_optional(&path).await? {
+                Some(text) if !text.trim().is_empty() => {
+                    serde_yaml::from_str::<serde_yaml::Value>(&text)
+                        .ok()
+                        .and_then(|doc| doc.get("custom_provider").cloned())
+                        .and_then(|custom| crate::hermes_config::yaml_to_json(&custom).ok())
+                        .and_then(|json| json.as_object().cloned())
+                        .map(|obj| {
+                            obj.into_iter()
+                                .filter(|(_, v)| {
+                                    matches!(
+                                        v.get("kind").and_then(Value::as_str),
+                                        None | Some("custom")
+                                    )
+                                })
+                                .map(|(k, _)| k)
+                                .collect()
+                        })
+                        .unwrap_or_default()
+                }
+                _ => Vec::new(),
             }
         }
         _ => Vec::new(),

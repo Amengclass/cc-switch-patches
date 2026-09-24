@@ -556,6 +556,7 @@ fn remote_app_config_path(app: &str, home: &str) -> Option<String> {
         "openclaw" => format!("{home}/.openclaw/openclaw.json"),
         "hermes" => format!("{home}/.hermes/config.yaml"),
         "pi" => format!("{home}/.pi/agent/models.json"),
+        "mcode" => format!("{home}/.minimax/config.yaml"),
         _ => return None,
     };
     Some(path)
@@ -3556,6 +3557,9 @@ fn cli_binary_for_app(app: &str) -> Option<&'static str> {
         "openclaw" => Some("openclaw"),
         "hermes" => Some("hermes"),
         "pi" => Some("pi"),
+        // MiniMax Code 的终端版 CLI 就叫 mcode（官方 release notes 原文），
+        // 与桌面版共用 ~/.minimax 数据目录。
+        "mcode" => Some("mcode"),
         _ => None,
     }
 }

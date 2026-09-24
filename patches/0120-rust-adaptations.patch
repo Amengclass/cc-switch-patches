@@ -1,8 +1,8 @@
 diff --git a/src-tauri/src/app_config.rs b/src-tauri/src/app_config.rs
-index 338464a..2cdeaff 100644
+index 21204120..c9850d35 100644
 --- a/src-tauri/src/app_config.rs
 +++ b/src-tauri/src/app_config.rs
-@@ -18,6 +18,8 @@ pub struct McpApps {
+@@ -20,6 +20,8 @@ pub struct McpApps {
      #[serde(default)]
      pub opencode: bool,
      #[serde(default)]
@@ -11,27 +11,27 @@ index 338464a..2cdeaff 100644
      pub hermes: bool,
  }
  
-@@ -30,7 +32,7 @@ impl McpApps {
+@@ -32,7 +34,7 @@ impl McpApps {
              AppType::Gemini => self.gemini,
              AppType::GrokBuild => self.grokbuild,
              AppType::OpenCode => self.opencode,
 -            AppType::OpenClaw => false, // OpenClaw doesn't support MCP
 +            AppType::OpenClaw => self.openclaw,
              AppType::Hermes => self.hermes,
+             AppType::Mcode => self.mcode,
              AppType::Pi => false, // Pi core has no native MCP registry.
-             AppType::ClaudeDesktop => false,
-@@ -45,7 +47,7 @@ impl McpApps {
+@@ -48,7 +50,7 @@ impl McpApps {
              AppType::Gemini => self.gemini = enabled,
              AppType::GrokBuild => self.grokbuild = enabled,
              AppType::OpenCode => self.opencode = enabled,
 -            AppType::OpenClaw => {} // OpenClaw doesn't support MCP, ignore
 +            AppType::OpenClaw => self.openclaw = enabled,
              AppType::Hermes => self.hermes = enabled,
+             AppType::Mcode => self.mcode = enabled,
              AppType::Pi => {}            // Pi core has no native MCP registry.
-             AppType::ClaudeDesktop => {} // Claude Desktop 3P provider config doesn't support MCP here
-@@ -70,6 +72,9 @@ impl McpApps {
-         if self.opencode {
-             apps.push(AppType::OpenCode);
+@@ -77,6 +79,9 @@ impl McpApps {
+         if self.mcode {
+             apps.push(AppType::Mcode);
          }
 +        if self.openclaw {
 +            apps.push(AppType::OpenClaw);
@@ -39,15 +39,15 @@ index 338464a..2cdeaff 100644
          if self.hermes {
              apps.push(AppType::Hermes);
          }
-@@ -83,6 +88,7 @@ impl McpApps {
+@@ -90,6 +95,7 @@ impl McpApps {
              && !self.gemini
              && !self.grokbuild
              && !self.opencode
 +            && !self.openclaw
              && !self.hermes
+             && !self.mcode
      }
- }
-@@ -101,6 +107,8 @@ pub struct SkillApps {
+@@ -111,6 +117,8 @@ pub struct SkillApps {
      #[serde(default)]
      pub opencode: bool,
      #[serde(default)]
@@ -56,31 +56,33 @@ index 338464a..2cdeaff 100644
      pub hermes: bool,
      #[serde(default)]
      pub pi: bool,
-@@ -115,9 +123,9 @@ impl SkillApps {
+@@ -125,10 +133,10 @@ impl SkillApps {
              AppType::Gemini => self.gemini,
              AppType::GrokBuild => self.grokbuild,
              AppType::OpenCode => self.opencode,
 +            AppType::OpenClaw => self.openclaw,
              AppType::Hermes => self.hermes,
              AppType::Pi => self.pi,
+             AppType::Mcode => self.mcode,
 -            AppType::OpenClaw => false, // OpenClaw doesn't support Skills
              AppType::ClaudeDesktop => false,
          }
      }
-@@ -130,9 +138,9 @@ impl SkillApps {
+@@ -141,10 +149,10 @@ impl SkillApps {
              AppType::Gemini => self.gemini = enabled,
              AppType::GrokBuild => self.grokbuild = enabled,
              AppType::OpenCode => self.opencode = enabled,
 +            AppType::OpenClaw => self.openclaw = enabled,
              AppType::Hermes => self.hermes = enabled,
              AppType::Pi => self.pi = enabled,
+             AppType::Mcode => self.mcode = enabled,
 -            AppType::OpenClaw => {} // OpenClaw doesn't support Skills, ignore
              AppType::ClaudeDesktop => {} // Claude Desktop 3P profiles don't use CC Switch skill sync
          }
      }
-@@ -155,6 +163,9 @@ impl SkillApps {
-         if self.opencode {
-             apps.push(AppType::OpenCode);
+@@ -170,6 +178,9 @@ impl SkillApps {
+         if self.mcode {
+             apps.push(AppType::Mcode);
          }
 +        if self.openclaw {
 +            apps.push(AppType::OpenClaw);
@@ -88,25 +90,25 @@ index 338464a..2cdeaff 100644
          if self.hermes {
              apps.push(AppType::Hermes);
          }
-@@ -171,6 +182,7 @@ impl SkillApps {
+@@ -186,6 +197,7 @@ impl SkillApps {
              && !self.gemini
              && !self.grokbuild
              && !self.opencode
 +            && !self.openclaw
              && !self.hermes
+             && !self.mcode
              && !self.pi
-     }
-@@ -886,7 +898,7 @@ impl MultiAppConfig {
+@@ -906,7 +918,7 @@ impl MultiAppConfig {
                  AppType::Gemini => &self.mcp.gemini.servers,
                  AppType::GrokBuild => continue,
                  AppType::OpenCode => &self.mcp.opencode.servers,
 -                AppType::OpenClaw => continue, // OpenClaw MCP is still in development, skip
 +                AppType::OpenClaw => continue, // OpenClaw didn't exist in v3.6.x, skip
                  AppType::Hermes => continue,   // Hermes didn't exist in v3.6.x, skip
-                 AppType::Pi => continue,       // Pi didn't exist in v3.6.x, skip
+                 AppType::Pi | AppType::Mcode => continue, // Pi didn't exist in v3.6.x, skip
              };
 diff --git a/src-tauri/src/commands/coding_plan.rs b/src-tauri/src/commands/coding_plan.rs
-index 9125bb0..295c034 100644
+index 9125bb00..295c0348 100644
 --- a/src-tauri/src/commands/coding_plan.rs
 +++ b/src-tauri/src/commands/coding_plan.rs
 @@ -1,6 +1,7 @@
@@ -134,7 +136,7 @@ index 9125bb0..295c034 100644
      .await
  }
 diff --git a/src-tauri/src/commands/failover.rs b/src-tauri/src/commands/failover.rs
-index c6fdffc..4cb2ff9 100644
+index c6fdffcc..4cb2ff91 100644
 --- a/src-tauri/src/commands/failover.rs
 +++ b/src-tauri/src/commands/failover.rs
 @@ -279,6 +279,8 @@ pub async fn set_auto_failover_enabled(
@@ -147,7 +149,7 @@ index c6fdffc..4cb2ff9 100644
          let event_data = serde_json::json!({
              "appType": app_type,
 diff --git a/src-tauri/src/commands/mod.rs b/src-tauri/src/commands/mod.rs
-index b289bf7..e568c3b 100644
+index b289bf7c..e568c3ba 100644
 --- a/src-tauri/src/commands/mod.rs
 +++ b/src-tauri/src/commands/mod.rs
 @@ -26,7 +26,7 @@ mod proxy;
@@ -160,7 +162,7 @@ index b289bf7..e568c3b 100644
  mod sync_support;
  mod xai_oauth;
 diff --git a/src-tauri/src/commands/pi.rs b/src-tauri/src/commands/pi.rs
-index b2673c6..7463857 100644
+index b2673c6a..7463857a 100644
 --- a/src-tauri/src/commands/pi.rs
 +++ b/src-tauri/src/commands/pi.rs
 @@ -24,3 +24,12 @@ pub(crate) fn update_pi_provider_usage_script(
@@ -177,7 +179,7 @@ index b2673c6..7463857 100644
 +        .map_err(|e| e.to_string())
 +}
 diff --git a/src-tauri/src/commands/profile.rs b/src-tauri/src/commands/profile.rs
-index 41755c9..d4f00f3 100644
+index 41755c93..d4f00f3e 100644
 --- a/src-tauri/src/commands/profile.rs
 +++ b/src-tauri/src/commands/profile.rs
 @@ -79,6 +79,9 @@ pub fn emit_profile_apply_events(
@@ -191,7 +193,7 @@ index 41755c9..d4f00f3 100644
              log::error!("发射 provider-switched 事件失败: {e}");
          }
 diff --git a/src-tauri/src/commands/provider.rs b/src-tauri/src/commands/provider.rs
-index a099c4a..fc8f496 100644
+index a099c4ac..fc8f496e 100644
 --- a/src-tauri/src/commands/provider.rs
 +++ b/src-tauri/src/commands/provider.rs
 @@ -122,14 +122,26 @@ pub async fn switch_provider(
@@ -302,7 +304,7 @@ index a099c4a..fc8f496 100644
          .map_err(|e| e.to_string())
  }
 diff --git a/src-tauri/src/commands/proxy.rs b/src-tauri/src/commands/proxy.rs
-index 6361ad2..e917123 100644
+index 6361ad29..e917123d 100644
 --- a/src-tauri/src/commands/proxy.rs
 +++ b/src-tauri/src/commands/proxy.rs
 @@ -7,6 +7,7 @@ use crate::proxy::types::*;
@@ -416,7 +418,7 @@ index 6361ad2..e917123 100644
  
  /// 获取各应用接管状态
 diff --git a/src-tauri/src/commands/settings.rs b/src-tauri/src/commands/settings.rs
-index f6cdb81..fbe4ce9 100644
+index f6cdb811..fbe4ce95 100644
 --- a/src-tauri/src/commands/settings.rs
 +++ b/src-tauri/src/commands/settings.rs
 @@ -48,6 +48,19 @@ fn merge_settings_for_save(
@@ -473,7 +475,7 @@ index f6cdb81..fbe4ce9 100644
      // 不必等下一次切换才生效。
      if unify_codex_changed {
 diff --git a/src-tauri/src/commands/stream_check.rs b/src-tauri/src/commands/stream_check.rs
-index e9a2a08..021d61e 100644
+index e9a2a083..021d61e1 100644
 --- a/src-tauri/src/commands/stream_check.rs
 +++ b/src-tauri/src/commands/stream_check.rs
 @@ -28,12 +28,8 @@ pub async fn stream_check_provider(
@@ -532,10 +534,10 @@ index e9a2a08..021d61e 100644
      let is_copilot = is_copilot_provider(provider);
      let is_full_url = provider
 diff --git a/src-tauri/src/config.rs b/src-tauri/src/config.rs
-index ce2ece8..5839ffa 100644
+index f717a9fa..f194303e 100644
 --- a/src-tauri/src/config.rs
 +++ b/src-tauri/src/config.rs
-@@ -274,7 +274,7 @@ pub fn read_json_file<T: for<'a> Deserialize<'a>>(path: &Path) -> Result<T, AppE
+@@ -330,7 +330,7 @@ pub fn read_json_file<T: for<'a> Deserialize<'a>>(path: &Path) -> Result<T, AppE
  }
  
  /// 递归排序 JSON 对象的键（按字母顺序），确保序列化输出是确定性的
@@ -545,7 +547,7 @@ index ce2ece8..5839ffa 100644
          Value::Object(map) => {
              let mut sorted_map = Map::new();
 diff --git a/src-tauri/src/deeplink/mcp.rs b/src-tauri/src/deeplink/mcp.rs
-index e768e34..83e8bb8 100644
+index fba131aa..cbe24e75 100644
 --- a/src-tauri/src/deeplink/mcp.rs
 +++ b/src-tauri/src/deeplink/mcp.rs
 @@ -158,6 +158,7 @@ pub(crate) fn parse_mcp_apps(apps_str: &str) -> Result<McpApps, AppError> {
@@ -554,9 +556,9 @@ index e768e34..83e8bb8 100644
          opencode: false,
 +        openclaw: false,
          hermes: false,
+         mcode: false,
      };
- 
-@@ -168,10 +169,7 @@ pub(crate) fn parse_mcp_apps(apps_str: &str) -> Result<McpApps, AppError> {
+@@ -169,10 +170,7 @@ pub(crate) fn parse_mcp_apps(apps_str: &str) -> Result<McpApps, AppError> {
              "gemini" => apps.gemini = true,
              "grokbuild" | "grok" => apps.grokbuild = true,
              "opencode" => apps.opencode = true,
@@ -566,9 +568,9 @@ index e768e34..83e8bb8 100644
 -            }
 +            "openclaw" => apps.openclaw = true,
              "hermes" => apps.hermes = true,
+             "mcode" => apps.mcode = true,
              other => {
-                 return Err(AppError::InvalidInput(format!(
-@@ -213,6 +211,7 @@ mod tests {
+@@ -215,6 +213,7 @@ mod tests {
              gemini: true,
              grokbuild: true,
              opencode: true,
@@ -576,7 +578,7 @@ index e768e34..83e8bb8 100644
              hermes: true,
              ..McpApps::default()
          };
-@@ -223,6 +222,7 @@ mod tests {
+@@ -225,6 +224,7 @@ mod tests {
          assert!(merged.gemini);
          assert!(merged.grokbuild);
          assert!(merged.opencode);
@@ -585,7 +587,7 @@ index e768e34..83e8bb8 100644
      }
  }
 diff --git a/src-tauri/src/hermes_config.rs b/src-tauri/src/hermes_config.rs
-index b906da5..d86999f 100644
+index b906da5a..d86999f8 100644
 --- a/src-tauri/src/hermes_config.rs
 +++ b/src-tauri/src/hermes_config.rs
 @@ -535,7 +535,7 @@ fn models_dict_to_array(dict: serde_json::Map<String, serde_json::Value>) -> ser
@@ -607,7 +609,7 @@ index b906da5..d86999f 100644
          return;
      };
 diff --git a/src-tauri/src/mcp/claude.rs b/src-tauri/src/mcp/claude.rs
-index d55c2de..094a63a 100644
+index b6c6b274..a468b0f9 100644
 --- a/src-tauri/src/mcp/claude.rs
 +++ b/src-tauri/src/mcp/claude.rs
 @@ -93,6 +93,7 @@ pub fn import_from_claude(config: &mut MultiAppConfig) -> Result<usize, AppError
@@ -616,10 +618,10 @@ index d55c2de..094a63a 100644
                          opencode: false,
 +                        openclaw: false,
                          hermes: false,
+                         mcode: false,
                      },
-                     description: None,
 diff --git a/src-tauri/src/mcp/codex.rs b/src-tauri/src/mcp/codex.rs
-index b6d6f61..898f5bb 100644
+index 911601c7..f3ccef5d 100644
 --- a/src-tauri/src/mcp/codex.rs
 +++ b/src-tauri/src/mcp/codex.rs
 @@ -239,6 +239,7 @@ pub fn import_from_codex(config: &mut MultiAppConfig) -> Result<usize, AppError>
@@ -628,9 +630,9 @@ index b6d6f61..898f5bb 100644
                              opencode: false,
 +                            openclaw: false,
                              hermes: false,
+                             mcode: false,
                          },
-                         description: None,
-@@ -607,7 +608,7 @@ fn json_value_to_toml_item(value: &Value, field_name: &str) -> Option<toml_edit:
+@@ -608,7 +609,7 @@ fn json_value_to_toml_item(value: &Value, field_name: &str) -> Option<toml_edit:
  /// 1. 核心字段（type, command, args, url, headers, env, cwd）使用强类型处理
  /// 2. 扩展字段（timeout、retry 等）通过白名单列表自动转换
  /// 3. 其他未知字段使用通用转换器尝试转换
@@ -640,7 +642,7 @@ index b6d6f61..898f5bb 100644
  
      let mut t = Table::new();
 diff --git a/src-tauri/src/mcp/gemini.rs b/src-tauri/src/mcp/gemini.rs
-index 7b98730..ccd2b40 100644
+index d0b42e82..aa29be51 100644
 --- a/src-tauri/src/mcp/gemini.rs
 +++ b/src-tauri/src/mcp/gemini.rs
 @@ -89,6 +89,7 @@ pub fn import_from_gemini(config: &mut MultiAppConfig) -> Result<usize, AppError
@@ -649,10 +651,10 @@ index 7b98730..ccd2b40 100644
                          opencode: false,
 +                        openclaw: false,
                          hermes: false,
+                         mcode: false,
                      },
-                     description: None,
 diff --git a/src-tauri/src/mcp/hermes.rs b/src-tauri/src/mcp/hermes.rs
-index 24683cb..43322d6 100644
+index 10ee3b6d..fb86a847 100644
 --- a/src-tauri/src/mcp/hermes.rs
 +++ b/src-tauri/src/mcp/hermes.rs
 @@ -58,7 +58,7 @@ fn should_sync_hermes_mcp() -> bool {
@@ -679,10 +681,10 @@ index 24683cb..43322d6 100644
                          opencode: false,
 +                        openclaw: false,
                          hermes: true,
+                         mcode: false,
                      },
-                     description: None,
 diff --git a/src-tauri/src/mcp/mod.rs b/src-tauri/src/mcp/mod.rs
-index da67b12..17e428b 100644
+index f8a51ac3..13f889b0 100644
 --- a/src-tauri/src/mcp/mod.rs
 +++ b/src-tauri/src/mcp/mod.rs
 @@ -10,12 +10,14 @@
@@ -710,7 +712,7 @@ index da67b12..17e428b 100644
  };
  pub use gemini::{
      import_from_gemini, remove_server_from_gemini, sync_enabled_to_gemini,
-@@ -34,7 +37,15 @@ pub use gemini::{
+@@ -34,9 +37,17 @@ pub use gemini::{
  pub use grokbuild::{
      import_from_grokbuild, remove_server_from_grokbuild, sync_single_server_to_grokbuild,
  };
@@ -728,8 +730,10 @@ index da67b12..17e428b 100644
 +    convert_to_opencode_format, import_from_opencode, remove_server_from_opencode,
 +    sync_single_server_to_opencode,
  };
+ 
+ pub(crate) mod mcode;
 diff --git a/src-tauri/src/mcp/opencode.rs b/src-tauri/src/mcp/opencode.rs
-index a2509c7..ab7dfec 100644
+index 22dc9c12..55abb6f9 100644
 --- a/src-tauri/src/mcp/opencode.rs
 +++ b/src-tauri/src/mcp/opencode.rs
 @@ -260,6 +260,7 @@ pub fn import_from_opencode(config: &mut MultiAppConfig) -> Result<usize, AppErr
@@ -738,10 +742,10 @@ index a2509c7..ab7dfec 100644
                          opencode: true,
 +                        openclaw: false,
                          hermes: false,
+                         mcode: false,
                      },
-                     description: None,
 diff --git a/src-tauri/src/openclaw_config.rs b/src-tauri/src/openclaw_config.rs
-index 976fcd1..5cf4e8f 100644
+index 976fcd1e..5cf4e8fe 100644
 --- a/src-tauri/src/openclaw_config.rs
 +++ b/src-tauri/src/openclaw_config.rs
 @@ -241,7 +241,13 @@ impl OpenClawConfigDocument {
@@ -1159,10 +1163,10 @@ index 976fcd1..5cf4e8f 100644
 +    }
  }
 diff --git a/src-tauri/src/provider.rs b/src-tauri/src/provider.rs
-index ccc37ea..fbbe7c6 100644
+index 7b85221e..5628fd8d 100644
 --- a/src-tauri/src/provider.rs
 +++ b/src-tauri/src/provider.rs
-@@ -305,6 +305,7 @@ pub struct UsageScript {
+@@ -315,6 +315,7 @@ pub struct UsageScript {
      #[serde(skip_serializing_if = "Option::is_none")]
      #[serde(rename = "teamProjectId")]
      pub team_project_id: Option<String>,
@@ -1171,7 +1175,7 @@ index ccc37ea..fbbe7c6 100644
  
  /// 用量数据
 diff --git a/src-tauri/src/proxy/failover_switch.rs b/src-tauri/src/proxy/failover_switch.rs
-index 135115e..cc1ddcf 100644
+index 135115ea..cc1ddcfd 100644
 --- a/src-tauri/src/proxy/failover_switch.rs
 +++ b/src-tauri/src/proxy/failover_switch.rs
 @@ -125,6 +125,8 @@ impl FailoverSwitchManager {
@@ -1184,7 +1188,7 @@ index 135115e..cc1ddcf 100644
                  log::error!("[Failover] 发射事件失败: {e}");
              }
 diff --git a/src-tauri/src/proxy/handler_context.rs b/src-tauri/src/proxy/handler_context.rs
-index 29be37d..dc66ab4 100644
+index 29be37d7..dc66ab43 100644
 --- a/src-tauri/src/proxy/handler_context.rs
 +++ b/src-tauri/src/proxy/handler_context.rs
 @@ -107,8 +107,7 @@ impl RequestContext {
@@ -1303,7 +1307,7 @@ index 29be37d..dc66ab4 100644
          let provider = providers
              .first()
 diff --git a/src-tauri/src/proxy/mod.rs b/src-tauri/src/proxy/mod.rs
-index d1dc858..bc61341 100644
+index d1dc8580..bc613416 100644
 --- a/src-tauri/src/proxy/mod.rs
 +++ b/src-tauri/src/proxy/mod.rs
 @@ -23,6 +23,7 @@ pub mod media_sanitizer;
@@ -1315,7 +1319,7 @@ index d1dc858..bc61341 100644
  pub(crate) mod server;
  pub mod session;
 diff --git a/src-tauri/src/services/coding_plan.rs b/src-tauri/src/services/coding_plan.rs
-index ad8fbda..6268f13 100644
+index f18e136d..4f133b03 100644
 --- a/src-tauri/src/services/coding_plan.rs
 +++ b/src-tauri/src/services/coding_plan.rs
 @@ -6,6 +6,7 @@
@@ -1326,7 +1330,7 @@ index ad8fbda..6268f13 100644
  use std::time::{SystemTime, UNIX_EPOCH};
  
  // ── 供应商检测 ──────────────────────────────────────────────
-@@ -1401,6 +1402,7 @@ async fn query_zhipu_team_at(
+@@ -1406,6 +1407,7 @@ async fn query_zhipu_team_at(
  ///
  /// `coding_plan_provider` 显式标识用于无法靠 base_url 区分的供应商（当前为智谱团队版
  /// `zhipu_team`——其 base_url 与个人版智谱相同）；其余情况走 `detect_provider`。
@@ -1334,7 +1338,7 @@ index ad8fbda..6268f13 100644
  pub async fn get_coding_plan_quota(
      base_url: &str,
      api_key: &str,
-@@ -1409,6 +1411,7 @@ pub async fn get_coding_plan_quota(
+@@ -1414,6 +1416,7 @@ pub async fn get_coding_plan_quota(
      coding_plan_provider: Option<&str>,
      team_organization_id: Option<&str>,
      team_project_id: Option<&str>,
@@ -1342,7 +1346,7 @@ index ad8fbda..6268f13 100644
  ) -> Result<SubscriptionQuota, String> {
      // 智谱团队版：base_url 与个人版智谱（open.bigmodel.cn）相同，detect_provider 无法
      // 区分，必须靠显式 coding_plan_provider == "zhipu_team" 路由。需 api_key + 组织 ID
-@@ -1468,6 +1471,359 @@ pub async fn get_coding_plan_quota(
+@@ -1473,6 +1476,359 @@ pub async fn get_coding_plan_quota(
      }
  }
  
@@ -1702,7 +1706,7 @@ index ad8fbda..6268f13 100644
  #[cfg(test)]
  mod tests {
      use super::{
-@@ -2228,6 +2584,8 @@ mod tests {
+@@ -2253,6 +2609,8 @@ mod tests {
              None,
              None,
              None,
@@ -1711,7 +1715,7 @@ index ad8fbda..6268f13 100644
          )
          .await;
          let err = result.expect_err("send 失败必须走 Err 通道（瞬时，前端 reject 后重试）");
-@@ -2239,7 +2597,8 @@ mod tests {
+@@ -2264,7 +2622,8 @@ mod tests {
          ensure_no_proxy_for_loopback();
          let (base_url, handle) = spawn_once_server(None);
  
@@ -1721,7 +1725,7 @@ index ad8fbda..6268f13 100644
          let err = result.expect_err("响应前连接中断必须走 Err 通道（瞬时）");
          assert!(err.contains("Network error"), "err={err}");
          handle.join().expect("server thread");
-@@ -2256,7 +2615,8 @@ mod tests {
+@@ -2281,7 +2640,8 @@ mod tests {
                  .to_string(),
          ));
  
@@ -1731,7 +1735,7 @@ index ad8fbda..6268f13 100644
          let err = result.expect_err("读体中断必须走 Err 通道（瞬时，前端 reject 后重试）");
          assert!(err.contains("Failed to read response"), "err={err}");
          handle.join().expect("server thread");
-@@ -2267,7 +2627,7 @@ mod tests {
+@@ -2292,7 +2652,7 @@ mod tests {
          ensure_no_proxy_for_loopback();
          let (base_url, handle) = spawn_once_server(Some(http_response("401 Unauthorized", "{}")));
  
@@ -1740,7 +1744,7 @@ index ad8fbda..6268f13 100644
              .await
              .expect("鉴权失败是确定性失败，必须保持 Ok(success:false) 展示文案");
          assert!(!quota.success);
-@@ -2283,7 +2643,7 @@ mod tests {
+@@ -2308,7 +2668,7 @@ mod tests {
          let (base_url, handle) =
              spawn_once_server(Some(http_response("429 Too Many Requests", "slow down")));
  
@@ -1749,7 +1753,7 @@ index ad8fbda..6268f13 100644
              .await
              .expect("非 2xx 保持 Ok(success:false)，状态码留在文案里交前端分类");
          assert!(!quota.success);
-@@ -2300,7 +2660,7 @@ mod tests {
+@@ -2325,7 +2685,7 @@ mod tests {
          // 完整读到响应体但不是 JSON → is_decode → 确定性解析失败
          let (base_url, handle) = spawn_once_server(Some(http_response("200 OK", "not-json")));
  
@@ -1758,7 +1762,7 @@ index ad8fbda..6268f13 100644
              .await
              .expect("完整但非法的响应体是确定性失败，必须保持 Ok(success:false)");
          assert!(!quota.success);
-@@ -2367,6 +2727,8 @@ mod tests {
+@@ -2392,6 +2752,8 @@ mod tests {
                  Some("zhipu_team"),
                  org,
                  project,
@@ -1767,7 +1771,7 @@ index ad8fbda..6268f13 100644
              )
              .await
              .expect("凭据缺失是确定性失败，保持 Ok(success:false)");
-@@ -2386,6 +2748,8 @@ mod tests {
+@@ -2411,6 +2773,8 @@ mod tests {
              Some("Zhipu_Team"),
              None,
              None,
@@ -1777,10 +1781,10 @@ index ad8fbda..6268f13 100644
          .await
          .expect("ok")
 diff --git a/src-tauri/src/services/mcp.rs b/src-tauri/src/services/mcp.rs
-index 6c520ab..53cd627 100644
+index 9c56c7c6..c1a56603 100644
 --- a/src-tauri/src/services/mcp.rs
 +++ b/src-tauri/src/services/mcp.rs
-@@ -43,6 +43,9 @@ impl McpService {
+@@ -51,6 +51,9 @@ impl McpService {
          if prev_apps.opencode && !server.apps.opencode {
              Self::remove_server_from_app(state, &server.id, &AppType::OpenCode)?;
          }
@@ -1790,7 +1794,7 @@ index 6c520ab..53cd627 100644
          if prev_apps.hermes && !server.apps.hermes {
              Self::remove_server_from_app(state, &server.id, &AppType::Hermes)?;
          }
-@@ -138,9 +141,11 @@ impl McpService {
+@@ -163,9 +166,11 @@ impl McpService {
                  )?;
              }
              AppType::OpenClaw => {
@@ -1805,7 +1809,7 @@ index 6c520ab..53cd627 100644
              }
              AppType::Hermes => {
                  mcp::sync_single_server_to_hermes(&Default::default(), &server.id, &server.server)?;
-@@ -176,8 +181,7 @@ impl McpService {
+@@ -205,8 +210,7 @@ impl McpService {
                  mcp::remove_server_from_opencode(id)?;
              }
              AppType::OpenClaw => {
@@ -1815,7 +1819,7 @@ index 6c520ab..53cd627 100644
              }
              AppType::Hermes => {
                  mcp::remove_server_from_hermes(id)?;
-@@ -509,6 +513,44 @@ impl McpService {
+@@ -541,6 +545,44 @@ impl McpService {
          Ok(new_count)
      }
  
@@ -1860,12 +1864,12 @@ index 6c520ab..53cd627 100644
      /// 从所有支持 MCP 的应用导入服务器，返回新导入的数量。
      ///
      /// Best-effort：单个应用导入失败（如坏 config.toml）不阻断其余应用；
-@@ -519,12 +561,13 @@ impl McpService {
+@@ -551,12 +593,13 @@ impl McpService {
          let mut total = 0;
          let mut failures: Vec<String> = Vec::new();
  
--        let results: [(&str, Result<usize, AppError>); 6] = [
-+        let results: [(&str, Result<usize, AppError>); 7] = [
+-        let results: [(&str, Result<usize, AppError>); 7] = [
++        let results: [(&str, Result<usize, AppError>); 8] = [
              ("claude", Self::import_from_claude(state)),
              ("codex", Self::import_from_codex(state)),
              ("gemini", Self::import_from_gemini(state)),
@@ -1873,10 +1877,10 @@ index 6c520ab..53cd627 100644
              ("opencode", Self::import_from_opencode(state)),
 +            ("openclaw", Self::import_from_openclaw(state)),
              ("hermes", Self::import_from_hermes(state)),
+             ("mcode", mcp::mcode::import(state)),
          ];
-         for (app, result) in results {
 diff --git a/src-tauri/src/services/provider/mod.rs b/src-tauri/src/services/provider/mod.rs
-index e90e35d..6035322 100644
+index bcfc5440..a7df5c62 100644
 --- a/src-tauri/src/services/provider/mod.rs
 +++ b/src-tauri/src/services/provider/mod.rs
 @@ -3,10 +3,10 @@
@@ -1894,7 +1898,7 @@ index e90e35d..6035322 100644
  use indexmap::IndexMap;
  use regex::Regex;
 diff --git a/src-tauri/src/services/provider/usage.rs b/src-tauri/src/services/provider/usage.rs
-index 9e985cc..b8d1f9f 100644
+index 9e985cc2..b8d1f9fb 100644
 --- a/src-tauri/src/services/provider/usage.rs
 +++ b/src-tauri/src/services/provider/usage.rs
 @@ -188,6 +188,51 @@ pub async fn query_usage(
@@ -1950,10 +1954,10 @@ index 9e985cc..b8d1f9f 100644
  #[allow(clippy::too_many_arguments)]
  pub async fn test_usage_script(
 diff --git a/src-tauri/src/services/proxy.rs b/src-tauri/src/services/proxy.rs
-index 98d05e9..a32f9b3 100644
+index 79c12da3..6bc3afcf 100644
 --- a/src-tauri/src/services/proxy.rs
 +++ b/src-tauri/src/services/proxy.rs
-@@ -1359,7 +1359,8 @@ impl ProxyService {
+@@ -1381,7 +1381,8 @@ impl ProxyService {
              .await
              .map_err(|e| format!("检查接管状态失败: {e}"))?;
  
@@ -1963,7 +1967,7 @@ index 98d05e9..a32f9b3 100644
              let _ = self.db.set_live_takeover_active(false).await;
  
              if self.is_running().await {
-@@ -1780,6 +1781,9 @@ impl ProxyService {
+@@ -1802,6 +1803,9 @@ impl ProxyService {
              .await
              .map_err(|e| format!("删除备份失败: {e}"))?;
  
@@ -1974,10 +1978,10 @@ index 98d05e9..a32f9b3 100644
          self.db
              .clear_all_provider_health()
 diff --git a/src-tauri/src/services/skill.rs b/src-tauri/src/services/skill.rs
-index 20ac16f..52a1e40 100644
+index b3e58898..9d9b4949 100644
 --- a/src-tauri/src/services/skill.rs
 +++ b/src-tauri/src/services/skill.rs
-@@ -340,6 +340,9 @@ pub struct ImportSkillSelection {
+@@ -348,6 +348,9 @@ pub struct ImportSkillSelection {
      pub directory: String,
      #[serde(default)]
      pub apps: SkillApps,
@@ -1987,7 +1991,7 @@ index 20ac16f..52a1e40 100644
  }
  
  #[derive(Debug, Clone, Deserialize)]
-@@ -622,7 +625,7 @@ impl SkillService {
+@@ -637,7 +640,7 @@ impl SkillService {
              AppType::Gemini => home.join(".gemini").join("skills"),
              AppType::GrokBuild => home.join(".grok").join("skills"),
              AppType::OpenCode => home.join(".config").join("opencode").join("skills"),
@@ -1996,7 +2000,7 @@ index 20ac16f..52a1e40 100644
              AppType::Hermes => crate::hermes_config::get_hermes_dir().join("skills"),
              AppType::Pi => crate::pi_config::get_pi_agent_dir()?.join("skills"),
          })
-@@ -762,6 +765,82 @@ impl SkillService {
+@@ -777,6 +780,82 @@ impl SkillService {
      /// 1. 下载到 SSOT 目录
      /// 2. 保存到数据库
      /// 3. 同步到启用的应用目录
@@ -2079,7 +2083,7 @@ index 20ac16f..52a1e40 100644
      pub async fn install(
          &self,
          db: &Arc<Database>,
-@@ -810,67 +889,16 @@ impl SkillService {
+@@ -825,67 +904,16 @@ impl SkillService {
  
          // 如果已存在则跳过下载
          if !dest.exists() {
@@ -2151,7 +2155,7 @@ index 20ac16f..52a1e40 100644
  
              // 使用实际下载成功的分支，避免 readme_url / repo_branch 与真实分支不一致。
              if repo_branch != skill.repo_branch {
-@@ -2007,6 +2035,22 @@ impl SkillService {
+@@ -2165,6 +2193,22 @@ impl SkillService {
  
              // 其他应用保存用户选择；Pi 的 exists=active 必须直接来自原生目录。
              let mut apps = selection.apps;
@@ -2173,8 +2177,8 @@ index 20ac16f..52a1e40 100644
 +            }
              apps.pi = Self::skill_exists_in_app(&dir_name, &AppType::Pi);
  
-             // 从 lock 文件提取仓库信息
-@@ -3783,7 +3827,8 @@ impl SkillService {
+             // An explicitly imported MCode link must point at the managed copy
+@@ -4083,7 +4127,8 @@ impl SkillService {
      /// 同步等一长串 `?`，任何一处提前返回都会把最多 512 MiB 的临时内容永久留在
      /// 磁盘上。守卫交给调用方持有，清理就变成作用域结束时自动发生，不再依赖每条
      /// 出口都记得手写 `remove_dir_all`（实测漏了不止一条）。
@@ -2184,7 +2188,7 @@ index 20ac16f..52a1e40 100644
          Self::extract_local_zip_in(zip_path, &std::env::temp_dir())
      }
  
-@@ -3870,8 +3915,8 @@ impl SkillService {
+@@ -4169,8 +4214,8 @@ impl SkillService {
          Ok(temp_dir)
      }
  
@@ -2195,7 +2199,7 @@ index 20ac16f..52a1e40 100644
          let mut skill_dirs = Vec::new();
          Self::scan_skills_recursive(dir, &mut skill_dirs)?;
          Ok(skill_dirs)
-@@ -4967,6 +5012,7 @@ mod tests {
+@@ -5715,6 +5760,7 @@ mod tests {
              vec![ImportSkillSelection {
                  directory: "native-skill".to_string(),
                  apps: SkillApps::default(),
@@ -2203,7 +2207,7 @@ index 20ac16f..52a1e40 100644
              }],
          )
          .expect("import native Pi skill");
-@@ -4976,6 +5022,47 @@ mod tests {
+@@ -5724,6 +5770,47 @@ mod tests {
          assert!(SkillService::get_all_installed(&db).unwrap()[0].apps.pi);
      }
  
@@ -2252,7 +2256,7 @@ index 20ac16f..52a1e40 100644
      #[serial_test::serial]
      fn uninstall_preserves_an_external_pi_skill_and_removes_the_managed_record() {
 diff --git a/src-tauri/src/services/stream_check.rs b/src-tauri/src/services/stream_check.rs
-index 3c7e37e..4043eb3 100644
+index 3c7e37e4..4043eb36 100644
 --- a/src-tauri/src/services/stream_check.rs
 +++ b/src-tauri/src/services/stream_check.rs
 @@ -165,7 +165,13 @@ impl StreamCheckService {
@@ -2271,12 +2275,12 @@ index 3c7e37e..4043eb3 100644
              return Err(AppError::Message(
                  "Official providers do not expose a reachability-check target".to_string(),
 diff --git a/src-tauri/src/services/usage_cache.rs b/src-tauri/src/services/usage_cache.rs
-index b404d95..5fcf97d 100644
+index ea617c4c..42f7627a 100644
 --- a/src-tauri/src/services/usage_cache.rs
 +++ b/src-tauri/src/services/usage_cache.rs
-@@ -14,6 +14,16 @@ use crate::services::subscription::SubscriptionQuota;
- pub struct UsageCache {
+@@ -15,6 +15,16 @@ pub struct UsageCache {
      subscription: RwLock<HashMap<AppType, SubscriptionQuota>>,
+     codex_oauth: RwLock<HashMap<String, SubscriptionQuota>>,
      script: RwLock<HashMap<(AppType, String), UsageResult>>,
 +    /// 脚本型用量结果的写入时间戳（毫秒），供悬浮窗显示「刚刚 / x分钟前」。
 +    /// SubscriptionQuota 自带 queried_at，脚本型 UsageResult 没有，故单独记录。
@@ -2291,7 +2295,7 @@ index b404d95..5fcf97d 100644
  }
  
  impl UsageCache {
-@@ -28,8 +38,12 @@ impl UsageCache {
+@@ -47,8 +57,12 @@ impl UsageCache {
      }
  
      pub fn put_script(&self, app_type: AppType, provider_id: String, result: UsageResult) {
@@ -2305,7 +2309,7 @@ index b404d95..5fcf97d 100644
          }
      }
  
-@@ -58,6 +72,15 @@ impl UsageCache {
+@@ -77,6 +91,15 @@ impl UsageCache {
              .and_then(|r| r.get(&(app_type.clone(), provider_id.to_string())).map(f))
      }
  
@@ -2321,7 +2325,7 @@ index b404d95..5fcf97d 100644
      pub fn invalidate_script(&self, app_type: &AppType, provider_id: &str) {
          // 热路径会对每个禁用脚本的 provider 在托盘重建时调用一次：先走读锁
          // `contains_key` 快速放行"本来就不在缓存里"的常见情况，避免无谓的写锁升级。
-@@ -68,6 +91,9 @@ impl UsageCache {
+@@ -87,6 +110,9 @@ impl UsageCache {
          if let Ok(mut w) = self.script.write() {
              w.remove(&key);
          }
@@ -2332,7 +2336,7 @@ index b404d95..5fcf97d 100644
  
      pub fn invalidate_subscription(&self, app_type: &AppType) {
 diff --git a/src-tauri/src/session_manager/providers/claude.rs b/src-tauri/src/session_manager/providers/claude.rs
-index d02eaba..ca1309e 100644
+index 620f6522..9d245b69 100644
 --- a/src-tauri/src/session_manager/providers/claude.rs
 +++ b/src-tauri/src/session_manager/providers/claude.rs
 @@ -32,13 +32,16 @@ pub fn scan_sessions() -> Vec<SessionMeta> {
@@ -2366,7 +2370,7 @@ index d02eaba..ca1309e 100644
  }
  
  pub fn delete_session(_root: &Path, path: &Path, session_id: &str) -> Result<bool, String> {
-@@ -121,19 +124,28 @@ pub fn delete_session(_root: &Path, path: &Path, session_id: &str) -> Result<boo
+@@ -121,19 +124,30 @@ pub fn delete_session(_root: &Path, path: &Path, session_id: &str) -> Result<boo
  }
  
  fn parse_session(path: &Path) -> Option<SessionMeta> {
@@ -2382,7 +2386,9 @@ index d02eaba..ca1309e 100644
 +    head: &[String],
 +    tail: &[String],
 +) -> Option<SessionMeta> {
-+    if is_agent_session_str(path) {
++    // 直接用官方的判定函数（包一层 Path）：官方以后再加排除条件
++    // （如 v3.20.3 的 journal.jsonl）我们自动继承，不用各留一份
++    if is_agent_session(Path::new(path)) {
          return None;
      }
  
@@ -2399,16 +2405,16 @@ index d02eaba..ca1309e 100644
          let value: Value = match serde_json::from_str(line) {
              Ok(parsed) => parsed,
              Err(_) => continue,
-@@ -223,7 +235,7 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
+@@ -223,7 +237,7 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
          }
      }
  
 -    let session_id = session_id.or_else(|| infer_session_id_from_filename(path));
-+    let session_id = session_id.or_else(|| infer_session_id_from_filename_str(path));
++    let session_id = session_id.or_else(|| infer_session_id_from_filename(Path::new(path)));
      let session_id = session_id?;
  
      // Title priority: custom-title > first user message > directory basename
-@@ -247,22 +259,100 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
+@@ -247,7 +261,7 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
          project_dir,
          created_at,
          last_active_at,
@@ -2417,29 +2423,10 @@ index d02eaba..ca1309e 100644
          resume_command: Some(format!("claude --resume {session_id}")),
      })
  }
+@@ -265,6 +279,80 @@ fn infer_session_id_from_filename(path: &Path) -> Option<String> {
+         .map(|stem| stem.to_string())
+ }
  
--fn is_agent_session(path: &Path) -> bool {
--    path.file_name()
--        .and_then(|name| name.to_str())
--        .map(|name| name.starts_with("agent-"))
--        .unwrap_or(false)
-+fn file_name_of(path: &str) -> &str {
-+    path.rsplit('/').next().unwrap_or(path)
-+}
-+
-+fn file_stem_of(path: &str) -> &str {
-+    let name = file_name_of(path);
-+    name.strip_suffix(".jsonl").unwrap_or(name)
-+}
-+
-+fn is_agent_session_str(path: &str) -> bool {
-+    file_name_of(path).starts_with("agent-")
-+}
-+
-+fn infer_session_id_from_filename_str(path: &str) -> Option<String> {
-+    Some(file_stem_of(path).to_string())
-+}
-+
 +/// 通过 FileOps 扫描会话（本机 LocalFileOps / 远端 RemoteSftpFileOps 共用）。
 +pub async fn scan_sessions_fs<F: crate::fsops::FileOps + Sync>(
 +    fs: &F,
@@ -2472,12 +2459,8 @@ index d02eaba..ca1309e 100644
 +        }
 +    }
 +    sessions
- }
- 
--fn infer_session_id_from_filename(path: &Path) -> Option<String> {
--    path.file_stem()
--        .and_then(|stem| stem.to_str())
--        .map(|stem| stem.to_string())
++}
++
 +async fn collect_jsonl_files_fs<F: crate::fsops::FileOps + Sync>(
 +    fs: &F,
 +    root: &str,
@@ -2516,11 +2499,13 @@ index d02eaba..ca1309e 100644
 +    for sub in sub_files {
 +        files.extend(sub);
 +    }
- }
- 
++}
++
  fn collect_jsonl_files(root: &Path, files: &mut Vec<PathBuf>) {
+     if !root.exists() {
+         return;
 diff --git a/src-tauri/src/session_manager/providers/codex.rs b/src-tauri/src/session_manager/providers/codex.rs
-index e2383fe..17df611 100644
+index e2383fe6..17df611f 100644
 --- a/src-tauri/src/session_manager/providers/codex.rs
 +++ b/src-tauri/src/session_manager/providers/codex.rs
 @@ -268,6 +268,68 @@ pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
@@ -2805,7 +2790,7 @@ index e2383fe..17df611 100644
  mod tests {
      use super::*;
 diff --git a/src-tauri/src/session_manager/providers/gemini.rs b/src-tauri/src/session_manager/providers/gemini.rs
-index 82cb6fc..2cf7c06 100644
+index 82cb6fcd..2cf7c062 100644
 --- a/src-tauri/src/session_manager/providers/gemini.rs
 +++ b/src-tauri/src/session_manager/providers/gemini.rs
 @@ -173,6 +173,139 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
@@ -2949,7 +2934,7 @@ index 82cb6fc..2cf7c06 100644
  mod tests {
      use super::*;
 diff --git a/src-tauri/src/session_manager/providers/grokbuild.rs b/src-tauri/src/session_manager/providers/grokbuild.rs
-index d3462b2..2157ffe 100644
+index d3462b2d..2157ffed 100644
 --- a/src-tauri/src/session_manager/providers/grokbuild.rs
 +++ b/src-tauri/src/session_manager/providers/grokbuild.rs
 @@ -58,9 +58,16 @@ pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
@@ -3044,7 +3029,7 @@ index d3462b2..2157ffe 100644
  mod tests {
      use super::*;
 diff --git a/src-tauri/src/session_manager/providers/hermes.rs b/src-tauri/src/session_manager/providers/hermes.rs
-index 837e0d6..ee53d97 100644
+index 837e0d6d..ee53d970 100644
 --- a/src-tauri/src/session_manager/providers/hermes.rs
 +++ b/src-tauri/src/session_manager/providers/hermes.rs
 @@ -104,7 +104,8 @@ fn scan_sessions_sqlite() -> Vec<SessionMeta> {
@@ -3086,17 +3071,23 @@ index 837e0d6..ee53d97 100644
  pub fn delete_session_sqlite(session_id: &str, source: &str) -> Result<bool, String> {
      let (db_path, ref_session_id) = parse_sqlite_source(source)
 diff --git a/src-tauri/src/session_manager/providers/mod.rs b/src-tauri/src/session_manager/providers/mod.rs
-index 1cd3fd1..56c57c7 100644
+index 0588abee..485c8be1 100644
 --- a/src-tauri/src/session_manager/providers/mod.rs
 +++ b/src-tauri/src/session_manager/providers/mod.rs
-@@ -6,4 +6,4 @@ pub mod hermes;
+@@ -3,9 +3,8 @@ pub mod codex;
+ pub mod gemini;
+ pub mod grokbuild;
+ pub mod hermes;
++pub mod mcode;
  pub mod openclaw;
  pub mod opencode;
  pub mod pi;
 -mod utils;
+-
+-pub mod mcode;
 +pub(crate) mod utils;
 diff --git a/src-tauri/src/session_manager/providers/openclaw.rs b/src-tauri/src/session_manager/providers/openclaw.rs
-index 3a1e585..6512db5 100644
+index 3a1e5851..6512db50 100644
 --- a/src-tauri/src/session_manager/providers/openclaw.rs
 +++ b/src-tauri/src/session_manager/providers/openclaw.rs
 @@ -337,6 +337,235 @@ fn prune_sessions_index(
@@ -3336,7 +3327,7 @@ index 3a1e585..6512db5 100644
  mod tests {
      use super::*;
 diff --git a/src-tauri/src/session_manager/providers/opencode.rs b/src-tauri/src/session_manager/providers/opencode.rs
-index eee9b98..5fb790f 100644
+index eee9b982..5fb790fd 100644
 --- a/src-tauri/src/session_manager/providers/opencode.rs
 +++ b/src-tauri/src/session_manager/providers/opencode.rs
 @@ -155,6 +155,44 @@ fn scan_sessions_sqlite() -> Vec<SessionMeta> {
@@ -3456,7 +3447,7 @@ index eee9b98..5fb790f 100644
      if path.file_name().and_then(|name| name.to_str()) != Some(session_id) {
          return Err(format!(
 diff --git a/src-tauri/src/session_manager/providers/pi.rs b/src-tauri/src/session_manager/providers/pi.rs
-index de55ee2..5de5728 100644
+index de55ee29..5de5728d 100644
 --- a/src-tauri/src/session_manager/providers/pi.rs
 +++ b/src-tauri/src/session_manager/providers/pi.rs
 @@ -357,18 +357,138 @@ fn parse_session(path: &Path) -> Result<SessionMeta, String> {
@@ -3622,10 +3613,10 @@ index de55ee2..5de5728 100644
          if line.trim().is_empty() {
              continue;
 diff --git a/src-tauri/src/settings.rs b/src-tauri/src/settings.rs
-index 0310304..347b83c 100644
+index 42b3cbe1..79195115 100644
 --- a/src-tauri/src/settings.rs
 +++ b/src-tauri/src/settings.rs
-@@ -338,6 +338,14 @@ pub struct CodexOfficialHistoryUnifyMigration {
+@@ -342,6 +342,14 @@ pub struct CodexOfficialHistoryUnifyMigration {
      pub codex_config_dir: Option<String>,
  }
  
@@ -3640,7 +3631,7 @@ index 0310304..347b83c 100644
  /// 应用设置结构
  ///
  /// 存储设备级别设置，保存在本地 `~/.cc-switch/settings.json`，不随数据库同步。
-@@ -416,6 +424,43 @@ pub struct AppSettings {
+@@ -420,6 +428,43 @@ pub struct AppSettings {
      #[serde(default, skip_serializing_if = "Option::is_none")]
      pub visible_apps: Option<VisibleApps>,
  
@@ -3684,7 +3675,7 @@ index 0310304..347b83c 100644
      // ===== 设备级目录覆盖 =====
      #[serde(default, skip_serializing_if = "Option::is_none")]
      pub claude_config_dir: Option<String>,
-@@ -496,6 +541,11 @@ pub struct AppSettings {
+@@ -500,6 +545,11 @@ pub struct AppSettings {
      #[serde(default, skip_serializing_if = "Option::is_none")]
      pub preferred_terminal: Option<String>,
  
@@ -3696,7 +3687,7 @@ index 0310304..347b83c 100644
      // ===== 本机自动迁移状态 =====
      #[serde(default, skip_serializing_if = "Option::is_none")]
      pub local_migrations: Option<LocalMigrations>,
-@@ -542,6 +592,17 @@ impl Default for AppSettings {
+@@ -546,6 +596,17 @@ impl Default for AppSettings {
              common_config_confirmed: None,
              language: None,
              visible_apps: None,
@@ -3714,7 +3705,7 @@ index 0310304..347b83c 100644
              claude_config_dir: None,
              codex_config_dir: None,
              gemini_config_dir: None,
-@@ -566,6 +627,7 @@ impl Default for AppSettings {
+@@ -570,6 +631,7 @@ impl Default for AppSettings {
              backup_interval_hours: None,
              backup_retain_count: None,
              preferred_terminal: None,
@@ -3722,7 +3713,7 @@ index 0310304..347b83c 100644
              local_migrations: None,
          }
      }
-@@ -1067,6 +1129,38 @@ pub fn get_effective_current_provider(
+@@ -1071,6 +1133,38 @@ pub fn get_effective_current_provider(
      db.get_current_provider(app_type.as_str())
  }
  
@@ -3762,11 +3753,11 @@ index 0310304..347b83c 100644
  
  /// 获取 Skill 同步方式配置
 diff --git a/src-tauri/src/tray.rs b/src-tauri/src/tray.rs
-index 0223617..11dbe9f 100644
+index 31cb44f1..5b08e24d 100644
 --- a/src-tauri/src/tray.rs
 +++ b/src-tauri/src/tray.rs
-@@ -11,7 +11,7 @@ use crate::app_config::AppType;
- use crate::error::AppError;
+@@ -12,7 +12,7 @@ use crate::error::AppError;
+ use crate::services::usage_cache::UsageCache;
  use crate::store::AppState;
  
 -const TEMPLATE_TYPE_OFFICIAL_SUBSCRIPTION: &str = "official_subscription";
@@ -3774,7 +3765,7 @@ index 0223617..11dbe9f 100644
  const H_TIER_NAMES: &[&str] = &[crate::services::subscription::TIER_FIVE_HOUR];
  const W_TIER_NAMES: &[&str] = &[
      crate::services::subscription::TIER_WEEKLY_LIMIT,
-@@ -55,6 +55,7 @@ pub struct TrayTexts {
+@@ -59,6 +59,7 @@ pub struct TrayTexts {
      pub open_website: &'static str,
      pub no_providers_label: &'static str,
      pub lightweight_mode: &'static str,
@@ -3782,7 +3773,7 @@ index 0223617..11dbe9f 100644
      pub quit: &'static str,
      pub _auto_label: &'static str,
      pub projects_label: &'static str,
-@@ -104,6 +105,7 @@ impl TrayTexts {
+@@ -108,6 +109,7 @@ impl TrayTexts {
                  open_website: "Open Official Website",
                  no_providers_label: "(no providers)",
                  lightweight_mode: "Lightweight Mode",
@@ -3790,7 +3781,7 @@ index 0223617..11dbe9f 100644
                  quit: "Quit",
                  _auto_label: "Auto (Failover)",
                  projects_label: "Projects",
-@@ -114,6 +116,7 @@ impl TrayTexts {
+@@ -118,6 +120,7 @@ impl TrayTexts {
                  open_website: "公式サイトを開く",
                  no_providers_label: "(プロバイダーなし)",
                  lightweight_mode: "軽量モード",
@@ -3798,7 +3789,7 @@ index 0223617..11dbe9f 100644
                  quit: "終了",
                  _auto_label: "自動 (フェイルオーバー)",
                  projects_label: "プロジェクト",
-@@ -124,6 +127,7 @@ impl TrayTexts {
+@@ -128,6 +131,7 @@ impl TrayTexts {
                  open_website: "開啟官方網站",
                  no_providers_label: "(無供應商)",
                  lightweight_mode: "輕量模式",
@@ -3806,7 +3797,7 @@ index 0223617..11dbe9f 100644
                  quit: "退出",
                  _auto_label: "自動 (故障轉移)",
                  projects_label: "專案",
-@@ -134,6 +138,7 @@ impl TrayTexts {
+@@ -138,6 +142,7 @@ impl TrayTexts {
                  open_website: "打开官方网站",
                  no_providers_label: "(无供应商)",
                  lightweight_mode: "轻量模式",
@@ -3814,7 +3805,7 @@ index 0223617..11dbe9f 100644
                  quit: "退出",
                  _auto_label: "自动 (故障转移)",
                  projects_label: "项目",
-@@ -191,7 +196,7 @@ pub const TRAY_SECTIONS: [TrayAppSection; 4] = [
+@@ -195,7 +200,7 @@ pub const TRAY_SECTIONS: [TrayAppSection; 4] = [
  const UTIL_WARN_PCT: f64 = 70.0;
  const UTIL_DANGER_PCT: f64 = 90.0;
  
@@ -3823,7 +3814,7 @@ index 0223617..11dbe9f 100644
      if pct >= UTIL_DANGER_PCT {
          "\u{1F534}" // 🔴
      } else if pct >= UTIL_WARN_PCT {
-@@ -201,7 +206,7 @@ fn emoji_for_utilization(pct: f64) -> &'static str {
+@@ -205,7 +210,7 @@ fn emoji_for_utilization(pct: f64) -> &'static str {
      }
  }
  
@@ -3832,7 +3823,7 @@ index 0223617..11dbe9f 100644
      quota: &crate::services::subscription::SubscriptionQuota,
  ) -> Option<String> {
      if !quota.success {
-@@ -237,7 +242,7 @@ fn format_subscription_summary(
+@@ -241,7 +246,7 @@ fn format_subscription_summary(
      Some(format!("{emoji} {body}"))
  }
  
@@ -3841,7 +3832,7 @@ index 0223617..11dbe9f 100644
      let mut parts = Vec::new();
      for &(label, tier_names) in TIER_LABEL_GROUPS {
          let max_utilization = entries
-@@ -253,14 +258,14 @@ fn labeled_tier_parts(entries: &[(&str, f64)]) -> Vec<(&'static str, f64)> {
+@@ -257,14 +262,14 @@ fn labeled_tier_parts(entries: &[(&str, f64)]) -> Vec<(&'static str, f64)> {
      parts
  }
  
@@ -3858,25 +3849,25 @@ index 0223617..11dbe9f 100644
      if !result.success {
          return None;
      }
-@@ -304,7 +309,7 @@ fn format_script_summary(result: &crate::provider::UsageResult) -> Option<String
-     }
+@@ -320,7 +325,7 @@ fn managed_codex_account_id(provider: &crate::provider::Provider) -> Option<Stri
+     None
  }
  
 -fn provider_uses_official_subscription(provider: &crate::provider::Provider) -> bool {
 +pub(crate) fn provider_uses_official_subscription(provider: &crate::provider::Provider) -> bool {
-     // Managed Codex quota is account-scoped in the native footer; the tray's
-     // app-wide subscription cache cannot represent it safely.
-     if provider.id != crate::database::CODEX_OFFICIAL_PROVIDER_ID
-@@ -329,7 +334,7 @@ fn provider_uses_official_subscription(provider: &crate::provider::Provider) ->
-         .unwrap_or(false)
+     // Managed Codex uses the account-scoped path in tray_usage_source instead
+     // of the CLI's app-wide subscription cache.
+     if managed_codex_account_id(provider).is_some() {
+@@ -368,7 +373,7 @@ fn tray_usage_source(
+     .then_some(TrayUsageSource::Script)
  }
  
 -fn format_usage_suffix(
 +pub(crate) fn format_usage_suffix(
-     app_state: &AppState,
+     usage_cache: &UsageCache,
      app_type: &AppType,
      provider: &crate::provider::Provider,
-@@ -635,6 +640,8 @@ fn handle_auto_click(app: &tauri::AppHandle, app_type: &AppType) -> Result<(), A
+@@ -674,6 +679,8 @@ fn handle_auto_click(app: &tauri::AppHandle, app_type: &AppType) -> Result<(), A
          if let Err(e) = app.emit("proxy-flags-changed", event_data.clone()) {
              log::error!("发射 proxy-flags-changed 事件失败: {e}");
          }
@@ -3885,7 +3876,7 @@ index 0223617..11dbe9f 100644
          // 发射 provider-switched 事件（保持向后兼容，Auto 切换也算一种切换）
          if let Err(e) = app.emit("provider-switched", event_data) {
              log::error!("发射 provider-switched 事件失败: {e}");
-@@ -679,6 +686,8 @@ fn handle_provider_click(
+@@ -718,6 +725,8 @@ fn handle_provider_click(
          if let Err(e) = app.emit("proxy-flags-changed", event_data.clone()) {
              log::error!("发射 proxy-flags-changed 事件失败: {e}");
          }
@@ -3894,7 +3885,7 @@ index 0223617..11dbe9f 100644
          // 发射 provider-switched 事件（保持向后兼容）
          if let Err(e) = app.emit("provider-switched", event_data) {
              log::error!("发射 provider-switched 事件失败: {e}");
-@@ -904,7 +913,16 @@ pub fn create_tray_menu(
+@@ -948,7 +957,16 @@ pub fn create_tray_menu(
      )
      .map_err(|e| AppError::Message(format!("创建轻量模式菜单失败: {e}")))?;
  
@@ -3912,7 +3903,7 @@ index 0223617..11dbe9f 100644
  
      // 退出菜单（分隔符已在上面的 section 循环中添加）
      let quit_item = MenuItem::with_id(app, "quit", tray_texts.quit, true, None::<&str>)
-@@ -1034,6 +1052,10 @@ pub fn handle_tray_menu_event(app: &tauri::AppHandle, event_id: &str) {
+@@ -1083,6 +1101,10 @@ pub fn handle_tray_menu_event(app: &tauri::AppHandle, event_id: &str) {
                  log::error!("进入轻量模式失败: {e}");
              }
          }

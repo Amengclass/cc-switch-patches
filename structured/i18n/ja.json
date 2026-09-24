@@ -1,5 +1,22 @@
 {
   "settings": {
+    "advanced": {
+      "proxy": {
+        "enableFeature": "メインページにアプリ接管切り替えを表示",
+        "enableFeatureDescription": "有効にすると、メインページ上部に各アプリの接管切り替え（そのアプリのリクエストをローカルルート経由で送信）が表示されます；スイッチに流れる枠線が表示されていればルーティング総スイッチがオンであることを意味します",
+        "marqueeHint": "メインページ上部のアプリスイッチに流れる枠線が表示されている場合、ローカルプロキシサービス（ルーティング総スイッチ）が実行中です"
+      },
+      "quotaDisplay": {
+        "title": "クォータ表示",
+        "description": "プロバイダーカード上のクォータ使用量の表示形式を制御",
+        "expanded": "展開モード",
+        "expandedDescription": "有効にすると：クォータ使用量がカード下のパネルに展開表示（合計/使用済み/残り/リセット時間）；無効にすると：クォータがカード内にインライン表示（例：「5h: 5%」）"
+      }
+    },
+    "appVisibility": {
+      "showUpdateBadge": "更新通知を表示",
+      "showUpdateBadgeDescription": "新しいバージョンがある場合、ヘッダーに緑のアイコンを表示します。オフにしてもバックグラウンドで更新を確認し、「このアプリについて」ページで手動確認できます"
+    },
     "section": {
       "remote": "SSH リモート設定"
     },
@@ -13,19 +30,6 @@
         "title": "SSH リモートの現在の設定を自動読み込み",
         "description": "有効にすると、リモートマシンの現在のアプリ設定（default カード）をリアルタイム表示します。オフにすると最新設定を更新せず、UI を高速に更新します。",
         "note": "注：この設定は Claude、Codex、Gemini、Grok Build にのみ適用されます。OpenCode、OpenClaw、Hermes は常に現在のアプリに追従します。"
-      }
-    },
-    "advanced": {
-      "proxy": {
-        "enableFeature": "メインページにアプリ接管切り替えを表示",
-        "enableFeatureDescription": "有効にすると、メインページ上部に各アプリの接管切り替え（そのアプリのリクエストをローカルルート経由で送信）が表示されます；スイッチに流れる枠線が表示されていればルーティング総スイッチがオンであることを意味します",
-        "marqueeHint": "メインページ上部のアプリスイッチに流れる枠線が表示されている場合、ローカルプロキシサービス（ルーティング総スイッチ）が実行中です"
-      },
-      "quotaDisplay": {
-        "title": "クォータ表示",
-        "description": "プロバイダーカード上のクォータ使用量の表示形式を制御",
-        "expanded": "展開モード",
-        "expandedDescription": "有効にすると：クォータ使用量がカード下のパネルに展開表示（合計/使用済み/残り/リセット時間）；無効にすると：クォータがカード内にインライン表示（例：「5h: 5%」）"
       }
     },
     "floatingWindow": "フローティングコンポーネント",
@@ -46,13 +50,25 @@
     "floatingOpacityDesc": "フローティングウィンドウの背景と枠の不透明度を調整します（20%〜100%）",
     "floatingAutoCollapseTitle": "エッジ自動収納",
     "floatingAutoCollapseDesc": "画面端にドロップすると色条に収納、マウス靠近で自動展開",
-    "appVisibility": {
-      "showUpdateBadge": "更新通知を表示",
-      "showUpdateBadgeDescription": "新しいバージョンがある場合、ヘッダーに緑のアイコンを表示します。オフにしてもバックグラウンドで更新を確認し、「このアプリについて」ページで手動確認できます"
-    },
     "modifiedGithub": "Magic GitHub",
     "modifiedAppTitle": "CC Switch Magic",
     "modifiedVersionSuffix": "magic"
+  },
+  "proxy": {
+    "takeover": {
+      "hint": "本機アプリのみに影響します。ルーティングする本機アプリを選択すると、そのアプリのリクエストはローカルルーティング経由で転送されます。リモート接管は対象ホストの目標選択またはホストフォームで設定します",
+      "enabled": "{{app}} 接管有効",
+      "disabled": "{{app}} 接管無効",
+      "failed": "接管の切り替えに失敗しました: {{detail}}",
+      "tooltip": {
+        "active": "{{appLabel}} が接管中 - {{address}}:{{port}}\nホットスイッチングのためプロバイダを切り替え",
+        "broken": "{{appLabel}} が接管中ですが、プロキシサービスが実行されていません",
+        "inactive": "{{appLabel}} のリクエストをローカルプロキシ経由で接管"
+      }
+    }
+  },
+  "proxyConfig": {
+    "appTakeover": "ローカルアプリ接管有効"
   },
   "remote": {
     "readingConfigPrefix": "読み込み中 ",
@@ -215,21 +231,5 @@
     "pinnedAria": "固定済み",
     "menuSettings": "設定",
     "menuHide": "非表示"
-  },
-  "proxy": {
-    "takeover": {
-      "hint": "本機アプリのみに影響します。ルーティングする本機アプリを選択すると、そのアプリのリクエストはローカルルーティング経由で転送されます。リモート接管は対象ホストの目標選択またはホストフォームで設定します",
-      "enabled": "{{app}} 接管有効",
-      "disabled": "{{app}} 接管無効",
-      "failed": "接管の切り替えに失敗しました: {{detail}}",
-      "tooltip": {
-        "active": "{{appLabel}} が接管中 - {{address}}:{{port}}\nホットスイッチングのためプロバイダを切り替え",
-        "broken": "{{appLabel}} が接管中ですが、プロキシサービスが実行されていません",
-        "inactive": "{{appLabel}} のリクエストをローカルプロキシ経由で接管"
-      }
-    }
-  },
-  "proxyConfig": {
-    "appTakeover": "ローカルアプリ接管有効"
   }
 }

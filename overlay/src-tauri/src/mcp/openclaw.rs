@@ -240,6 +240,7 @@ pub fn import_from_openclaw(config: &mut MultiAppConfig) -> Result<usize, AppErr
                         opencode: false,
                         openclaw: true,
                         hermes: false,
+                        mcode: false,
                     },
                     description: None,
                     homepage: None,

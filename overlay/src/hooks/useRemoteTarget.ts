@@ -145,9 +145,10 @@ export function useRemoteTarget({
     () => localStorage.getItem("cc-switch-remote-feature-enabled") !== "0",
   );
 
-  // claude-desktop 没有远端概念（远端只有 claude/codex/gemini/grokbuild/openclaw/
-  // openclaw/hermes），其配置本就回并到 claude：在 claude-desktop 标签下完全隐藏
-  // 远端入口（目标选择器远端项、批量应用、远程主机导航、远端状态栏），还原本机体验。
+  // claude-desktop 没有远端概念（远端支持 claude/codex/gemini/grokbuild/
+  // opencode/openclaw/hermes/pi/mcode），其配置本就回并到 claude：在 claude-desktop
+  // 标签下完全隐藏远端入口（目标选择器远端项、批量应用、远程主机导航、远端状态栏），
+  // 还原本机体验。
   const remoteAvailableForApp =
     remoteFeatureEnabled && activeApp !== "claude-desktop";
 

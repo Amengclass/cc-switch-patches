@@ -1,5 +1,22 @@
 {
   "settings": {
+    "advanced": {
+      "proxy": {
+        "enableFeature": "在主頁面顯示應用接管開關",
+        "enableFeatureDescription": "開啟後，主頁面頂部將顯示各應用的接管開關（讓該應用請求走本地路由）；開關帶流動邊框即表示路由總開關已開啟",
+        "marqueeHint": "主頁面頂部應用開關帶流動邊框時，表示本機代理服務（路由總開關）執行中"
+      },
+      "quotaDisplay": {
+        "title": "套餐用量顯示",
+        "description": "控制供應商卡片上套餐用量的顯示格式",
+        "expanded": "展開模式",
+        "expandedDescription": "開啟後：套餐用量在卡片下方獨立面板展開顯示（含總額/已用/剩餘/重置時間）；關閉時：套餐用量直接嵌入供應商卡片（如「5小時: 5%」）"
+      }
+    },
+    "appVisibility": {
+      "showUpdateBadge": "顯示更新提示",
+      "showUpdateBadgeDescription": "有新版本時在頂欄顯示綠色圖示入口；關閉後仍會在背景檢查更新，可在「關於」頁手動查看"
+    },
     "section": {
       "remote": "SSH 遠端設定"
     },
@@ -13,19 +30,6 @@
         "title": "SSH 遠端自動讀入目前設定",
         "description": "開啟後將即時展示 SSH 遠端機器的目前應用設定（default 卡）；關閉後不再主動拉取最新設定，介面重新整理更快。",
         "note": "註：此設定僅對 Claude、Codex、Gemini、Grok Build 生效，OpenCode、OpenClaw、Hermes 始終跟隨目前應用。"
-      }
-    },
-    "advanced": {
-      "proxy": {
-        "enableFeature": "在主頁面顯示應用接管開關",
-        "enableFeatureDescription": "開啟後，主頁面頂部將顯示各應用的接管開關（讓該應用請求走本地路由）；開關帶流動邊框即表示路由總開關已開啟",
-        "marqueeHint": "主頁面頂部應用開關帶流動邊框時，表示本機代理服務（路由總開關）執行中"
-      },
-      "quotaDisplay": {
-        "title": "套餐用量顯示",
-        "description": "控制供應商卡片上套餐用量的顯示格式",
-        "expanded": "展開模式",
-        "expandedDescription": "開啟後：套餐用量在卡片下方獨立面板展開顯示（含總額/已用/剩餘/重置時間）；關閉時：套餐用量直接嵌入供應商卡片（如「5小時: 5%」）"
       }
     },
     "floatingWindow": "懸浮組件",
@@ -46,13 +50,25 @@
     "floatingOpacityDesc": "調整懸浮窗背景與邊框的不透明度（20% ~ 100%）",
     "floatingAutoCollapseTitle": "邊緣自動收起",
     "floatingAutoCollapseDesc": "拖到螢幕邊緣鬆手後收起為色條，滑鼠靠近自動展開",
-    "appVisibility": {
-      "showUpdateBadge": "顯示更新提示",
-      "showUpdateBadgeDescription": "有新版本時在頂欄顯示綠色圖示入口；關閉後仍會在背景檢查更新，可在「關於」頁手動查看"
-    },
     "modifiedGithub": "Magic GitHub",
     "modifiedAppTitle": "CC Switch Magic",
     "modifiedVersionSuffix": "magic"
+  },
+  "proxy": {
+    "takeover": {
+      "hint": "僅影響本機應用。選擇要路由的本機應用，啟用後該應用程式的請求將透過本地路由轉發；遠端接管請在對應主機目標下設定",
+      "enabled": "{{app}} 接管已啟用",
+      "disabled": "{{app}} 接管已關閉",
+      "failed": "切換接管狀態失敗：{{detail}}",
+      "tooltip": {
+        "active": "{{appLabel}} 接管中 - {{address}}:{{port}}\n切換該應用程式供應商為熱切換",
+        "broken": "{{appLabel}} 接管中，但代理服務未執行",
+        "inactive": "接管 {{appLabel}} 的請求，讓該應用程式請求走本地代理"
+      }
+    }
+  },
+  "proxyConfig": {
+    "appTakeover": "本機應用接管啟用"
   },
   "remote": {
     "readingConfigPrefix": "正在讀取 ",
@@ -215,21 +231,5 @@
     "pinnedAria": "已置頂",
     "menuSettings": "設定",
     "menuHide": "隱藏"
-  },
-  "proxy": {
-    "takeover": {
-      "hint": "僅影響本機應用。選擇要路由的本機應用，啟用後該應用程式的請求將透過本地路由轉發；遠端接管請在對應主機目標下設定",
-      "enabled": "{{app}} 接管已啟用",
-      "disabled": "{{app}} 接管已關閉",
-      "failed": "切換接管狀態失敗：{{detail}}",
-      "tooltip": {
-        "active": "{{appLabel}} 接管中 - {{address}}:{{port}}\n切換該應用程式供應商為熱切換",
-        "broken": "{{appLabel}} 接管中，但代理服務未執行",
-        "inactive": "接管 {{appLabel}} 的請求，讓該應用程式請求走本地代理"
-      }
-    }
-  },
-  "proxyConfig": {
-    "appTakeover": "本機應用接管啟用"
   }
 }

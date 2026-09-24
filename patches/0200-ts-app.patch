@@ -1,14 +1,21 @@
 diff --git a/src/App.tsx b/src/App.tsx
-index d5c644b..a7c3395 100644
+index 33706344..1f9e1a58 100644
 --- a/src/App.tsx
 +++ b/src/App.tsx
-@@ -1,4 +1,4 @@
--import { useEffect, useMemo, useState, useRef } from "react";
-+import { useEffect, useMemo, useState, useRef, useCallback } from "react";
+@@ -1,4 +1,11 @@
+-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
++import {
++  useCallback,
++  useEffect,
++  useLayoutEffect,
++  useMemo,
++  useRef,
++  useState,
++} from "react";
  import { useTranslation } from "react-i18next";
  import { motion, AnimatePresence } from "framer-motion";
  import { toast } from "sonner";
-@@ -6,6 +6,7 @@ import { invoke } from "@tauri-apps/api/core";
+@@ -6,6 +13,7 @@ import { invoke } from "@tauri-apps/api/core";
  import { useQueryClient } from "@tanstack/react-query";
  import {
    Plus,
@@ -16,7 +23,7 @@ index d5c644b..a7c3395 100644
    Settings,
    ArrowLeft,
    Minus,
-@@ -25,6 +26,7 @@ import {
+@@ -25,6 +33,7 @@ import {
    Shield,
    Cpu,
    LayoutDashboard,
@@ -24,7 +31,7 @@ index d5c644b..a7c3395 100644
    Loader2,
    RefreshCw,
  } from "lucide-react";
-@@ -41,6 +43,7 @@ import {
+@@ -41,6 +50,7 @@ import {
  } from "@/lib/api";
  import { checkAllEnvConflicts, checkEnvConflicts } from "@/lib/api/env";
  import { useProviderActions } from "@/hooks/useProviderActions";
@@ -32,7 +39,7 @@ index d5c644b..a7c3395 100644
  import { openclawKeys, useOpenClawHealth } from "@/hooks/useOpenClaw";
  import { hermesKeys, useOpenHermesWebUI } from "@/hooks/useHermes";
  import { hermesApi } from "@/lib/api/hermes";
-@@ -48,7 +51,10 @@ import { useProxyStatus } from "@/hooks/useProxyStatus";
+@@ -48,7 +58,10 @@ import { useProxyStatus } from "@/hooks/useProxyStatus";
  import { useUsageCacheBridge } from "@/hooks/useUsageCacheBridge";
  import { useTauriEvent } from "@/hooks/useTauriEvent";
  import { useLastValidValue } from "@/hooks/useLastValidValue";
@@ -44,7 +51,7 @@ index d5c644b..a7c3395 100644
  import {
    extractErrorMessage,
    translatePiProviderMutationError,
-@@ -63,16 +69,35 @@ import {
+@@ -63,16 +76,35 @@ import {
    DRAG_REGION_STYLE,
  } from "@/lib/platform";
  import { AppSwitcher } from "@/components/AppSwitcher";
@@ -81,7 +88,7 @@ index d5c644b..a7c3395 100644
  import { FailoverToggle } from "@/components/proxy/FailoverToggle";
  import { RoutingActivationBrand } from "@/components/proxy/RoutingActivationBrand";
  import UsageScriptModal from "@/components/UsageScriptModal";
-@@ -93,6 +118,8 @@ import { DeepLinkImportDialog } from "@/components/DeepLinkImportDialog";
+@@ -93,6 +125,8 @@ import { DeepLinkImportDialog } from "@/components/DeepLinkImportDialog";
  import { FirstRunNoticeDialog } from "@/components/FirstRunNoticeDialog";
  import { AgentsPanel } from "@/components/agents/AgentsPanel";
  import { UniversalProviderPanel } from "@/components/universal";
@@ -90,7 +97,7 @@ index d5c644b..a7c3395 100644
  import { McpIcon } from "@/components/BrandIcons";
  import { Button } from "@/components/ui/button";
  import { SessionManagerPage } from "@/components/sessions/SessionManagerPage";
-@@ -124,6 +151,7 @@ type View =
+@@ -124,6 +158,7 @@ type View =
    | "universal"
    | "sessions"
    | "workspace"
@@ -98,7 +105,7 @@ index d5c644b..a7c3395 100644
    | "openclawEnv"
    | "openclawTools"
    | "openclawAgents"
-@@ -159,6 +187,7 @@ const VALID_VIEWS: View[] = [
+@@ -159,6 +194,7 @@ const VALID_VIEWS: View[] = [
    "universal",
    "sessions",
    "workspace",
@@ -106,7 +113,7 @@ index d5c644b..a7c3395 100644
    "openclawEnv",
    "openclawTools",
    "openclawAgents",
-@@ -166,6 +195,10 @@ const VALID_VIEWS: View[] = [
+@@ -166,6 +202,10 @@ const VALID_VIEWS: View[] = [
  ];
  
  const getInitialView = (): View => {
@@ -117,7 +124,7 @@ index d5c644b..a7c3395 100644
    const saved = localStorage.getItem(VIEW_STORAGE_KEY) as View | null;
    if (saved && VALID_VIEWS.includes(saved)) {
      return saved;
-@@ -180,6 +213,15 @@ function App() {
+@@ -180,6 +220,15 @@ function App() {
    const [activeApp, setActiveApp] = useState<AppId>(getInitialApp);
    const sharedFeatureApp: AppId =
      activeApp === "claude-desktop" ? "claude" : activeApp;
@@ -133,7 +140,7 @@ index d5c644b..a7c3395 100644
    const [currentView, setCurrentView] = useState<View>(getInitialView);
    const [skillsDiscoverySource, setSkillsDiscoverySource] =
      useState<SkillsPageSource>("repos");
-@@ -197,6 +239,47 @@ function App() {
+@@ -197,6 +246,47 @@ function App() {
        hasSkills: false,
      });
  
@@ -181,7 +188,7 @@ index d5c644b..a7c3395 100644
    useEffect(() => {
      localStorage.setItem(VIEW_STORAGE_KEY, currentView);
    }, [currentView]);
-@@ -263,12 +346,22 @@ function App() {
+@@ -280,12 +370,22 @@ function App() {
    const [promptPrimaryAction, setPromptPrimaryAction] =
      useState<PromptPrimaryAction>("prompt");
    const mcpPanelRef = useRef<any>(null);
@@ -205,7 +212,7 @@ index d5c644b..a7c3395 100644
    const addActionButtonClass =
      "bg-orange-500 hover:bg-orange-600 dark:bg-orange-500 dark:hover:bg-orange-600 text-white shadow-lg shadow-orange-500/30 dark:shadow-orange-500/40 rounded-full w-8 h-8";
  
-@@ -278,11 +371,33 @@ function App() {
+@@ -295,11 +395,33 @@ function App() {
      status: proxyStatus,
    } = useProxyStatus();
    const proxyAppId = isProxyAppId(activeApp) ? activeApp : null;
@@ -239,7 +246,7 @@ index d5c644b..a7c3395 100644
    const activeProviderId = useMemo(() => {
      if (!proxyAppId) return undefined;
      const target = proxyStatus?.active_targets?.find(
-@@ -291,12 +406,73 @@ function App() {
+@@ -308,12 +430,73 @@ function App() {
      return target?.provider_id;
    }, [proxyStatus?.active_targets, proxyAppId]);
  
@@ -316,7 +323,7 @@ index d5c644b..a7c3395 100644
    const isOpenClawView =
      activeApp === "openclaw" &&
      (currentView === "providers" ||
-@@ -307,7 +483,8 @@ function App() {
+@@ -324,7 +507,8 @@ function App() {
        currentView === "openclawAgents");
    const { data: openclawHealthWarnings = [] } =
      useOpenClawHealth(isOpenClawView);
@@ -326,15 +333,7 @@ index d5c644b..a7c3395 100644
    const hasSessionSupport =
      sharedFeatureApp === "claude" ||
      sharedFeatureApp === "codex" ||
-@@ -317,7 +494,6 @@ function App() {
-     sharedFeatureApp === "gemini" ||
-     sharedFeatureApp === "hermes" ||
-     sharedFeatureApp === "pi";
--  const hasMcpSupport = sharedFeatureApp !== "pi";
- 
-   const {
-     addProvider,
-@@ -330,38 +506,100 @@ function App() {
+@@ -348,38 +532,100 @@ function App() {
      activeApp,
      currentAppUsesProxy && isProxyRunning,
      isProxyRunning && isCurrentAppTakeoverActive,
@@ -462,7 +461,7 @@ index d5c644b..a7c3395 100644
    const disableOmoMutation = useDisableCurrentOmo();
    const handleDisableOmo = () => {
      disableOmoMutation.mutate(undefined, {
-@@ -686,6 +924,12 @@ function App() {
+@@ -705,6 +951,12 @@ function App() {
      };
    }, []);
  
@@ -475,7 +474,7 @@ index d5c644b..a7c3395 100644
    const [launchDashboardOpen, setLaunchDashboardOpen] = useState(false);
    const openHermesWebUI = useOpenHermesWebUI(() =>
      setLaunchDashboardOpen(true),
-@@ -704,6 +948,66 @@ function App() {
+@@ -723,6 +975,66 @@ function App() {
      }
    };
  
@@ -542,7 +541,7 @@ index d5c644b..a7c3395 100644
    const handleEditProvider = async ({
      provider,
      originalId,
-@@ -711,6 +1015,39 @@ function App() {
+@@ -730,6 +1042,39 @@ function App() {
      provider: Provider;
      originalId?: string;
    }) => {
@@ -582,7 +581,7 @@ index d5c644b..a7c3395 100644
      await updateProvider(provider, originalId);
      setEditingProvider(null);
    };
-@@ -719,6 +1056,49 @@ function App() {
+@@ -738,6 +1083,49 @@ function App() {
      if (!confirmAction) return;
      const { provider, action } = confirmAction;
  
@@ -632,7 +631,7 @@ index d5c644b..a7c3395 100644
      if (action === "remove") {
        // Remove from live config only (for additive mode apps like OpenCode/OpenClaw)
        // Does NOT delete from database - provider remains in the list
-@@ -796,6 +1176,41 @@ function App() {
+@@ -819,6 +1207,41 @@ function App() {
      const newSortIndex =
        provider.sortIndex !== undefined ? provider.sortIndex + 1 : undefined;
  
@@ -674,7 +673,7 @@ index d5c644b..a7c3395 100644
      const duplicatedProvider: Omit<Provider, "id" | "createdAt"> & {
        providerKey?: string;
        addToLive?: boolean;
-@@ -1014,6 +1429,10 @@ function App() {
+@@ -1037,6 +1460,10 @@ function App() {
                onOpenChange={() => setCurrentView("providers")}
                onImportSuccess={handleImportSuccess}
                defaultTab={settingsDefaultTab}
@@ -685,7 +684,7 @@ index d5c644b..a7c3395 100644
              />
            );
          case "prompts":
-@@ -1023,6 +1442,8 @@ function App() {
+@@ -1046,6 +1473,8 @@ function App() {
                open={true}
                onOpenChange={() => setCurrentView("providers")}
                appId={sharedFeatureApp}
@@ -694,7 +693,7 @@ index d5c644b..a7c3395 100644
                onInteractionBlockedChange={setPromptManagementBusy}
                onNavigationBlockedChange={setPromptNavigationBusy}
                onPrimaryActionChange={setPromptPrimaryAction}
-@@ -1035,22 +1456,22 @@ function App() {
+@@ -1058,22 +1487,22 @@ function App() {
              <UnifiedSkillsPanel
                ref={unifiedSkillsPanelRef}
                onOpenDiscovery={handleOpenSkillsDiscovery}
@@ -723,7 +722,7 @@ index d5c644b..a7c3395 100644
              />
            );
          case "mcp":
-@@ -1058,6 +1479,8 @@ function App() {
+@@ -1081,6 +1510,8 @@ function App() {
              <UnifiedMcpPanel
                ref={mcpPanelRef}
                onOpenChange={() => setCurrentView("providers")}
@@ -732,7 +731,7 @@ index d5c644b..a7c3395 100644
                onInteractionBlockedChange={setMcpManagementBusy}
              />
            );
-@@ -1071,22 +1494,46 @@ function App() {
+@@ -1094,22 +1525,46 @@ function App() {
                <UniversalProviderPanel />
              </div>
            );
@@ -783,7 +782,7 @@ index d5c644b..a7c3395 100644
          default:
            return (
              <div className="px-6 flex flex-col flex-1 min-h-0 overflow-hidden">
-@@ -1102,19 +1549,67 @@ function App() {
+@@ -1128,19 +1583,67 @@ function App() {
                    >
                      <ProviderList
                        providers={providers}
@@ -858,7 +857,7 @@ index d5c644b..a7c3395 100644
                        onEdit={(provider) => {
                          setEditingProvider(provider);
                        }}
-@@ -1146,11 +1641,17 @@ function App() {
+@@ -1173,11 +1676,17 @@ function App() {
                        }
                        onCreate={() => setIsAddOpen(true)}
                        onSetAsDefault={
@@ -881,7 +880,7 @@ index d5c644b..a7c3395 100644
                        }
                      />
                    </motion.div>
-@@ -1313,6 +1814,8 @@ function App() {
+@@ -1341,6 +1850,8 @@ function App() {
                      })}
                    {currentView === "sessions" && t("sessionManager.title")}
                    {currentView === "workspace" && t("workspace.title")}
@@ -890,7 +889,7 @@ index d5c644b..a7c3395 100644
                    {currentView === "openclawEnv" && t("openclaw.env.title")}
                    {currentView === "openclawTools" && t("openclaw.tools.title")}
                    {currentView === "openclawAgents" &&
-@@ -1341,12 +1844,15 @@ function App() {
+@@ -1369,12 +1880,15 @@ function App() {
                  >
                    <Settings className="w-4 h-4" />
                  </Button>
@@ -912,7 +911,7 @@ index d5c644b..a7c3395 100644
                  {isCurrentAppTakeoverActive && (
                    <Button
                      variant="ghost"
-@@ -1374,7 +1880,57 @@ function App() {
+@@ -1402,7 +1916,57 @@ function App() {
                    className="flex shrink-0 items-center gap-1.5"
                    style={{ WebkitAppRegion: "no-drag" } as any}
                  >
@@ -971,7 +970,7 @@ index d5c644b..a7c3395 100644
                      <ClaudeDesktopRouteToggle />
                    ) : proxyAppId ? (
                      <>
-@@ -1405,6 +1961,7 @@ function App() {
+@@ -1434,6 +1998,7 @@ function App() {
                    activeApp={activeApp}
                    onSwitch={setActiveApp}
                    visibleApps={visibleApps}
@@ -979,7 +978,7 @@ index d5c644b..a7c3395 100644
                  />
                )}
              </div>
-@@ -1454,6 +2011,28 @@ function App() {
+@@ -1483,6 +2048,28 @@ function App() {
                      </Button>
                    </>
                  )}
@@ -1008,7 +1007,7 @@ index d5c644b..a7c3395 100644
                  {currentView === "skills" && (
                    <>
                      <Button
-@@ -1481,18 +2060,19 @@ function App() {
+@@ -1510,18 +2097,19 @@ function App() {
                          ? t("skills.checkingUpdates")
                          : t("skills.checkUpdates")}
                      </Button>
@@ -1040,7 +1039,7 @@ index d5c644b..a7c3395 100644
                      <Button
                        variant="ghost"
                        size="sm"
-@@ -1609,20 +2189,40 @@ function App() {
+@@ -1638,20 +2226,40 @@ function App() {
                                >
                                  <LayoutDashboard className="w-4 h-4" />
                                </Button>
@@ -1085,7 +1084,7 @@ index d5c644b..a7c3395 100644
                                <Button
                                  variant="ghost"
                                  size="sm"
-@@ -1668,6 +2268,28 @@ function App() {
+@@ -1697,6 +2305,28 @@ function App() {
                                >
                                  <History className="w-4 h-4" />
                                </Button>
@@ -1114,16 +1113,7 @@ index d5c644b..a7c3395 100644
                              </>
                            ) : (
                              <>
-@@ -1710,7 +2332,7 @@ function App() {
-                               >
-                                 <History className="flex-shrink-0 w-4 h-4" />
-                               </Button>
--                              {hasMcpSupport && (
-+                              {activeApp !== "pi" && (
-                                 <Button
-                                   variant="ghost"
-                                   size="sm"
-@@ -1721,6 +2343,19 @@ function App() {
+@@ -1750,6 +2380,19 @@ function App() {
                                    <McpIcon size={16} />
                                  </Button>
                                )}
@@ -1143,7 +1133,7 @@ index d5c644b..a7c3395 100644
                              </>
                            )}
                          </motion.div>
-@@ -1748,14 +2383,130 @@ function App() {
+@@ -1780,14 +2423,130 @@ function App() {
          {isOpenClawView && openclawHealthWarnings.length > 0 && (
            <OpenClawHealthBanner warnings={openclawHealthWarnings} />
          )}
@@ -1276,7 +1266,7 @@ index d5c644b..a7c3395 100644
        />
  
        <EditProviderDialog
-@@ -1769,6 +2520,17 @@ function App() {
+@@ -1801,6 +2560,17 @@ function App() {
          onSubmit={handleEditProvider}
          appId={activeApp}
          isProxyTakeover={isCurrentAppTakeoverActive}

@@ -1,5 +1,5 @@
 diff --git a/src-tauri/src/lib.rs b/src-tauri/src/lib.rs
-index 36b76cb..552ad4d 100644
+index b4d602b5..a99b1385 100644
 --- a/src-tauri/src/lib.rs
 +++ b/src-tauri/src/lib.rs
 @@ -12,6 +12,8 @@ mod config;
@@ -11,11 +11,12 @@ index 36b76cb..552ad4d 100644
  mod gemini_config;
  mod gemini_mcp;
  mod grok_config;
-@@ -20,9 +22,10 @@ mod init_status;
+@@ -20,10 +22,11 @@ mod init_status;
  mod lightweight;
  #[cfg(target_os = "linux")]
  mod linux_fix;
 +mod magic;
+ mod mcode_config;
  mod mcp;
  mod model_capabilities;
 -mod openclaw_config;
@@ -23,7 +24,7 @@ index 36b76cb..552ad4d 100644
  mod opencode_config;
  mod panic_hook;
  mod pi_config;
-@@ -30,6 +33,7 @@ mod prompt;
+@@ -31,6 +34,7 @@ mod prompt;
  mod prompt_files;
  mod provider;
  mod proxy;
@@ -31,7 +32,7 @@ index 36b76cb..552ad4d 100644
  mod services;
  mod session_manager;
  mod settings;
-@@ -408,6 +412,9 @@ pub fn run() {
+@@ -420,6 +424,9 @@ pub fn run() {
          .plugin(tauri_plugin_deep_link::init())
          // 拦截窗口关闭：根据设置决定是否最小化到托盘
          .on_window_event(|window, event| {
@@ -41,7 +42,7 @@ index 36b76cb..552ad4d 100644
              if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                  // 数据库版本过新的恢复模式下没有托盘可唤回，关闭即退出，避免应用隐身后台
                  let in_db_recovery = crate::init_status::get_init_error()
-@@ -445,6 +452,8 @@ pub fn run() {
+@@ -457,6 +464,8 @@ pub fn run() {
          .plugin(
              tauri_plugin_window_state::Builder::default()
                  .with_state_flags(window_state_flags())
@@ -50,7 +51,7 @@ index 36b76cb..552ad4d 100644
                  .build(),
          )
          .setup(|app| {
-@@ -1201,6 +1210,9 @@ pub fn run() {
+@@ -1218,6 +1227,9 @@ pub fn run() {
                  }
              }
  
@@ -60,7 +61,7 @@ index 36b76cb..552ad4d 100644
              // 异常退出恢复 + 代理状态自动恢复
              let app_handle = app.handle().clone();
              tauri::async_runtime::spawn(async move {
-@@ -1365,6 +1377,9 @@ pub fn run() {
+@@ -1382,6 +1394,9 @@ pub fn run() {
                  }
              }
  
@@ -70,7 +71,7 @@ index 36b76cb..552ad4d 100644
  
              Ok(())
          })
-@@ -1467,10 +1482,18 @@ pub fn run() {
+@@ -1484,10 +1499,18 @@ pub fn run() {
              commands::list_pi_prompt_templates,
              commands::upsert_pi_prompt_template,
              commands::delete_pi_prompt_template,
@@ -89,7 +90,7 @@ index 36b76cb..552ad4d 100644
              // Profile management (项目配置方案)
              commands::list_profiles,
              commands::create_profile,
-@@ -1623,6 +1646,71 @@ pub fn run() {
+@@ -1641,6 +1664,71 @@ pub fn run() {
              commands::probe_tool_installations,
              // Provider terminal
              commands::open_provider_terminal,
@@ -161,7 +162,7 @@ index 36b76cb..552ad4d 100644
              // Universal Provider management
              commands::get_universal_providers,
              commands::get_universal_provider,
-@@ -1666,6 +1754,27 @@ pub fn run() {
+@@ -1684,6 +1772,27 @@ pub fn run() {
              commands::scan_local_proxies,
              // Window theme control
              commands::set_window_theme,
@@ -189,7 +190,7 @@ index 36b76cb..552ad4d 100644
              // Generic managed auth commands
              commands::auth_start_login,
              commands::auth_poll_for_account,
-@@ -1880,6 +1989,9 @@ pub fn run() {
+@@ -1902,6 +2011,9 @@ pub fn run() {
  /// 确保 Claude Code/Codex/Gemini 的配置不会处于损坏状态。
  /// 使用 stop_with_restore_keep_state 保留 settings 表中的代理状态，下次启动时自动恢复。
  pub async fn cleanup_before_exit(app_handle: &tauri::AppHandle) {
@@ -199,7 +200,7 @@ index 36b76cb..552ad4d 100644
      if let Some(state) = app_handle.try_state::<store::AppState>() {
          let proxy_service = &state.proxy_service;
  
-@@ -1965,7 +2077,18 @@ async fn restore_proxy_state_on_startup(state: &store::AppState) {
+@@ -1987,7 +2099,18 @@ async fn restore_proxy_state_on_startup(state: &store::AppState) {
      let apps_to_restore = enabled_proxy_apps_on_startup(&state.db).await;
  
      if apps_to_restore.is_empty() {

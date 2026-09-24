@@ -1,12 +1,12 @@
 diff --git a/src-tauri/Cargo.toml b/src-tauri/Cargo.toml
-index f567bfa..60b25aa 100644
+index 3e1e2fd1..4aee7ac7 100644
 --- a/src-tauri/Cargo.toml
 +++ b/src-tauri/Cargo.toml
 @@ -1,5 +1,5 @@
  [package]
 -name = "cc-switch"
 +name = "cc-switch-magic"
- version = "3.20.1"
+ version = "3.20.4"
  description = "All-in-One Assistant for Claude Code, Codex & Gemini CLI"
  authors = ["Jason Young"]
 @@ -27,7 +27,7 @@ serde_json = { version = "1.0", features = ["preserve_order"] }

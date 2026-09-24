@@ -1,5 +1,5 @@
 diff --git a/.gitignore b/.gitignore
-index 525d4a7..577bb3f 100644
+index 525d4a7b..577bb3f5 100644
 --- a/.gitignore
 +++ b/.gitignore
 @@ -29,3 +29,10 @@ copilot-api
@@ -14,7 +14,7 @@ index 525d4a7..577bb3f 100644
 +ci_logs/
 +ci_logs.zip
 diff --git a/pnpm-workspace.yaml b/pnpm-workspace.yaml
-index 435b40e..791db22 100644
+index 435b40ef..791db22a 100644
 --- a/pnpm-workspace.yaml
 +++ b/pnpm-workspace.yaml
 @@ -6,3 +6,7 @@ onlyBuiltDependencies:

@@ -1409,6 +1409,7 @@ fn app_label(app_type: &AppType) -> &'static str {
         AppType::OpenClaw => "OpenClaw",
         AppType::Hermes => "Hermes",
         AppType::Pi => "Pi",
+        AppType::Mcode => "MiniMax Code",
     }
 }
 
@@ -1653,7 +1654,7 @@ async fn build_floating_entry(state: &AppState, app_type: &AppType) -> FloatingE
                     Some(provider) => {
                         let model = resolve_model(app_type, &provider);
                         let usage_summary = crate::tray::format_usage_suffix(
-                            state,
+                            &state.usage_cache,
                             app_type,
                             &provider,
                             &provider_id,

@@ -1,24 +1,24 @@
 diff --git a/src/config/appConfig.tsx b/src/config/appConfig.tsx
-index e619f02..0dd5ba1 100644
+index 125570f0..1a4baa8b 100644
 --- a/src/config/appConfig.tsx
 +++ b/src/config/appConfig.tsx
-@@ -28,6 +28,7 @@ export const APP_IDS: AppId[] = [
-   "pi",
+@@ -29,6 +29,7 @@ export const APP_IDS: AppId[] = [
+   "mcode",
  ];
  
 +/** App IDs shown in Skills panels */
  export const DEFAULT_VISIBLE_APPS: VisibleApps = {
    claude: true,
    "claude-desktop": true,
-@@ -47,6 +48,7 @@ export const SKILLS_APP_IDS: AppId[] = [
+@@ -49,6 +50,7 @@ export const SKILLS_APP_IDS: AppId[] = [
    "gemini",
    "grokbuild",
    "opencode",
 +  "openclaw",
    "hermes",
    "pi",
- ];
-@@ -99,6 +101,48 @@ export function isMcpAppId(appId: string): appId is McpAppId {
+   "mcode",
+@@ -104,6 +106,48 @@ export function isMcpAppId(appId: string): appId is McpAppId {
    return (MCP_APP_IDS as string[]).includes(appId);
  }
  
@@ -68,10 +68,10 @@ index e619f02..0dd5ba1 100644
    claude: {
      label: "Claude",
 diff --git a/src/contexts/UpdateContext.tsx b/src/contexts/UpdateContext.tsx
-index bdc7fb6..3e1facf 100644
+index 80330909..cbdd82a5 100644
 --- a/src/contexts/UpdateContext.tsx
 +++ b/src/contexts/UpdateContext.tsx
-@@ -66,6 +66,7 @@ export function UpdateProvider({ children }: { children: React.ReactNode }) {
+@@ -67,6 +67,7 @@ export function UpdateProvider({ children }: { children: React.ReactNode }) {
  
      try {
        const result = await checkForUpdate({ timeout: 30000 });
@@ -79,17 +79,17 @@ index bdc7fb6..3e1facf 100644
  
        if (result.status === "available") {
          setHasUpdate(true);
-@@ -90,7 +91,7 @@ export function UpdateProvider({ children }: { children: React.ReactNode }) {
+@@ -91,7 +92,7 @@ export function UpdateProvider({ children }: { children: React.ReactNode }) {
          return false; // 已是最新
        }
      } catch (err) {
 -      console.error("检查更新失败:", err);
 +      console.error("[Update] 检查更新失败:", err);
-       setError(err instanceof Error ? err.message : "检查更新失败");
+       setError(extractErrorMessage(err) || "检查更新失败");
        setHasUpdate(false);
        throw err; // 抛出错误让调用方处理
 diff --git a/src/index.css b/src/index.css
-index 99821ee..60e321c 100644
+index 99821eef..60e321c3 100644
 --- a/src/index.css
 +++ b/src/index.css
 @@ -162,6 +162,59 @@ html[data-window-active="false"] .status-heartbeat {
@@ -161,7 +161,7 @@ index 99821ee..60e321c 100644
    .status-heartbeat {
      opacity: 1;
 diff --git a/src/types.ts b/src/types.ts
-index 560d3cf..c9bf697 100644
+index 0098ba25..4b2387c8 100644
 --- a/src/types.ts
 +++ b/src/types.ts
 @@ -66,6 +66,7 @@ export interface UsageScript {
@@ -172,7 +172,7 @@ index 560d3cf..c9bf697 100644
    codingPlanProvider?: string; // Coding Plan 供应商标识（如 "kimi", "zhipu", "minimax"）
    autoQueryInterval?: number; // 自动查询间隔（单位：分钟，0 表示禁用）
    autoIntervalMinutes?: number; // 自动查询间隔（分钟）- 别名字段
-@@ -366,6 +367,22 @@ export interface Settings {
+@@ -367,6 +368,22 @@ export interface Settings {
    enableClaudePluginIntegration?: boolean;
    // 跳过 Claude Code 初次安装确认（写入 ~/.claude.json 的 hasCompletedOnboarding）
    skipClaudeOnboarding?: boolean;
@@ -195,7 +195,7 @@ index 560d3cf..c9bf697 100644
    // 是否开机自启
    launchOnStartup?: boolean;
    // 静默启动（程序启动时不显示主窗口）
-@@ -404,6 +421,9 @@ export interface Settings {
+@@ -405,6 +422,9 @@ export interface Settings {
    // 主页面显示的应用（默认全部显示）
    visibleApps?: VisibleApps;
  
@@ -205,7 +205,7 @@ index 560d3cf..c9bf697 100644
    // ===== 设备级目录覆盖 =====
    // 覆盖 Claude Code 配置目录（可选）
    claudeConfigDir?: string;
-@@ -457,6 +477,10 @@ export interface Settings {
+@@ -458,6 +478,10 @@ export interface Settings {
    // Linux: "gnome-terminal" | "konsole" | "xfce4-terminal" | "alacritty" | "kitty" | "ghostty"
    preferredTerminal?: string;
  
@@ -217,7 +217,7 @@ index 560d3cf..c9bf697 100644
    localMigrations?: {
      codexThirdPartyHistoryProviderBucketV1?: {
 diff --git a/vite.config.ts b/vite.config.ts
-index c1e431a..67ad8bc 100644
+index c1e431a6..67ad8bc0 100644
 --- a/vite.config.ts
 +++ b/vite.config.ts
 @@ -16,6 +16,14 @@ export default defineConfig(({ command }) => ({

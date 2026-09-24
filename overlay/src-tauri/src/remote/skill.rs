@@ -69,6 +69,8 @@ pub struct RemoteSkillApps {
     pub hermes: bool,
     #[serde(default)]
     pub pi: bool,
+    #[serde(default)]
+    pub mcode: bool,
 }
 
 impl RemoteSkillApps {
@@ -82,6 +84,7 @@ impl RemoteSkillApps {
             "openclaw" => self.openclaw = enabled,
             "hermes" => self.hermes = enabled,
             "pi" => self.pi = enabled,
+            "mcode" => self.mcode = enabled,
             _ => {}
         }
     }
@@ -248,6 +251,7 @@ fn enabled_app_dirs(apps: &RemoteSkillApps) -> Vec<&'static str> {
         (".openclaw/workspace/skills", apps.openclaw),
         (".hermes/skills", apps.hermes),
         (".pi/agent/skills", apps.pi),
+        (".minimax/skills", apps.mcode),
     ];
     map.iter()
         .filter(|(_, enabled)| *enabled)
@@ -331,6 +335,7 @@ pub(crate) fn app_skills_rel(app: &str) -> Option<&'static str> {
         "openclaw" => Some(".openclaw/workspace/skills"),
         "hermes" => Some(".hermes/skills"),
         "pi" => Some(".pi/agent/skills"),
+        "mcode" => Some(".minimax/skills"),
         _ => None,
     }
 }
@@ -578,6 +583,9 @@ pub async fn scan_remote_unmanaged_skills<F: FileOps>(
         "openclaw".to_string(),
     ));
     sources.push((format!("{root}/.hermes/skills"), "hermes".to_string()));
+    // 之前漏了 pi：app_skills_rel 有它、扫描来源却没列，导致 Pi 的未管理技能扫不到。
+    sources.push((format!("{root}/.pi/agent/skills"), "pi".to_string()));
+    sources.push((format!("{root}/.minimax/skills"), "mcode".to_string()));
 
     let mut unmanaged: HashMap<String, RemoteUnmanagedSkill> = HashMap::new();
 

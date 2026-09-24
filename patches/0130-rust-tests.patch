@@ -1,5 +1,5 @@
 diff --git a/src-tauri/tests/import_export_sync.rs b/src-tauri/tests/import_export_sync.rs
-index 8c1f560..e7b53ed 100644
+index cbdecf59..2217bda9 100644
 --- a/src-tauri/tests/import_export_sync.rs
 +++ b/src-tauri/tests/import_export_sync.rs
 @@ -750,6 +750,7 @@ command = "echo"
@@ -8,18 +8,18 @@ index 8c1f560..e7b53ed 100644
                  opencode: false,
 +                openclaw: false,
                  hermes: false,
+                 mcode: false,
              },
-             description: None,
-@@ -880,6 +881,7 @@ fn import_from_claude_merges_into_config() {
+@@ -881,6 +882,7 @@ fn import_from_claude_merges_into_config() {
                  gemini: false,
                  grokbuild: false,
                  opencode: false,
 +                openclaw: false,
                  hermes: false,
+                 mcode: false,
              },
-             description: None,
 diff --git a/src-tauri/tests/mcp_commands.rs b/src-tauri/tests/mcp_commands.rs
-index 94c972c..1088e48 100644
+index 733efb9c..d0a54313 100644
 --- a/src-tauri/tests/mcp_commands.rs
 +++ b/src-tauri/tests/mcp_commands.rs
 @@ -1,12 +1,14 @@
@@ -39,103 +39,103 @@ index 94c972c..1088e48 100644
  };
  
  #[path = "support.rs"]
-@@ -409,6 +411,7 @@ command = "echo"
+@@ -544,6 +546,7 @@ command = "echo"
                  grokbuild: false,
                  opencode: false,
                  hermes: false,
 +                openclaw: false,
+                 mcode: false,
              },
              description: None,
-             homepage: None,
-@@ -554,6 +557,7 @@ fn set_mcp_enabled_for_codex_writes_live_config() {
+@@ -690,6 +693,7 @@ fn set_mcp_enabled_for_codex_writes_live_config() {
                  grokbuild: false,
                  opencode: false,
                  hermes: false,
 +                openclaw: false,
+                 mcode: false,
              },
              description: None,
-             homepage: None,
-@@ -620,6 +624,7 @@ fn enabling_codex_mcp_skips_when_codex_dir_missing() {
+@@ -757,6 +761,7 @@ fn enabling_codex_mcp_skips_when_codex_dir_missing() {
                  grokbuild: false,
                  opencode: false,
                  hermes: false,
 +                openclaw: false,
+                 mcode: false,
              },
              description: None,
-             homepage: None,
-@@ -666,6 +671,7 @@ fn upsert_mcp_server_disabling_app_removes_from_claude_live_config() {
+@@ -804,6 +809,7 @@ fn upsert_mcp_server_disabling_app_removes_from_claude_live_config() {
                  grokbuild: false,
                  opencode: false,
                  hermes: false,
 +                openclaw: false,
+                 mcode: false,
              },
              description: None,
-             homepage: None,
-@@ -701,6 +707,7 @@ fn upsert_mcp_server_disabling_app_removes_from_claude_live_config() {
+@@ -840,6 +846,7 @@ fn upsert_mcp_server_disabling_app_removes_from_claude_live_config() {
                  grokbuild: false,
                  opencode: false,
                  hermes: false,
 +                openclaw: false,
+                 mcode: false,
              },
              description: None,
-             homepage: None,
-@@ -835,6 +842,7 @@ fn enabling_gemini_mcp_skips_when_gemini_dir_missing() {
+@@ -975,6 +982,7 @@ fn enabling_gemini_mcp_skips_when_gemini_dir_missing() {
                  grokbuild: false,
                  opencode: false,
                  hermes: false,
 +                openclaw: false,
+                 mcode: false,
              },
              description: None,
-             homepage: None,
-@@ -891,6 +899,7 @@ fn enabling_claude_mcp_skips_when_claude_config_absent() {
+@@ -1032,6 +1040,7 @@ fn enabling_claude_mcp_skips_when_claude_config_absent() {
                  grokbuild: false,
                  opencode: false,
                  hermes: false,
 +                openclaw: false,
+                 mcode: false,
              },
              description: None,
-             homepage: None,
-@@ -947,6 +956,7 @@ fn explicit_default_claude_dir_keeps_default_split_mcp_path() {
+@@ -1089,6 +1098,7 @@ fn explicit_default_claude_dir_keeps_default_split_mcp_path() {
                  grokbuild: false,
                  opencode: false,
                  hermes: false,
 +                openclaw: false,
+                 mcode: false,
              },
              description: None,
-             homepage: None,
-@@ -1004,6 +1014,7 @@ fn custom_claude_dir_writes_mcp_inside_config_dir() {
+@@ -1147,6 +1157,7 @@ fn custom_claude_dir_writes_mcp_inside_config_dir() {
                  grokbuild: false,
                  opencode: false,
                  hermes: false,
 +                openclaw: false,
+                 mcode: false,
              },
              description: None,
-             homepage: None,
-@@ -1084,6 +1095,7 @@ fn custom_claude_dir_sync_does_not_copy_default_profile() {
+@@ -1228,6 +1239,7 @@ fn custom_claude_dir_sync_does_not_copy_default_profile() {
                  grokbuild: false,
                  opencode: false,
                  hermes: false,
 +                openclaw: false,
+                 mcode: false,
              },
              description: None,
-             homepage: None,
-@@ -1224,6 +1236,7 @@ fn sync_all_enabled_removes_known_disabled_but_preserves_unknown_live_entries()
+@@ -1369,6 +1381,7 @@ fn sync_all_enabled_removes_known_disabled_but_preserves_unknown_live_entries()
                  grokbuild: false,
                  opencode: false,
                  hermes: false,
 +                openclaw: false,
+                 mcode: false,
              },
              description: None,
-             homepage: None,
-@@ -1247,6 +1260,7 @@ fn sync_all_enabled_removes_known_disabled_but_preserves_unknown_live_entries()
+@@ -1393,6 +1406,7 @@ fn sync_all_enabled_removes_known_disabled_but_preserves_unknown_live_entries()
                  grokbuild: false,
                  opencode: false,
                  hermes: false,
 +                openclaw: false,
+                 mcode: false,
              },
              description: None,
-             homepage: None,
-@@ -1277,3 +1291,176 @@ fn sync_all_enabled_removes_known_disabled_but_preserves_unknown_live_entries()
+@@ -1424,3 +1438,176 @@ fn sync_all_enabled_removes_known_disabled_but_preserves_unknown_live_entries()
          "live entries unknown to DB should be preserved"
      );
  }
@@ -313,7 +313,7 @@ index 94c972c..1088e48 100644
 +    );
 +}
 diff --git a/src-tauri/tests/provider_commands.rs b/src-tauri/tests/provider_commands.rs
-index baf5324..82c1a53 100644
+index 0b5cbe9b..eca97786 100644
 --- a/src-tauri/tests/provider_commands.rs
 +++ b/src-tauri/tests/provider_commands.rs
 @@ -377,6 +377,7 @@ command = "say"
@@ -322,10 +322,10 @@ index baf5324..82c1a53 100644
                  opencode: false,
 +                openclaw: false,
                  hermes: false,
+                 mcode: false,
              },
-             description: None,
 diff --git a/src-tauri/tests/provider_service.rs b/src-tauri/tests/provider_service.rs
-index 9ffd78c..801aff4 100644
+index bbb8183e..25ecff96 100644
 --- a/src-tauri/tests/provider_service.rs
 +++ b/src-tauri/tests/provider_service.rs
 @@ -166,6 +166,7 @@ command = "say"
@@ -334,42 +334,42 @@ index 9ffd78c..801aff4 100644
                  opencode: false,
 +                openclaw: false,
                  hermes: false,
+                 mcode: false,
              },
-             description: None,
-@@ -1532,6 +1533,7 @@ fn reapply_codex_official_live_resyncs_mcp_servers() {
+@@ -1533,6 +1534,7 @@ fn reapply_codex_official_live_resyncs_mcp_servers() {
                  gemini: false,
                  grokbuild: false,
                  opencode: false,
 +                openclaw: false,
                  hermes: false,
+                 mcode: false,
              },
-             description: None,
-@@ -1631,6 +1633,7 @@ fn reapply_codex_official_live_projects_mcp_despite_broken_claude_json() {
+@@ -1633,6 +1635,7 @@ fn reapply_codex_official_live_projects_mcp_despite_broken_claude_json() {
                  gemini: false,
                  grokbuild: false,
                  opencode: false,
 +                openclaw: false,
                  hermes: false,
+                 mcode: false,
              },
-             description: None,
-@@ -1724,6 +1727,7 @@ fn switch_codex_projects_mcp_despite_broken_claude_json() {
+@@ -1727,6 +1730,7 @@ fn switch_codex_projects_mcp_despite_broken_claude_json() {
                  gemini: false,
                  grokbuild: false,
                  opencode: false,
 +                openclaw: false,
                  hermes: false,
+                 mcode: false,
              },
-             description: None,
-@@ -1788,6 +1792,7 @@ fn sync_all_enabled_reports_broken_app_but_projects_the_rest() {
+@@ -1792,6 +1796,7 @@ fn sync_all_enabled_reports_broken_app_but_projects_the_rest() {
                  gemini: false,
                  grokbuild: false,
                  opencode: false,
 +                openclaw: false,
                  hermes: false,
+                 mcode: false,
              },
-             description: None,
 diff --git a/src-tauri/tests/skill_sync.rs b/src-tauri/tests/skill_sync.rs
-index fcba98a..7bb7d0a 100644
+index fcba98a7..7bb7d0a3 100644
 --- a/src-tauri/tests/skill_sync.rs
 +++ b/src-tauri/tests/skill_sync.rs
 @@ -56,6 +56,7 @@ fn import_from_apps_respects_explicit_app_selection() {

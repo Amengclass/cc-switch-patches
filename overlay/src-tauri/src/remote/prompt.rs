@@ -16,8 +16,16 @@ use crate::services::pi_prompt_files::{PiPromptFileKind, PiPromptFileSnapshot, P
 use sha2::{Digest, Sha256};
 
 /// 各 app 的远端 live 提示词文件路径。
-pub fn remote_prompt_path(root: &str, app: &str) -> String {
+///
+/// 与 `prompt_files::prompt_file_path`（本机）保持一致：
+/// Mcode 的全局指令在 `~/.minimax/AGENTS.md`。
+///
+/// 注意兜底分支：以前是 `_ => (".claude", "CLAUDE.md")` —— 任何未列出的 app
+/// 都会把提示词静默写进 Claude 的配置，污染别的应用。现在未知 app 返回 `None`，
+/// 由调用方明确报错。
+pub fn remote_prompt_path(root: &str, app: &str) -> Option<String> {
     let (dir, file) = match app {
+        "claude" | "claude-desktop" => (".claude", "CLAUDE.md"),
         "codex" => (".codex", "AGENTS.md"),
         "gemini" => (".gemini", "GEMINI.md"),
         "grokbuild" => (".grok", "AGENTS.md"),
@@ -25,9 +33,15 @@ pub fn remote_prompt_path(root: &str, app: &str) -> String {
         "openclaw" => (".openclaw", "AGENTS.md"),
         "hermes" => (".hermes", "SOUL.md"),
         "pi" => (".pi/agent", "AGENTS.md"),
-        _ => (".claude", "CLAUDE.md"),
+        "mcode" => (".minimax", "AGENTS.md"),
+        _ => return None,
     };
-    format!("{root}/{dir}/{file}")
+    Some(format!("{root}/{dir}/{file}"))
+}
+
+/// 取远端 live 提示词路径；app 不支持时返回错误（不再静默落到 Claude）。
+pub fn remote_prompt_path_or_err(root: &str, app: &str) -> Result<String, String> {
+    remote_prompt_path(root, app).ok_or_else(|| format!("远端提示词暂不支持应用: {app}"))
 }
 
 /// 远端 prompts.json 路径（claude 保持 `prompts.json` 兼容老数据，其余 per-app）。
@@ -45,7 +59,7 @@ pub async fn read_remote_prompt<F: FileOps>(
     root: &str,
     app: &str,
 ) -> Result<String, String> {
-    let path = remote_prompt_path(root, app);
+    let path = remote_prompt_path_or_err(root, app)?;
     Ok(fs.read_text_optional(&path).await?.unwrap_or_default())
 }
 
@@ -56,7 +70,7 @@ pub async fn write_remote_prompt<F: FileOps>(
     app: &str,
     content: &str,
 ) -> Result<(), String> {
-    fs.write_text_atomic(&remote_prompt_path(root, app), content)
+    fs.write_text_atomic(&remote_prompt_path_or_err(root, app)?, content)
         .await
 }
 

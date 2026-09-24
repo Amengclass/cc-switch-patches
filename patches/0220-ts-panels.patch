@@ -1,5 +1,5 @@
 diff --git a/src/components/AppSwitcher.tsx b/src/components/AppSwitcher.tsx
-index de00a9a..bfc3b41 100644
+index a4843d84..0d39b775 100644
 --- a/src/components/AppSwitcher.tsx
 +++ b/src/components/AppSwitcher.tsx
 @@ -23,6 +23,8 @@ interface AppSwitcherProps {
@@ -11,7 +11,7 @@ index de00a9a..bfc3b41 100644
  }
  
  const STORAGE_KEY = "cc-switch-last-app";
-@@ -91,6 +93,7 @@ export function AppSwitcher({
+@@ -93,6 +95,7 @@ export function AppSwitcher({
    activeApp,
    onSwitch,
    visibleApps,
@@ -19,7 +19,7 @@ index de00a9a..bfc3b41 100644
  }: AppSwitcherProps) {
    const { t } = useTranslation();
    const rootRef = useRef<HTMLDivElement>(null);
-@@ -104,6 +107,7 @@ export function AppSwitcher({
+@@ -106,6 +109,7 @@ export function AppSwitcher({
  
    // Filter apps based on visibility settings (default all visible)
    const appsToShow = APP_IDS.filter((app) => {
@@ -28,7 +28,7 @@ index de00a9a..bfc3b41 100644
      return visibleApps[app];
    });
 diff --git a/src/components/UsageFooter.tsx b/src/components/UsageFooter.tsx
-index 0416a99..9136c65 100644
+index 0416a993..9136c65e 100644
 --- a/src/components/UsageFooter.tsx
 +++ b/src/components/UsageFooter.tsx
 @@ -4,7 +4,10 @@ import { useTranslation } from "react-i18next";
@@ -261,7 +261,7 @@ index 0416a99..9136c65 100644
          )}
        </div>
 diff --git a/src/components/mcp/McpFormModal.tsx b/src/components/mcp/McpFormModal.tsx
-index 95d339c..60ab286 100644
+index 674f7938..8aac6445 100644
 --- a/src/components/mcp/McpFormModal.tsx
 +++ b/src/components/mcp/McpFormModal.tsx
 @@ -33,6 +33,10 @@ interface McpFormModalProps {
@@ -291,7 +291,7 @@ index 95d339c..60ab286 100644
  
    const [formId, setFormId] = useState(
      () => editingId || initialData?.id || "",
-@@ -610,6 +616,22 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
+@@ -613,6 +619,22 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
                    </label>
                  </div>
  
@@ -315,7 +315,7 @@ index 95d339c..60ab286 100644
                    <Checkbox
                      id="enable-hermes"
 diff --git a/src/components/mcp/UnifiedMcpPanel.tsx b/src/components/mcp/UnifiedMcpPanel.tsx
-index 5580716..5bddbbf 100644
+index 1c1ec916..6c33d8d1 100644
 --- a/src/components/mcp/UnifiedMcpPanel.tsx
 +++ b/src/components/mcp/UnifiedMcpPanel.tsx
 @@ -52,6 +52,10 @@ function getMcpSearchText(id: string, server: McpServer): string {
@@ -329,7 +329,7 @@ index 5580716..5bddbbf 100644
    onInteractionBlockedChange?: (blocked: boolean) => void;
  }
  
-@@ -63,308 +67,339 @@ export interface UnifiedMcpPanelHandle {
+@@ -63,309 +67,340 @@ export interface UnifiedMcpPanelHandle {
  const UnifiedMcpPanel = React.forwardRef<
    UnifiedMcpPanelHandle,
    UnifiedMcpPanelProps
@@ -471,6 +471,7 @@ index 5580716..5bddbbf 100644
 -      opencode: 0,
 -      openclaw: 0,
 -      hermes: 0,
+-      mcode: 0,
 -    };
 -    serverEntries.forEach(([_, server]) => {
 -      for (const app of MCP_APP_IDS) {
@@ -561,6 +562,7 @@ index 5580716..5bddbbf 100644
 +        opencode: 0,
 +        openclaw: 0,
 +        hermes: 0,
++        mcode: 0,
 +      };
 +      serverEntries.forEach(([_, server]) => {
 +        for (const app of MCP_APP_IDS) {
@@ -951,7 +953,7 @@ index 5580716..5bddbbf 100644
  UnifiedMcpPanel.displayName = "UnifiedMcpPanel";
  
 diff --git a/src/components/openclaw/AgentsDefaultsPanel.tsx b/src/components/openclaw/AgentsDefaultsPanel.tsx
-index 2a334a5..1877cb6 100644
+index 2a334a5c..1877cb6d 100644
 --- a/src/components/openclaw/AgentsDefaultsPanel.tsx
 +++ b/src/components/openclaw/AgentsDefaultsPanel.tsx
 @@ -24,10 +24,18 @@ import { getOpenClawTimeoutInputValue } from "./utils";
@@ -977,7 +979,7 @@ index 2a334a5..1877cb6 100644
      useOpenClawModelOptions();
  
 diff --git a/src/components/openclaw/EnvPanel.tsx b/src/components/openclaw/EnvPanel.tsx
-index 3137c38..54ef1f3 100644
+index 3137c38b..54ef1f3d 100644
 --- a/src/components/openclaw/EnvPanel.tsx
 +++ b/src/components/openclaw/EnvPanel.tsx
 @@ -8,10 +8,15 @@ import { Button } from "@/components/ui/button";
@@ -1000,7 +1002,7 @@ index 3137c38..54ef1f3 100644
    const [isDarkMode, setIsDarkMode] = useState(false);
  
 diff --git a/src/components/openclaw/ToolsPanel.tsx b/src/components/openclaw/ToolsPanel.tsx
-index 5d8ec09..70cd543 100644
+index 5d8ec09d..70cd543b 100644
 --- a/src/components/openclaw/ToolsPanel.tsx
 +++ b/src/components/openclaw/ToolsPanel.tsx
 @@ -29,10 +29,15 @@ interface ListItem {
@@ -1023,7 +1025,7 @@ index 5d8ec09..70cd543 100644
    const [allowList, setAllowList] = useState<ListItem[]>([]);
    const [denyList, setDenyList] = useState<ListItem[]>([]);
 diff --git a/src/components/prompts/PiNativePromptResources.tsx b/src/components/prompts/PiNativePromptResources.tsx
-index 21c1019..cfd3b70 100644
+index 21c1019b..cfd3b70e 100644
 --- a/src/components/prompts/PiNativePromptResources.tsx
 +++ b/src/components/prompts/PiNativePromptResources.tsx
 @@ -37,6 +37,14 @@ import {
@@ -1260,7 +1262,7 @@ index 21c1019..cfd3b70 100644
          )}
  
 diff --git a/src/components/prompts/PiPromptPanel.tsx b/src/components/prompts/PiPromptPanel.tsx
-index 097ee96..a35c82b 100644
+index 097ee960..a35c82bc 100644
 --- a/src/components/prompts/PiPromptPanel.tsx
 +++ b/src/components/prompts/PiPromptPanel.tsx
 @@ -1,11 +1,13 @@
@@ -1540,7 +1542,7 @@ index 097ee96..a35c82b 100644
            />
          )}
 diff --git a/src/components/prompts/PromptPanel.tsx b/src/components/prompts/PromptPanel.tsx
-index 3e2eba3..3b5323c 100644
+index e59ce4ba..1784f05d 100644
 --- a/src/components/prompts/PromptPanel.tsx
 +++ b/src/components/prompts/PromptPanel.tsx
 @@ -1,5 +1,7 @@
@@ -1643,7 +1645,7 @@ index 3e2eba3..3b5323c 100644
      const reloadRef = React.useRef(reload);
      reloadRef.current = reload;
  
-@@ -150,7 +194,6 @@ const StandardPromptPanel = React.forwardRef<
+@@ -157,7 +201,6 @@ const StandardPromptPanel = React.forwardRef<
            void runExternalReload();
          }
        };
@@ -1651,7 +1653,7 @@ index 3e2eba3..3b5323c 100644
        window.addEventListener("prompt-imported", handlePromptImported);
        return () => {
          window.removeEventListener("prompt-imported", handlePromptImported);
-@@ -195,14 +238,33 @@ const StandardPromptPanel = React.forwardRef<
+@@ -202,14 +245,33 @@ const StandardPromptPanel = React.forwardRef<
          onConfirm: async () => {
            if (!beginWrite()) return;
            try {
@@ -1690,7 +1692,7 @@ index 3e2eba3..3b5323c 100644
            } finally {
              endWrite();
            }
-@@ -213,6 +275,56 @@ const StandardPromptPanel = React.forwardRef<
+@@ -220,6 +282,56 @@ const StandardPromptPanel = React.forwardRef<
      const handleToggle = async (id: string, enabled: boolean) => {
        if (!beginWrite()) return;
        try {
@@ -1747,7 +1749,7 @@ index 3e2eba3..3b5323c 100644
          const refreshed = await toggleEnabled(id, enabled);
          if (refreshed === false) {
            externalReloadQueuedRef.current = true;
-@@ -230,6 +342,41 @@ const StandardPromptPanel = React.forwardRef<
+@@ -237,6 +349,41 @@ const StandardPromptPanel = React.forwardRef<
      ) => {
        if (!beginWrite()) return false;
        try {
@@ -1789,7 +1791,7 @@ index 3e2eba3..3b5323c 100644
          const refreshed = await savePrompt(id, prompt);
          if (refreshed === false) {
            externalReloadQueuedRef.current = true;
-@@ -253,8 +400,8 @@ const StandardPromptPanel = React.forwardRef<
+@@ -260,8 +407,8 @@ const StandardPromptPanel = React.forwardRef<
        }
      };
  
@@ -1800,7 +1802,7 @@ index 3e2eba3..3b5323c 100644
  
      return (
        <div className="flex flex-col flex-1 min-h-0 px-6">
-@@ -316,6 +463,8 @@ const PromptPanel = React.forwardRef<PromptPanelHandle, PromptPanelProps>(
+@@ -323,6 +470,8 @@ const PromptPanel = React.forwardRef<PromptPanelHandle, PromptPanelProps>(
          <PiPromptPanel
            ref={ref}
            open={props.open}
@@ -1810,7 +1812,7 @@ index 3e2eba3..3b5323c 100644
            onNavigationBlockedChange={props.onNavigationBlockedChange}
            onPrimaryActionChange={props.onPrimaryActionChange}
 diff --git a/src/components/providers/AddProviderDialog.tsx b/src/components/providers/AddProviderDialog.tsx
-index 10dc554..892643d 100644
+index 2d6fded9..224876aa 100644
 --- a/src/components/providers/AddProviderDialog.tsx
 +++ b/src/components/providers/AddProviderDialog.tsx
 @@ -38,6 +38,8 @@ interface AddProviderDialogProps {
@@ -1830,7 +1832,7 @@ index 10dc554..892643d 100644
  }: AddProviderDialogProps) {
    const { t } = useTranslation();
    // OpenCode and OpenClaw don't support universal providers
-@@ -433,6 +436,7 @@ export function AddProviderDialog({
+@@ -435,6 +438,7 @@ export function AddProviderDialog({
                onSubmittingChange={setIsFormSubmitting}
                onSubmitReadyChange={handleSubmitReadyChange}
                showButtons={false}
@@ -1838,7 +1840,7 @@ index 10dc554..892643d 100644
              />
            </TabsContent>
  
-@@ -451,6 +455,7 @@ export function AddProviderDialog({
+@@ -453,6 +457,7 @@ export function AddProviderDialog({
            onSubmittingChange={setIsFormSubmitting}
            onSubmitReadyChange={handleSubmitReadyChange}
            showButtons={false}
@@ -1847,10 +1849,10 @@ index 10dc554..892643d 100644
        )}
  
 diff --git a/src/components/providers/EditProviderDialog.tsx b/src/components/providers/EditProviderDialog.tsx
-index 3c8cfcd..f10fba1 100644
+index c5d511b0..f885a616 100644
 --- a/src/components/providers/EditProviderDialog.tsx
 +++ b/src/components/providers/EditProviderDialog.tsx
-@@ -28,6 +28,10 @@ interface EditProviderDialogProps {
+@@ -29,6 +29,10 @@ interface EditProviderDialogProps {
    }) => Promise<void> | void;
    appId: AppId;
    isProxyTakeover?: boolean; // 代理接管模式下不读取 live（避免显示被接管后的代理配置）
@@ -1861,7 +1863,7 @@ index 3c8cfcd..f10fba1 100644
  }
  
  const asRecord = (value: unknown): Record<string, unknown> | null =>
-@@ -95,6 +99,8 @@ export function EditProviderDialog({
+@@ -123,6 +127,8 @@ export function EditProviderDialog({
    onSubmit,
    appId,
    isProxyTakeover = false,
@@ -1870,7 +1872,7 @@ index 3c8cfcd..f10fba1 100644
  }: EditProviderDialogProps) {
    const { t } = useTranslation();
    const [isFormSubmitting, setIsFormSubmitting] = useState(false);
-@@ -364,6 +370,8 @@ export function EditProviderDialog({
+@@ -399,6 +405,8 @@ export function EditProviderDialog({
          initialData={initialData}
          showButtons={false}
          isProxyTakeover={isProxyTakeover}
@@ -1880,7 +1882,7 @@ index 3c8cfcd..f10fba1 100644
        <AuthSettingsPanel
          target={authSettingsTarget}
 diff --git a/src/components/providers/ProviderActions.tsx b/src/components/providers/ProviderActions.tsx
-index b8899b0..1572550 100644
+index b8899b0d..1572550c 100644
 --- a/src/components/providers/ProviderActions.tsx
 +++ b/src/components/providers/ProviderActions.tsx
 @@ -36,6 +36,8 @@ interface ProviderActionsProps {
@@ -1938,7 +1940,7 @@ index b8899b0..1572550 100644
        </span>
  
 diff --git a/src/components/providers/ProviderCard.tsx b/src/components/providers/ProviderCard.tsx
-index 3927b62..52f4371 100644
+index a2bd2426..e0b78568 100644
 --- a/src/components/providers/ProviderCard.tsx
 +++ b/src/components/providers/ProviderCard.tsx
 @@ -22,6 +22,7 @@ import SubscriptionQuotaFooter from "@/components/SubscriptionQuotaFooter";
@@ -1986,16 +1988,18 @@ index 3927b62..52f4371 100644
    isProxyRunning,
    isProxyTakeover = false,
    dragHandleProps,
-@@ -230,7 +240,7 @@ export function ProviderCard({
+@@ -230,8 +240,8 @@ export function ProviderCard({
    // OMO and OMO Slim share the same card behavior
    const isAnyOmo = isOmo || isOmoSlim;
    const handleDisableAnyOmo = isOmoSlim ? onDisableOmoSlim : onDisableOmo;
--  const isAdditiveMode = (appId === "opencode" && !isAnyOmo) || appId === "pi";
+-  const isAdditiveMode =
+-    (appId === "opencode" && !isAnyOmo) || appId === "pi" || appId === "mcode";
++  // 累加模式应用（含 mcode / openclaw / hermes / pi）；opencode 的 OMO 变体除外
 +  const isAdditiveMode = isAdditiveAppId(appId) && (appId !== "opencode" || !isAnyOmo);
  
    const { data: health } = useProviderHealth(
      provider.id,
-@@ -268,6 +278,8 @@ export function ProviderCard({
+@@ -269,6 +279,8 @@ export function ProviderCard({
    const isBoundCodexOfficial = codexOfficialIdentity === "managed_account";
    const usageEnabled =
      provider.meta?.usage_script?.enabled ?? isBoundCodexOfficial;
@@ -2004,16 +2008,16 @@ index 3927b62..52f4371 100644
    const isOfficial = isOfficialProvider(provider, appId);
    const supportsOfficialSubscription =
      isOfficial && ["claude", "codex", "gemini", "grokbuild"].includes(appId);
-@@ -319,6 +331,8 @@ export function ProviderCard({
+@@ -324,6 +336,8 @@ export function ProviderCard({
    const { data: usage } = useUsageQuery(provider.id, appId, {
-     enabled: usageEnabled && !isOfficial && !isOfficialSubscriptionUsage,
+     enabled: scriptUsageActive,
      autoQueryInterval,
 +    remoteTargetId,
 +    remoteContainerId,
    });
  
    const isTokenPlan =
-@@ -329,10 +343,13 @@ export function ProviderCard({
+@@ -339,10 +353,13 @@ export function ProviderCard({
    const [isExpanded, setIsExpanded] = useState(false);
  
    useEffect(() => {
@@ -2029,7 +2033,7 @@ index 3927b62..52f4371 100644
  
    const handleOpenWebsite = () => {
      if (!isClickableUrl) {
-@@ -604,14 +621,14 @@ export function ProviderCard({
+@@ -614,14 +631,14 @@ export function ProviderCard({
                {isCopilot ? (
                  <CopilotQuotaFooter
                    meta={provider.meta}
@@ -2046,7 +2050,7 @@ index 3927b62..52f4371 100644
                      isCurrent={isCurrent}
                      autoQueryInterval={
                        isBoundCodexOfficial
-@@ -623,30 +640,31 @@ export function ProviderCard({
+@@ -633,30 +650,31 @@ export function ProviderCard({
                ) : isXaiOauth ? (
                  <XaiOauthQuotaFooter
                    meta={provider.meta}
@@ -2084,7 +2088,7 @@ index 3927b62..52f4371 100644
                  <UsageFooter
                    provider={provider}
                    providerId={provider.id}
-@@ -654,10 +672,13 @@ export function ProviderCard({
+@@ -664,10 +682,13 @@ export function ProviderCard({
                    usageEnabled={usageEnabled}
                    isCurrent={isCurrent}
                    isInConfig={isInConfig}
@@ -2100,7 +2104,7 @@ index 3927b62..52f4371 100644
                  <button
                    onClick={(e) => {
                      e.stopPropagation();
-@@ -686,6 +707,7 @@ export function ProviderCard({
+@@ -696,6 +717,7 @@ export function ProviderCard({
                isCurrent={isCurrent}
                isInConfig={isInConfig}
                isTesting={isTesting}
@@ -2108,7 +2112,7 @@ index 3927b62..52f4371 100644
                isProxyTakeover={isProxyTakeover}
                isOfficialBlockedByProxy={isOfficialBlockedByProxy}
                isReadOnly={isHermesReadOnly}
-@@ -737,8 +759,9 @@ export function ProviderCard({
+@@ -747,8 +769,9 @@ export function ProviderCard({
          </div>
        </div>
  
@@ -2120,7 +2124,7 @@ index 3927b62..52f4371 100644
            <UsageFooter
              provider={provider}
              providerId={provider.id}
-@@ -746,7 +769,9 @@ export function ProviderCard({
+@@ -756,7 +779,9 @@ export function ProviderCard({
              usageEnabled={usageEnabled}
              isCurrent={isCurrent}
              isInConfig={isInConfig}
@@ -2132,7 +2136,7 @@ index 3927b62..52f4371 100644
          </div>
        )}
 diff --git a/src/components/providers/ProviderEmptyState.tsx b/src/components/providers/ProviderEmptyState.tsx
-index a50f9d9..3225f53 100644
+index a50f9d9e..3225f53a 100644
 --- a/src/components/providers/ProviderEmptyState.tsx
 +++ b/src/components/providers/ProviderEmptyState.tsx
 @@ -7,12 +7,15 @@ interface ProviderEmptyStateProps {
@@ -2171,7 +2175,7 @@ index a50f9d9..3225f53 100644
              {appId === "claude-desktop"
                ? t("provider.importFromClaude", {
 diff --git a/src/components/providers/ProviderList.tsx b/src/components/providers/ProviderList.tsx
-index 61703f4..3eef6e8 100644
+index 86438ada..0c2e160c 100644
 --- a/src/components/providers/ProviderList.tsx
 +++ b/src/components/providers/ProviderList.tsx
 @@ -11,9 +11,10 @@ import {
@@ -2229,7 +2233,7 @@ index 61703f4..3eef6e8 100644
    activeProviderId?: string; // 代理当前实际使用的供应商 ID（用于故障转移模式下标注绿色边框）
    onSetAsDefault?: (provider: Provider, modelId?: string) => void; // OpenClaw: set as default model
  }
-@@ -90,55 +103,133 @@ export function ProviderList({
+@@ -90,57 +103,136 @@ export function ProviderList({
    isLoading = false,
    isProxyRunning = false,
    isProxyTakeover = false,
@@ -2323,6 +2327,8 @@ index 61703f4..3eef6e8 100644
      (providerId: string): boolean => {
 +      // 远端目标：live ID 集来自 get_remote_providers 返回（remoteLiveIds prop）
 +      const liveIds = remoteTargetId ? (remoteLiveIds ?? []) : undefined;
+       if (appId === "mcode")
+         return providers[providerId]?.meta?.liveConfigManaged === true;
        if (appId === "opencode") {
 -        return opencodeLiveIds?.includes(providerId) ?? false;
 +        return (liveIds ?? opencodeLiveIds)?.includes(providerId) ?? false;
@@ -2340,7 +2346,7 @@ index 61703f4..3eef6e8 100644
        }
        return true; // 其他应用始终返回 true
      },
--    [appId, opencodeLiveIds, openclawLiveIds, hermesLiveIds],
+-    [appId, opencodeLiveIds, openclawLiveIds, hermesLiveIds, providers],
 +    [
 +      appId,
 +      remoteTargetId,
@@ -2349,6 +2355,7 @@ index 61703f4..3eef6e8 100644
 +      openclawLiveIds,
 +      hermesLiveIds,
 +      piLiveIds,
++      providers,
 +    ],
    );
  
@@ -2377,7 +2384,7 @@ index 61703f4..3eef6e8 100644
  
    const isProviderDefaultModel = useCallback(
      (providerId: string): boolean => {
-@@ -223,11 +314,62 @@ export function ProviderList({
+@@ -225,11 +317,62 @@ export function ProviderList({
    );
  
    // 连通性检查不发真实请求、无封号/计费风险，直接执行（无需确认弹窗）。
@@ -2441,7 +2448,7 @@ index 61703f4..3eef6e8 100644
    );
  
    // Import current live config as default provider
-@@ -401,6 +543,12 @@ export function ProviderList({
+@@ -403,6 +546,12 @@ export function ProviderList({
    if (isLoading) {
      return (
        <div className="space-y-3">
@@ -2454,7 +2461,7 @@ index 61703f4..3eef6e8 100644
          {[0, 1, 2].map((index) => (
            <div
              key={index}
-@@ -411,6 +559,34 @@ export function ProviderList({
+@@ -413,6 +562,34 @@ export function ProviderList({
      );
    }
  
@@ -2489,18 +2496,22 @@ index 61703f4..3eef6e8 100644
    if (sortedProviders.length === 0) {
      return (
        <div className="mt-4 space-y-4">
-@@ -418,7 +594,10 @@ export function ProviderList({
+@@ -420,11 +597,14 @@ export function ProviderList({
          <ProviderEmptyState
            appId={appId}
            onCreate={appId === "pi" ? undefined : onCreate}
 +          // 远端目标下导入按钮置灰：导入语义是读本机 live 配置，远端目标下
 +          // 会读到错误数据（应读远端 live）；待远端导入实现后再启用。
-           onImport={appId === "pi" ? undefined : () => importMutation.mutate()}
+           onImport={
+             appId === "pi" || appId === "mcode"
+               ? undefined
+               : () => importMutation.mutate()
+           }
 +          importDisabled={Boolean(remoteTargetId)}
          />
        </div>
      );
-@@ -459,8 +638,10 @@ export function ProviderList({
+@@ -465,8 +645,10 @@ export function ProviderList({
                  provider={provider}
                  isCurrent={isCurrent}
                  appId={appId}
@@ -2512,7 +2523,7 @@ index 61703f4..3eef6e8 100644
                      ? isPiProviderInConfig(provider)
                      : isProviderInConfig(provider.id)
                  }
-@@ -478,6 +659,7 @@ export function ProviderList({
+@@ -484,6 +666,7 @@ export function ProviderList({
                  onOpenTerminal={onOpenTerminal}
                  onTest={handleTest}
                  isTesting={isChecking(provider.id)}
@@ -2520,7 +2531,7 @@ index 61703f4..3eef6e8 100644
                  isProxyRunning={supportsFailover && isProxyRunning}
                  isProxyTakeover={supportsFailover && isProxyTakeover}
                  isAutoFailoverEnabled={isFailoverModeActive}
-@@ -620,6 +802,8 @@ interface SortableProviderCardProps {
+@@ -626,6 +809,8 @@ interface SortableProviderCardProps {
    provider: Provider;
    isCurrent: boolean;
    appId: AppId;
@@ -2529,7 +2540,7 @@ index 61703f4..3eef6e8 100644
    isInConfig: boolean;
    isOmo: boolean;
    isOmoSlim: boolean;
-@@ -635,6 +819,7 @@ interface SortableProviderCardProps {
+@@ -641,6 +826,7 @@ interface SortableProviderCardProps {
    onOpenTerminal?: (provider: Provider) => void;
    onTest?: (provider: Provider) => void;
    isTesting: boolean;
@@ -2537,7 +2548,7 @@ index 61703f4..3eef6e8 100644
    isProxyRunning: boolean;
    isProxyTakeover: boolean;
    isAutoFailoverEnabled: boolean;
-@@ -653,6 +838,8 @@ function SortableProviderCard({
+@@ -659,6 +845,8 @@ function SortableProviderCard({
    provider,
    isCurrent,
    appId,
@@ -2546,7 +2557,7 @@ index 61703f4..3eef6e8 100644
    isInConfig,
    isOmo,
    isOmoSlim,
-@@ -668,6 +855,7 @@ function SortableProviderCard({
+@@ -674,6 +862,7 @@ function SortableProviderCard({
    onOpenTerminal,
    onTest,
    isTesting,
@@ -2554,7 +2565,7 @@ index 61703f4..3eef6e8 100644
    isProxyRunning,
    isProxyTakeover,
    isAutoFailoverEnabled,
-@@ -700,6 +888,8 @@ function SortableProviderCard({
+@@ -706,6 +895,8 @@ function SortableProviderCard({
          provider={provider}
          isCurrent={isCurrent}
          appId={appId}
@@ -2563,7 +2574,7 @@ index 61703f4..3eef6e8 100644
          isInConfig={isInConfig}
          isOmo={isOmo}
          isOmoSlim={isOmoSlim}
-@@ -717,6 +907,7 @@ function SortableProviderCard({
+@@ -723,6 +914,7 @@ function SortableProviderCard({
          onOpenTerminal={onOpenTerminal}
          onTest={onTest}
          isTesting={isTesting}
@@ -2572,10 +2583,10 @@ index 61703f4..3eef6e8 100644
          isProxyTakeover={isProxyTakeover}
          dragHandleProps={{
 diff --git a/src/components/providers/forms/ProviderForm.tsx b/src/components/providers/forms/ProviderForm.tsx
-index a312a8c..12bb5c2 100644
+index f6e130ec..10c8483b 100644
 --- a/src/components/providers/forms/ProviderForm.tsx
 +++ b/src/components/providers/forms/ProviderForm.tsx
-@@ -270,6 +270,10 @@ export interface ProviderFormProps {
+@@ -271,6 +271,10 @@ export interface ProviderFormProps {
    };
    showButtons?: boolean;
    isProxyTakeover?: boolean;
@@ -2586,7 +2597,7 @@ index a312a8c..12bb5c2 100644
  }
  
  export function ProviderForm(props: ProviderFormProps) {
-@@ -297,6 +301,8 @@ function ProviderFormFull({
+@@ -299,6 +303,8 @@ function ProviderFormFull({
    onManageAuthAccounts,
    onSubmittingChange,
    initialData,
@@ -2595,7 +2606,7 @@ index a312a8c..12bb5c2 100644
    showButtons = true,
    isProxyTakeover = false,
  }: ProviderFormProps) {
-@@ -1019,6 +1025,10 @@ function ProviderFormFull({
+@@ -1021,6 +1027,10 @@ function ProviderFormFull({
    } = useHermesLiveProviderIds(appId === "hermes");
  
    const additiveExistingProviderKeys = useMemo(() => {
@@ -2606,7 +2617,7 @@ index a312a8c..12bb5c2 100644
      if (appId === "opencode" && !isAnyOmoCategory) {
        return Array.from(
          new Set(
-@@ -1061,6 +1071,7 @@ function ProviderFormFull({
+@@ -1063,6 +1073,7 @@ function ProviderFormFull({
      openclawLiveProviderIds,
      opencodeLiveProviderIds,
      providerId,
@@ -2614,7 +2625,7 @@ index a312a8c..12bb5c2 100644
    ]);
  
    const isProviderKeyLockStateLoading = useMemo(() => {
-@@ -1086,14 +1097,16 @@ function ProviderFormFull({
+@@ -1088,14 +1099,16 @@ function ProviderFormFull({
  
    const isProviderKeyLocked = useMemo(() => {
      if (!isEditMode || !providerId) return false;
@@ -2634,7 +2645,7 @@ index a312a8c..12bb5c2 100644
      }
      return false;
    }, [
-@@ -1104,6 +1117,7 @@ function ProviderFormFull({
+@@ -1106,6 +1119,7 @@ function ProviderFormFull({
      openclawLiveProviderIds,
      opencodeLiveProviderIds,
      providerId,
@@ -2643,7 +2654,7 @@ index a312a8c..12bb5c2 100644
  
    const [isCommonConfigModalOpen, setIsCommonConfigModalOpen] = useState(false);
 diff --git a/src/components/proxy/ProxyToggle.tsx b/src/components/proxy/ProxyToggle.tsx
-index 33f4441..1dc8dca 100644
+index 8406fe5d..9eb35ff8 100644
 --- a/src/components/proxy/ProxyToggle.tsx
 +++ b/src/components/proxy/ProxyToggle.tsx
 @@ -42,12 +42,12 @@ export function ProxyToggle({ className, activeApp }: ProxyToggleProps) {
@@ -2670,7 +2681,7 @@ index 33f4441..1dc8dca 100644
        )}
        title={tooltipText}
 diff --git a/src/components/sessions/SessionManagerPage.tsx b/src/components/sessions/SessionManagerPage.tsx
-index f42feb0..4a0b4af 100644
+index f3cbf68d..5642b933 100644
 --- a/src/components/sessions/SessionManagerPage.tsx
 +++ b/src/components/sessions/SessionManagerPage.tsx
 @@ -22,6 +22,8 @@ import {
@@ -2690,7 +2701,7 @@ index f42feb0..4a0b4af 100644
  import {
    Tooltip,
    TooltipContent,
-@@ -189,15 +192,28 @@ const filterSetToAllowedValues = (
+@@ -190,15 +193,28 @@ const filterSetToAllowedValues = (
    return changed ? next : current;
  };
  
@@ -2722,7 +2733,7 @@ index f42feb0..4a0b4af 100644
      staleTime: 30 * 1000,
    });
    const detailRef = useRef<HTMLDivElement | null>(null);
-@@ -337,6 +353,10 @@ export function SessionManagerPage({ appId }: { appId: string }) {
+@@ -338,6 +354,10 @@ export function SessionManagerPage({ appId }: { appId: string }) {
      useSessionMessagesQuery(
        selectedSession?.providerId,
        selectedSession?.sourcePath,
@@ -2733,7 +2744,7 @@ index f42feb0..4a0b4af 100644
      );
    const deleteSessionMutation = useDeleteSessionMutation();
    const isDeleting = deleteSessionMutation.isPending || isBatchDeleting;
-@@ -346,7 +366,7 @@ export function SessionManagerPage({ appId }: { appId: string }) {
+@@ -347,7 +367,7 @@ export function SessionManagerPage({ appId }: { appId: string }) {
      getScrollElement: () => scrollContainerRef.current,
      estimateSize: () => 120,
      overscan: 5,
@@ -2742,7 +2753,7 @@ index f42feb0..4a0b4af 100644
    });
  
    useEffect(() => {
-@@ -403,6 +423,19 @@ export function SessionManagerPage({ appId }: { appId: string }) {
+@@ -404,6 +424,19 @@ export function SessionManagerPage({ appId }: { appId: string }) {
      setTimeout(() => setActiveMessageIndex(null), 2000);
    };
  
@@ -2762,7 +2773,7 @@ index f42feb0..4a0b4af 100644
    const handleCopy = useCallback(
      async (text: string, successMessage: string) => {
        try {
-@@ -464,6 +497,56 @@ export function SessionManagerPage({ appId }: { appId: string }) {
+@@ -465,6 +498,56 @@ export function SessionManagerPage({ appId }: { appId: string }) {
        return;
      }
  
@@ -2819,7 +2830,7 @@ index f42feb0..4a0b4af 100644
      if (targets.length === 1) {
        const [target] = targets;
        await deleteSessionMutation.mutateAsync({
-@@ -1187,9 +1270,29 @@ export function SessionManagerPage({ appId }: { appId: string }) {
+@@ -1199,9 +1282,29 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                                variant="ghost"
                                size="icon"
                                className="size-7"
@@ -2851,7 +2862,7 @@ index f42feb0..4a0b4af 100644
                              </Button>
                            </TooltipTrigger>
                            <TooltipContent>{t("common.refresh")}</TooltipContent>
-@@ -1666,8 +1769,8 @@ export function SessionManagerPage({ appId }: { appId: string }) {
+@@ -1680,8 +1783,8 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                    <CardContent className="flex-1 min-h-0 p-0">
                      <div className="flex h-full min-w-0">
                        {/* 消息列表 */}
@@ -2862,7 +2873,7 @@ index f42feb0..4a0b4af 100644
                            <div className="flex items-center gap-2">
                              <MessageSquare className="size-4 text-muted-foreground" />
                              <span className="text-sm font-medium">
-@@ -1678,11 +1781,19 @@ export function SessionManagerPage({ appId }: { appId: string }) {
+@@ -1692,11 +1795,19 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                              <Badge variant="secondary" className="text-xs">
                                {messages.length}
                              </Badge>
@@ -2883,7 +2894,7 @@ index f42feb0..4a0b4af 100644
                          >
                            {isLoadingMessages ? (
                              <div className="flex items-center justify-center py-12">
-@@ -1730,6 +1841,33 @@ export function SessionManagerPage({ appId }: { appId: string }) {
+@@ -1744,6 +1855,33 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                              </div>
                            )}
                          </div>
@@ -2917,7 +2928,7 @@ index f42feb0..4a0b4af 100644
                        </div>
  
                        {/* 右侧目录 - 类似少数派 (大屏幕) */}
-@@ -1738,14 +1876,6 @@ export function SessionManagerPage({ appId }: { appId: string }) {
+@@ -1752,14 +1890,6 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                          onItemClick={scrollToMessage}
                        />
                      </div>
@@ -2933,7 +2944,7 @@ index f42feb0..4a0b4af 100644
                  </>
                )}
 diff --git a/src/components/sessions/SessionToc.tsx b/src/components/sessions/SessionToc.tsx
-index 83fda86..63efd63 100644
+index 83fda86b..63efd636 100644
 --- a/src/components/sessions/SessionToc.tsx
 +++ b/src/components/sessions/SessionToc.tsx
 @@ -1,7 +1,9 @@
@@ -3059,10 +3070,10 @@ index 83fda86..63efd63 100644
          </div>
        </DialogContent>
 diff --git a/src/components/settings/AboutSection.tsx b/src/components/settings/AboutSection.tsx
-index d885449..48f61c2 100644
+index c0d7055b..f15b039e 100644
 --- a/src/components/settings/AboutSection.tsx
 +++ b/src/components/settings/AboutSection.tsx
-@@ -987,6 +987,60 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
+@@ -1012,6 +1012,60 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
          )}
        </motion.div>
  
@@ -3108,7 +3119,7 @@ index d885449..48f61c2 100644
 +              size="sm"
 +              onClick={() =>
 +                settingsApi.openExternal(
-+                  "https://github.com/Amengclass/cc-switch-patches",
++                  "https://github.com/Amengclass/cc-switch",
 +                )
 +              }
 +              className="h-8 gap-1.5 text-xs"
@@ -3124,7 +3135,7 @@ index d885449..48f61c2 100644
          <div className="flex flex-col gap-2 px-1 sm:flex-row sm:items-center sm:justify-between">
            <h3 className="text-sm font-medium">{t("settings.localEnvCheck")}</h3>
 diff --git a/src/components/settings/AppVisibilitySettings.tsx b/src/components/settings/AppVisibilitySettings.tsx
-index d05f1c7..5e3d514 100644
+index 2fb5a697..0526364e 100644
 --- a/src/components/settings/AppVisibilitySettings.tsx
 +++ b/src/components/settings/AppVisibilitySettings.tsx
 @@ -1,5 +1,5 @@
@@ -3134,7 +3145,7 @@ index d05f1c7..5e3d514 100644
  import { Button } from "@/components/ui/button";
  import { ToggleRow } from "@/components/ui/toggle-row";
  import { cn } from "@/lib/utils";
-@@ -88,13 +88,28 @@ export function AppVisibilitySettings({
+@@ -89,13 +89,28 @@ export function AppVisibilitySettings({
            );
          })}
        </div>
@@ -3171,7 +3182,7 @@ index d05f1c7..5e3d514 100644
    );
  }
 diff --git a/src/components/settings/ProxyTabContent.tsx b/src/components/settings/ProxyTabContent.tsx
-index 9cf9f7a..1539d2a 100644
+index 9cf9f7ae..1539d2a0 100644
 --- a/src/components/settings/ProxyTabContent.tsx
 +++ b/src/components/settings/ProxyTabContent.tsx
 @@ -114,7 +114,11 @@ export function ProxyTabContent({
@@ -3188,7 +3199,7 @@ index 9cf9f7a..1539d2a 100644
                  <Activity
                    className={`h-3 w-3 ${isRunning ? "status-heartbeat" : ""}`}
 diff --git a/src/components/settings/SettingsPage.tsx b/src/components/settings/SettingsPage.tsx
-index 121109e..2b442f4 100644
+index 121109e1..2b442f43 100644
 --- a/src/components/settings/SettingsPage.tsx
 +++ b/src/components/settings/SettingsPage.tsx
 @@ -37,10 +37,12 @@ import { settingsApi } from "@/lib/api";
@@ -3262,7 +3273,7 @@ index 121109e..2b442f4 100644
                        value={settings.preferredTerminal}
                        onChange={(terminal) =>
 diff --git a/src/components/skills/SkillsPage.tsx b/src/components/skills/SkillsPage.tsx
-index d2f5306..dd0ba0f 100644
+index d2f53064..dd0ba0f3 100644
 --- a/src/components/skills/SkillsPage.tsx
 +++ b/src/components/skills/SkillsPage.tsx
 @@ -29,6 +29,7 @@ import {
@@ -3345,7 +3356,7 @@ index d2f5306..dd0ba0f 100644
            closeButton: true,
          });
 diff --git a/src/components/skills/UnifiedSkillsPanel.tsx b/src/components/skills/UnifiedSkillsPanel.tsx
-index 3959291..4785c1d 100644
+index c957d5dd..654b652e 100644
 --- a/src/components/skills/UnifiedSkillsPanel.tsx
 +++ b/src/components/skills/UnifiedSkillsPanel.tsx
 @@ -1,5 +1,6 @@
@@ -3407,7 +3418,7 @@ index 3959291..4785c1d 100644
    onInteractionBlockedChange?: (blocked: boolean) => void;
    onNavigationBlockedChange?: (blocked: boolean) => void;
    onCheckUpdatesStateChange?: (state: SkillsCheckUpdatesState) => void;
-@@ -82,679 +95,878 @@ function formatSkillBackupDate(unixSeconds: number): string {
+@@ -82,680 +95,879 @@ function formatSkillBackupDate(unixSeconds: number): string {
  const UnifiedSkillsPanel = React.forwardRef<
    UnifiedSkillsPanelHandle,
    UnifiedSkillsPanelProps
@@ -3692,6 +3703,7 @@ index 3959291..4785c1d 100644
 -      openclaw: 0,
 -      hermes: 0,
 -      pi: 0,
+-      mcode: 0,
 -    };
 -    if (!skills) return counts;
 -    skills.forEach((skill) => {
@@ -3778,6 +3790,7 @@ index 3959291..4785c1d 100644
 +        openclaw: 0,
 +        hermes: 0,
 +        pi: 0,
++        mcode: 0,
 +      };
 +      if (!skills) return counts;
 +      skills.forEach((skill) => {
@@ -4905,7 +4918,7 @@ index 3959291..4785c1d 100644
  
  UnifiedSkillsPanel.displayName = "UnifiedSkillsPanel";
  
-@@ -763,6 +975,7 @@ interface InstalledSkillListItemProps {
+@@ -764,6 +976,7 @@ interface InstalledSkillListItemProps {
    appIds: AppId[];
    hasUpdate?: boolean;
    isUpdating?: boolean;
@@ -4913,7 +4926,7 @@ index 3959291..4785c1d 100644
    actionsDisabled?: boolean;
    onToggleApp: (id: string, app: AppId, enabled: boolean) => void;
    onUninstall: () => void;
-@@ -775,6 +988,7 @@ const InstalledSkillListItem: React.FC<InstalledSkillListItemProps> = ({
+@@ -776,6 +989,7 @@ const InstalledSkillListItem: React.FC<InstalledSkillListItemProps> = ({
    appIds,
    hasUpdate,
    isUpdating,
@@ -4921,7 +4934,7 @@ index 3959291..4785c1d 100644
    actionsDisabled,
    onToggleApp,
    onUninstall,
-@@ -848,7 +1062,7 @@ const InstalledSkillListItem: React.FC<InstalledSkillListItemProps> = ({
+@@ -849,7 +1063,7 @@ const InstalledSkillListItem: React.FC<InstalledSkillListItemProps> = ({
          className="flex-shrink-0 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
          style={hasUpdate ? { opacity: 1 } : undefined}
        >
@@ -4930,7 +4943,7 @@ index 3959291..4785c1d 100644
            <Button
              type="button"
              variant="ghost"
-@@ -895,6 +1109,8 @@ interface ImportSkillsDialogProps {
+@@ -896,6 +1110,8 @@ interface ImportSkillsDialogProps {
    isImporting: boolean;
    onImport: (imports: ImportSkillSelection[]) => void;
    onClose: () => void;
@@ -4939,7 +4952,7 @@ index 3959291..4785c1d 100644
  }
  
  interface RestoreSkillsDialogProps {
-@@ -1029,6 +1245,7 @@ const ImportSkillsDialog: React.FC<ImportSkillsDialogProps> = ({
+@@ -1030,6 +1246,7 @@ const ImportSkillsDialog: React.FC<ImportSkillsDialogProps> = ({
    isImporting,
    onImport,
    onClose,
@@ -4947,7 +4960,7 @@ index 3959291..4785c1d 100644
  }) => {
    const { t } = useTranslation();
    const [selected, setSelected] = useState<Set<string>>(
-@@ -1066,19 +1283,23 @@ const ImportSkillsDialog: React.FC<ImportSkillsDialogProps> = ({
+@@ -1068,20 +1285,24 @@ const ImportSkillsDialog: React.FC<ImportSkillsDialogProps> = ({
  
    const handleImport = () => {
      onImport(
@@ -4962,6 +4975,7 @@ index 3959291..4785c1d 100644
 -          openclaw: false,
 -          hermes: false,
 -          pi: false,
+-          mcode: false,
 -        },
 -      })),
 +      Array.from(selected).map((directory) => {
@@ -4977,6 +4991,7 @@ index 3959291..4785c1d 100644
 +            openclaw: false,
 +            hermes: false,
 +            pi: false,
++            mcode: false,
 +          },
 +          path: skill?.path,
 +        };
@@ -4984,7 +4999,7 @@ index 3959291..4785c1d 100644
      );
    };
  
-@@ -1140,7 +1361,7 @@ const ImportSkillsDialog: React.FC<ImportSkillsDialogProps> = ({
+@@ -1144,7 +1365,7 @@ const ImportSkillsDialog: React.FC<ImportSkillsDialogProps> = ({
                            },
                          }));
                        }}
@@ -4994,7 +5009,7 @@ index 3959291..4785c1d 100644
                    </div>
                    <div
 diff --git a/src/components/ui/dropdown-menu.tsx b/src/components/ui/dropdown-menu.tsx
-index dd60662..0373e67 100644
+index dd606627..0373e672 100644
 --- a/src/components/ui/dropdown-menu.tsx
 +++ b/src/components/ui/dropdown-menu.tsx
 @@ -126,14 +126,24 @@ const DropdownMenuRadioItem = React.forwardRef<
@@ -5025,7 +5040,7 @@ index dd60662..0373e67 100644
      </span>
      {children}
 diff --git a/src/components/ui/input.tsx b/src/components/ui/input.tsx
-index 7c47852..ece8030 100644
+index 7c478521..ece8030d 100644
 --- a/src/components/ui/input.tsx
 +++ b/src/components/ui/input.tsx
 @@ -9,7 +9,7 @@ const Input = React.forwardRef<HTMLInputElement, InputProps>(
@@ -5038,7 +5053,7 @@ index 7c47852..ece8030 100644
          )}
          autoComplete="off"
 diff --git a/src/components/ui/popover.tsx b/src/components/ui/popover.tsx
-index d979a52..24e9bf9 100644
+index d979a527..24e9bf92 100644
 --- a/src/components/ui/popover.tsx
 +++ b/src/components/ui/popover.tsx
 @@ -5,6 +5,7 @@ import { cn } from "@/lib/utils";
@@ -5056,7 +5071,7 @@ index d979a52..24e9bf9 100644
 -export { Popover, PopoverTrigger, PopoverContent, PopoverAnchor };
 +export { Popover, PopoverTrigger, PopoverContent, PopoverAnchor, PopoverArrow };
 diff --git a/src/components/ui/sonner.tsx b/src/components/ui/sonner.tsx
-index 9cd7cc1..9f850b5 100644
+index 9cd7cc1c..9f850b59 100644
 --- a/src/components/ui/sonner.tsx
 +++ b/src/components/ui/sonner.tsx
 @@ -1,6 +1,21 @@
@@ -5112,7 +5127,7 @@ index 9cd7cc1..9f850b5 100644
    );
  }
 diff --git a/src/components/usage/RequestLogTable.tsx b/src/components/usage/RequestLogTable.tsx
-index dc7e3da..6593fdf 100644
+index dc90b84c..70b8bd29 100644
 --- a/src/components/usage/RequestLogTable.tsx
 +++ b/src/components/usage/RequestLogTable.tsx
 @@ -17,6 +17,12 @@ import {
@@ -5128,7 +5143,7 @@ index dc7e3da..6593fdf 100644
  import { useRequestLogs } from "@/lib/query/usage";
  import {
    getFreshInputTokens,
-@@ -33,6 +39,32 @@ import {
+@@ -34,6 +40,32 @@ import {
    parseFiniteNumber,
  } from "./format";
  
@@ -5161,7 +5176,7 @@ index dc7e3da..6593fdf 100644
  interface RequestLogTableProps {
    range: UsageRangeSelection;
    rangeLabel: string;
-@@ -109,6 +141,7 @@ export function RequestLogTable({
+@@ -110,6 +142,7 @@ export function RequestLogTable({
    const locale = getLocaleFromLanguage(language);
  
    return (
@@ -5169,7 +5184,7 @@ index dc7e3da..6593fdf 100644
      <div className="space-y-4">
        <div className="rounded-lg border bg-card/50 p-2 backdrop-blur-sm">
          <div className="flex flex-wrap items-center gap-1.5">
-@@ -299,15 +332,25 @@ export function RequestLogTable({
+@@ -311,15 +344,25 @@ export function RequestLogTable({
                            )}
                          </TableCell>
                          <TableCell className="text-center">
@@ -5204,7 +5219,7 @@ index dc7e3da..6593fdf 100644
                          </TableCell>
                          <TableCell className="text-center text-xs text-muted-foreground">
                            {log.dataSource || "proxy"}
-@@ -400,5 +443,6 @@ export function RequestLogTable({
+@@ -412,5 +455,6 @@ export function RequestLogTable({
          </>
        )}
      </div>
@@ -5212,7 +5227,7 @@ index dc7e3da..6593fdf 100644
    );
  }
 diff --git a/src/components/workspace/DailyMemoryPanel.tsx b/src/components/workspace/DailyMemoryPanel.tsx
-index 8b2008c..06753ea 100644
+index 8b2008c6..06753ea0 100644
 --- a/src/components/workspace/DailyMemoryPanel.tsx
 +++ b/src/components/workspace/DailyMemoryPanel.tsx
 @@ -358,7 +358,7 @@ const DailyMemoryPanel: React.FC<DailyMemoryPanelProps> = ({
@@ -5225,7 +5240,7 @@ index 8b2008c..06753ea 100644
              <div className="flex items-center gap-1.5">
                <Button
 diff --git a/src/components/workspace/WorkspaceFilesPanel.tsx b/src/components/workspace/WorkspaceFilesPanel.tsx
-index adf9c79..2feaf82 100644
+index adf9c792..2feaf822 100644
 --- a/src/components/workspace/WorkspaceFilesPanel.tsx
 +++ b/src/components/workspace/WorkspaceFilesPanel.tsx
 @@ -90,7 +90,7 @@ const WorkspaceFilesPanel: React.FC = () => {

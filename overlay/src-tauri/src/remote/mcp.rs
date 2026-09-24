@@ -41,6 +41,8 @@ pub struct RemoteMcpApps {
     pub openclaw: bool,
     #[serde(default)]
     pub hermes: bool,
+    #[serde(default)]
+    pub mcode: bool,
 }
 
 impl RemoteMcpApps {
@@ -68,6 +70,9 @@ impl RemoteMcpApps {
         if self.hermes {
             out.push("hermes");
         }
+        if self.mcode {
+            out.push("mcode");
+        }
         out
     }
 
@@ -80,6 +85,7 @@ impl RemoteMcpApps {
             "opencode" => self.opencode = enabled,
             "openclaw" => self.openclaw = enabled,
             "hermes" => self.hermes = enabled,
+            "mcode" => self.mcode = enabled,
             _ => {}
         }
     }
@@ -139,6 +145,9 @@ fn openclaw_config_path(root: &str) -> String {
 fn pi_config_path(root: &str) -> String {
     format!("{root}/.pi/agent/settings.json")
 }
+fn mcode_config_path(root: &str) -> String {
+    format!("{root}/.minimax/mcp.json")
+}
 
 /// 该 app 的配置目录（判断 CLI 是否安装，与 live 配置文件不一定同名）。
 fn app_dir(root: &str, app: &str) -> Option<String> {
@@ -151,6 +160,7 @@ fn app_dir(root: &str, app: &str) -> Option<String> {
         "hermes" => Some(format!("{root}/.hermes")),
         "openclaw" => Some(format!("{root}/.openclaw")),
         "pi" => Some(format!("{root}/.pi")),
+        "mcode" => Some(format!("{root}/.minimax")),
         _ => None,
     }
 }
@@ -354,6 +364,7 @@ pub async fn import_remote_mcp_from_apps<F: FileOps>(fs: &F, root: &str) -> Resu
         "openclaw",
         "hermes",
         "pi",
+        "mcode",
     ] {
         let servers = read_live_servers(fs, root, app).await?;
         for (id, spec) in servers {
@@ -448,6 +459,7 @@ async fn sync_mcp_to_app_many<F: FileOps>(
             openclaw_json_upsert_many(fs, &openclaw_config_path(root), &converted).await
         }
         "pi" => json_upsert_many(fs, &pi_config_path(root), "mcpServers", items).await,
+        "mcode" => json_upsert_many(fs, &mcode_config_path(root), "mcpServers", items).await,
         _ => Ok(()),
     }
 }
@@ -485,6 +497,7 @@ async fn remove_mcp_from_app_many<F: FileOps>(
         "hermes" => hermes_remove_many(fs, &hermes_config_path(root), ids).await,
         "openclaw" => openclaw_json_remove_many(fs, &openclaw_config_path(root), ids).await,
         "pi" => json_remove_many(fs, &pi_config_path(root), "mcpServers", ids).await,
+        "mcode" => json_remove_many(fs, &mcode_config_path(root), "mcpServers", ids).await,
         _ => Ok(()),
     }
 }
@@ -841,6 +854,10 @@ async fn read_live_servers<F: FileOps>(
         "opencode" => read_json_field_map(fs, &opencode_config_path(root), "mcp").await,
         "hermes" => read_yaml_mcp_map(fs, &hermes_config_path(root)).await,
         "openclaw" => read_openclaw_mcp_map(fs, &openclaw_config_path(root)).await,
+        // 之前漏了 pi：写入走 json_upsert_many 到 pi_config_path，读回却落空 →
+        // 导入时读不到 pi 的 live 服务器。补上，与写入路径对称。
+        "pi" => read_json_field_map(fs, &pi_config_path(root), "mcpServers").await,
+        "mcode" => read_json_field_map(fs, &mcode_config_path(root), "mcpServers").await,
         _ => Ok(IndexMap::new()),
     }
 }

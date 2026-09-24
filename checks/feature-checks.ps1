@@ -107,6 +107,46 @@ Check "Cargo.toml 含 macos-private-api 特性（macOS 透明窗口必需）" { 
 Check "tauri.conf 开启 macOSPrivateApi" { Contains "src-tauri/tauri.conf.json" "macOSPrivateApi" }
 Check "窗口尺寸 920x650" { Contains "src-tauri/tauri.windows.conf.json" '"width":\s*920' }
 
+# ---------- J. 远端支持 Mcode（官方 v3.20.4 新增的第十个受管应用） ----------
+# 官方 v3.20.4 引入 MiniMax Code（app_type = mcode，配置在 ~/.minimax）。
+# 这些断言保证「远端控制面也覆盖了它」不会被后续升级悄悄吃掉。
+Check "app_config 含 AppType::Mcode" { Contains "src-tauri/src/app_config.rs" "AppType::Mcode" }
+Check "远端 mcode 模块存在" { Exists "src-tauri/src/remote/mcode.rs" }
+Check "远端 mcode 已注册到 mod.rs" { Contains "src-tauri/src/remote/mod.rs" "pub mod mcode;" }
+Check "远端切换写回支持 mcode" { Contains "src-tauri/src/remote/providers.rs" "apply_mcode_provider_settings" }
+Check "远端提示词路径指向 .minimax" { Contains "src-tauri/src/remote/prompt.rs" '\.minimax' }
+Check "远端 MCP 路径指向 .minimax" { Contains "src-tauri/src/remote/mcp.rs" '\.minimax' }
+Check "远端 skills 路径指向 .minimax" { Contains "src-tauri/src/remote/skill.rs" '\.minimax/skills' }
+Check "远端 CLI 探测用 mcode 二进制名" { Contains "src-tauri/src/remote/commands.rs" 'Some\("mcode"\)' }
+Check "远端 additive 判定含 mcode" { Contains "src-tauri/src/remote/providers.rs" 'matches!\(' 1 }
+
+# 回归断言：prompt.rs 的兜底分支必须不再静默写 Claude。
+# 以前是 `_ => (".claude", "CLAUDE.md")` —— 任何未列出的 app 都会把提示词写进
+# Claude 的配置，污染别的应用且不报错。现已改成 Option + 调用方报错。
+Check "远端提示词路径不再静默兜底到 claude" {
+  $p = Join-Path $TargetDir "src-tauri/src/remote/prompt.rs"
+  if (-not (Test-Path $p)) { return @($false, "文件不存在") }
+  # 只匹配【代码行】（行首是 _ =>），注释里提到旧写法不算 —— 否则会误报。
+  foreach ($line in (Get-Content $p)) {
+    if ($line -match '^\s*_ => \("\.claude", "CLAUDE\.md"\)') {
+      return @($false, "危险兜底仍在：未识别的 app 会被静默写进 Claude 配置")
+    }
+  }
+  return @($true, "")
+}
+
+# 回归断言：mcp.rs 的 read_live_servers 必须覆盖 pi。
+# 写入走 pi_config_path、读回却落空 → 导入时静默读不到 pi 的 live 服务器。
+Check "远端 MCP read_live_servers 覆盖 pi" {
+  $p = Join-Path $TargetDir "src-tauri/src/remote/mcp.rs"
+  if (-not (Test-Path $p)) { return @($false, "文件不存在") }
+  $t = Get-Content $p -Raw
+  if ($t -match '"pi" => read_json_field_map\(fs, &pi_config_path') {
+    return @($true, "")
+  }
+  return @($false, "read_live_servers 缺口 pi 分支")
+}
+
 Write-Host "`n===== L3 功能断言 =====" -ForegroundColor Cyan
 foreach ($r in $results) {
   if ($r.StartsWith("  [FAIL]")) { Write-Host $r -ForegroundColor Red } else { Write-Host $r -ForegroundColor DarkGray }

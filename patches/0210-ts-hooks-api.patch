@@ -1,5 +1,5 @@
 diff --git a/src/hooks/useDragSort.ts b/src/hooks/useDragSort.ts
-index 2983c06..7f5c45e 100644
+index 2983c063..7f5c45e5 100644
 --- a/src/hooks/useDragSort.ts
 +++ b/src/hooks/useDragSort.ts
 @@ -12,9 +12,15 @@ import { toast } from "sonner";
@@ -77,7 +77,7 @@ index 2983c06..7f5c45e 100644
          // Routing apps derive failover order from sort_index.
          if (isProxyAppId(appId)) {
 diff --git a/src/hooks/useMcp.ts b/src/hooks/useMcp.ts
-index 3e49227..adac720 100644
+index 3e492272..adac720f 100644
 --- a/src/hooks/useMcp.ts
 +++ b/src/hooks/useMcp.ts
 @@ -1,36 +1,63 @@
@@ -341,7 +341,7 @@ index 3e49227..adac720 100644
    });
  }
 diff --git a/src/hooks/useOpenClaw.ts b/src/hooks/useOpenClaw.ts
-index 764bfa2..0e9c139 100644
+index 764bfa29..0e9c1394 100644
 --- a/src/hooks/useOpenClaw.ts
 +++ b/src/hooks/useOpenClaw.ts
 @@ -1,6 +1,14 @@
@@ -513,7 +513,7 @@ index 764bfa2..0e9c139 100644
    });
  }
 diff --git a/src/hooks/useProviderActions.ts b/src/hooks/useProviderActions.ts
-index 76e03c4..52f49fe 100644
+index 13eaa447..e17ca574 100644
 --- a/src/hooks/useProviderActions.ts
 +++ b/src/hooks/useProviderActions.ts
 @@ -9,6 +9,7 @@ import {
@@ -533,7 +533,7 @@ index 76e03c4..52f49fe 100644
  ) {
    const { t } = useTranslation();
    const queryClient = useQueryClient();
-@@ -380,6 +383,21 @@ export function useProviderActions(
+@@ -384,6 +387,21 @@ export function useProviderActions(
    // 保存用量脚本
    const saveUsageScript = useCallback(
      async (provider: Provider, script: UsageScript) => {
@@ -555,7 +555,7 @@ index 76e03c4..52f49fe 100644
        try {
          const updatedProvider: Provider = {
            ...provider,
-@@ -420,7 +438,7 @@ export function useProviderActions(
+@@ -424,7 +442,7 @@ export function useProviderActions(
          toast.error(detail);
        }
      },
@@ -565,7 +565,7 @@ index 76e03c4..52f49fe 100644
  
    // Set provider as default model (OpenClaw only)
 diff --git a/src/hooks/useProxyStatus.ts b/src/hooks/useProxyStatus.ts
-index c4fc588..cb2776e 100644
+index c4fc5886..cb2776ec 100644
 --- a/src/hooks/useProxyStatus.ts
 +++ b/src/hooks/useProxyStatus.ts
 @@ -13,6 +13,7 @@ import {
@@ -622,7 +622,7 @@ index c4fc588..cb2776e 100644
          extractErrorMessage(error) ||
          t("common.unknown", { defaultValue: "未知错误" });
 diff --git a/src/hooks/useSettingsForm.ts b/src/hooks/useSettingsForm.ts
-index 5300b33..decdb78 100644
+index 5300b339..decdb78d 100644
 --- a/src/hooks/useSettingsForm.ts
 +++ b/src/hooks/useSettingsForm.ts
 @@ -51,6 +51,10 @@ const sanitizeDir = (value?: string | null): string | undefined => {
@@ -662,7 +662,7 @@ index 5300b33..decdb78 100644
            serverData.preserveCodexOfficialAuthOnSwitch ?? false,
          unifyCodexSessionHistory: serverData.unifyCodexSessionHistory ?? false,
 diff --git a/src/hooks/useSkills.ts b/src/hooks/useSkills.ts
-index f411833..d3a62fb 100644
+index f4118337..d3a62fb2 100644
 --- a/src/hooks/useSkills.ts
 +++ b/src/hooks/useSkills.ts
 @@ -14,18 +14,100 @@ import {
@@ -1209,7 +1209,7 @@ index f411833..d3a62fb 100644
  
  /**
 diff --git a/src/lib/api/connectivity-check.ts b/src/lib/api/connectivity-check.ts
-index 43e56f8..fde84d2 100644
+index 43e56f87..fde84d22 100644
 --- a/src/lib/api/connectivity-check.ts
 +++ b/src/lib/api/connectivity-check.ts
 @@ -37,6 +37,24 @@ export async function streamCheckProvider(
@@ -1238,7 +1238,7 @@ index 43e56f8..fde84d2 100644
   * 批量连通性检查
   */
 diff --git a/src/lib/api/providers.ts b/src/lib/api/providers.ts
-index 5f2e182..be83288 100644
+index 5f2e1828..be832885 100644
 --- a/src/lib/api/providers.ts
 +++ b/src/lib/api/providers.ts
 @@ -189,6 +189,14 @@ export const providersApi = {
@@ -1257,10 +1257,10 @@ index 5f2e182..be83288 100644
     * 从 OpenClaw live 配置导入供应商到数据库
     * OpenClaw 特有功能：由于累加模式，用户可能已在 openclaw.json 中配置供应商
 diff --git a/src/lib/api/skills.ts b/src/lib/api/skills.ts
-index cb5502c..69ffb88 100644
+index 614b3ed2..736cbc7e 100644
 --- a/src/lib/api/skills.ts
 +++ b/src/lib/api/skills.ts
-@@ -80,6 +80,8 @@ export interface UnmanagedSkill {
+@@ -82,6 +82,8 @@ export interface UnmanagedSkill {
  export interface ImportSkillSelection {
    directory: string;
    apps: SkillApps;
@@ -1270,7 +1270,7 @@ index cb5502c..69ffb88 100644
  
  /** 技能对象（兼容旧 API） */
 diff --git a/src/lib/api/subscription.ts b/src/lib/api/subscription.ts
-index 4b94bec..66d0481 100644
+index 4b94bec0..66d0481a 100644
 --- a/src/lib/api/subscription.ts
 +++ b/src/lib/api/subscription.ts
 @@ -18,6 +18,7 @@ export const subscriptionApi = {
@@ -1290,7 +1290,7 @@ index 4b94bec..66d0481 100644
    getBalance: (
      baseUrl: string,
 diff --git a/src/lib/api/usage.ts b/src/lib/api/usage.ts
-index fe59c37..1d00f5b 100644
+index fe59c379..1d00f5b0 100644
 --- a/src/lib/api/usage.ts
 +++ b/src/lib/api/usage.ts
 @@ -25,6 +25,22 @@ export const usageApi = {
@@ -1317,7 +1317,7 @@ index fe59c37..1d00f5b 100644
      providerId: string,
      appId: AppId,
 diff --git a/src/lib/query/queries.ts b/src/lib/query/queries.ts
-index 0f4a380..960ac09 100644
+index 0f4a380e..960ac091 100644
 --- a/src/lib/query/queries.ts
 +++ b/src/lib/query/queries.ts
 @@ -20,6 +20,10 @@ import type {
@@ -1441,7 +1441,7 @@ index 0f4a380..960ac09 100644
      staleTime: 30 * 1000,
    });
 diff --git a/src/lib/query/usage.ts b/src/lib/query/usage.ts
-index ea95dc0..1931a8b 100644
+index ea95dc0c..1931a8bf 100644
 --- a/src/lib/query/usage.ts
 +++ b/src/lib/query/usage.ts
 @@ -147,6 +147,21 @@ export const usageKeys = {
@@ -1467,7 +1467,7 @@ index ea95dc0..1931a8b 100644
  
  /** 把 UI 侧的 "all" 哨兵归一成 undefined（后端语义：不过滤）。 */
 diff --git a/src/lib/updater.ts b/src/lib/updater.ts
-index 0bc7da2..fc38848 100644
+index 0bc7da2f..fc38848d 100644
 --- a/src/lib/updater.ts
 +++ b/src/lib/updater.ts
 @@ -31,7 +31,9 @@ export async function checkForUpdate(

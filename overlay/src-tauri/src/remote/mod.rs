@@ -19,6 +19,7 @@ pub mod grok;
 pub mod hermes;
 pub mod hooks;
 pub mod mcp;
+pub mod mcode;
 pub mod openclaw;
 pub mod opencode;
 pub mod pi;
