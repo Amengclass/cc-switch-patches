@@ -169,6 +169,7 @@
     "install": "インストール",
     "copyInstallCmd": "コマンドをコピー",
     "showInstallCmd": "インストールコマンドを表示",
+    "installNotSupported": "このアプリの自動インストールはまだ対応していません。公式ドキュメントに従って手動でインストールしてください",
     "noResponse": "応答なし",
     "testOk": "リモートに到達可能（HTTP {{code}}）",
     "testFail": "リモートに到達できません（HTTP {{code}}）",

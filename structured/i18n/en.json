@@ -169,6 +169,7 @@
     "install": "Install",
     "copyInstallCmd": "Copy command",
     "showInstallCmd": "Show install command",
+    "installNotSupported": "Automatic installation isn't supported for this app yet — please install it manually following its official documentation",
     "noResponse": "No response",
     "testOk": "Remote reachable (HTTP {{code}})",
     "testFail": "Remote unreachable (HTTP {{code}})",

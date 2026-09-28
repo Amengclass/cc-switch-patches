@@ -172,6 +172,7 @@
     "install": "安装",
     "copyInstallCmd": "复制命令",
     "showInstallCmd": "查看安装命令",
+    "installNotSupported": "当前版本暂未支持该应用的自动安装，请参考其官方文档手动安装",
     "noResponse": "无响应",
     "testOk": "远端可达（HTTP {{code}}）",
     "testFail": "远端不可达（HTTP {{code}}）",

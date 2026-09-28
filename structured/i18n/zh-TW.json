@@ -169,6 +169,7 @@
     "install": "安裝",
     "copyInstallCmd": "複製命令",
     "showInstallCmd": "檢視安裝命令",
+    "installNotSupported": "目前版本暫未支援該應用的自動安裝，請參考其官方文件手動安裝",
     "noResponse": "無回應",
     "testOk": "遠端可達（HTTP {{code}}）",
     "testFail": "遠端不可達（HTTP {{code}}）",

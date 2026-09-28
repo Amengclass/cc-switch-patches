@@ -1,5 +1,5 @@
 diff --git a/src/App.tsx b/src/App.tsx
-index 33706344..1f9e1a58 100644
+index 33706344..308952b0 100644
 --- a/src/App.tsx
 +++ b/src/App.tsx
 @@ -1,4 +1,11 @@
@@ -782,8 +782,22 @@ index 33706344..1f9e1a58 100644
          default:
            return (
              <div className="px-6 flex flex-col flex-1 min-h-0 overflow-hidden">
-@@ -1128,19 +1583,67 @@ function App() {
-                   >
+@@ -1117,30 +1572,72 @@ function App() {
+                 ref={providerScrollContainerRef}
+                 className="flex-1 overflow-y-auto overflow-x-hidden pb-12 px-1"
+               >
+-                <AnimatePresence mode="wait">
+-                  <motion.div
+-                    key={activeApp}
+-                    initial={{ opacity: 0 }}
+-                    animate={{ opacity: 1 }}
+-                    exit={{ opacity: 0 }}
+-                    transition={{ duration: 0.15 }}
+-                    className="space-y-4"
+-                  >
++                {/* 切换 app 时同样不做淡入淡出：mode="wait" 会先卸载旧列表再挂载新列表，
++                    新列表挂载后才拉数据，表现为「供应商面板闪一下、数据像加载了两次」。 */}
++                <div className="space-y-4">
                      <ProviderList
                        providers={providers}
 -                      currentProviderId={currentProviderId}
@@ -815,7 +829,7 @@ index 33706344..1f9e1a58 100644
 +                        remoteTargetId
 +                          ? remoteProvidersQuery.data?.liveIds
 +                          : undefined
-+                      }
+                       }
 +                      remoteLoadingLabel={
 +                        remoteTargetId ? (
 +                          <>
@@ -842,7 +856,7 @@ index 33706344..1f9e1a58 100644
 +                              ? extractErrorMessage(remoteProvidersQuery.error)
 +                              : undefined
 +                          : undefined
-                       }
++                      }
 +                      onRetryRemote={
 +                        remoteTargetId
 +                          ? () => {
@@ -857,7 +871,7 @@ index 33706344..1f9e1a58 100644
                        onEdit={(provider) => {
                          setEditingProvider(provider);
                        }}
-@@ -1173,11 +1676,17 @@ function App() {
+@@ -1173,34 +1670,32 @@ function App() {
                        }
                        onCreate={() => setIsAddOpen(true)}
                        onSetAsDefault={
@@ -879,8 +893,37 @@ index 33706344..1f9e1a58 100644
 +                              : undefined
                        }
                      />
-                   </motion.div>
-@@ -1341,6 +1850,8 @@ function App() {
+-                  </motion.div>
+-                </AnimatePresence>
++                </div>
+               </div>
+             </div>
+           );
+       }
+     })();
+ 
++    // 视图切换不做淡入淡出：AnimatePresence 的 mode="wait" 会先把旧页面淡出（0.2s）、
++    // 卸载之后才挂载新页面，中间留出一段空白窗口；新页面又是挂载后才发请求
++    // （queryClient staleTime 为 0），于是每次切页都像「闪一下 + 同一份数据加载了两次」。
++    // 这里直接渲染，切换即时完成。
+     return (
+-      <AnimatePresence mode="wait">
+-        <motion.div
+-          key={currentView}
+-          className="flex flex-1 min-h-0 flex-col"
+-          initial={{ opacity: 0 }}
+-          animate={{ opacity: 1 }}
+-          exit={{ opacity: 0 }}
+-          transition={{ duration: 0.2 }}
+-        >
+-          {content}
+-        </motion.div>
+-      </AnimatePresence>
++      <div className="flex flex-1 min-h-0 flex-col">{content}</div>
+     );
+   };
+ 
+@@ -1341,6 +1836,8 @@ function App() {
                      })}
                    {currentView === "sessions" && t("sessionManager.title")}
                    {currentView === "workspace" && t("workspace.title")}
@@ -889,7 +932,7 @@ index 33706344..1f9e1a58 100644
                    {currentView === "openclawEnv" && t("openclaw.env.title")}
                    {currentView === "openclawTools" && t("openclaw.tools.title")}
                    {currentView === "openclawAgents" &&
-@@ -1369,12 +1880,15 @@ function App() {
+@@ -1369,12 +1866,15 @@ function App() {
                  >
                    <Settings className="w-4 h-4" />
                  </Button>
@@ -911,7 +954,7 @@ index 33706344..1f9e1a58 100644
                  {isCurrentAppTakeoverActive && (
                    <Button
                      variant="ghost"
-@@ -1402,7 +1916,57 @@ function App() {
+@@ -1402,7 +1902,57 @@ function App() {
                    className="flex shrink-0 items-center gap-1.5"
                    style={{ WebkitAppRegion: "no-drag" } as any}
                  >
@@ -970,7 +1013,7 @@ index 33706344..1f9e1a58 100644
                      <ClaudeDesktopRouteToggle />
                    ) : proxyAppId ? (
                      <>
-@@ -1434,6 +1998,7 @@ function App() {
+@@ -1434,6 +1984,7 @@ function App() {
                    activeApp={activeApp}
                    onSwitch={setActiveApp}
                    visibleApps={visibleApps}
@@ -978,7 +1021,7 @@ index 33706344..1f9e1a58 100644
                  />
                )}
              </div>
-@@ -1483,6 +2048,28 @@ function App() {
+@@ -1483,6 +2034,28 @@ function App() {
                      </Button>
                    </>
                  )}
@@ -1007,7 +1050,7 @@ index 33706344..1f9e1a58 100644
                  {currentView === "skills" && (
                    <>
                      <Button
-@@ -1510,18 +2097,19 @@ function App() {
+@@ -1510,18 +2083,19 @@ function App() {
                          ? t("skills.checkingUpdates")
                          : t("skills.checkUpdates")}
                      </Button>
@@ -1039,7 +1082,7 @@ index 33706344..1f9e1a58 100644
                      <Button
                        variant="ghost"
                        size="sm"
-@@ -1638,20 +2226,40 @@ function App() {
+@@ -1638,20 +2212,40 @@ function App() {
                                >
                                  <LayoutDashboard className="w-4 h-4" />
                                </Button>
@@ -1084,7 +1127,7 @@ index 33706344..1f9e1a58 100644
                                <Button
                                  variant="ghost"
                                  size="sm"
-@@ -1697,6 +2305,28 @@ function App() {
+@@ -1697,6 +2291,28 @@ function App() {
                                >
                                  <History className="w-4 h-4" />
                                </Button>
@@ -1113,7 +1156,7 @@ index 33706344..1f9e1a58 100644
                              </>
                            ) : (
                              <>
-@@ -1750,6 +2380,19 @@ function App() {
+@@ -1750,6 +2366,19 @@ function App() {
                                    <McpIcon size={16} />
                                  </Button>
                                )}
@@ -1133,7 +1176,7 @@ index 33706344..1f9e1a58 100644
                              </>
                            )}
                          </motion.div>
-@@ -1780,14 +2423,130 @@ function App() {
+@@ -1780,14 +2409,130 @@ function App() {
          {isOpenClawView && openclawHealthWarnings.length > 0 && (
            <OpenClawHealthBanner warnings={openclawHealthWarnings} />
          )}
@@ -1266,7 +1309,7 @@ index 33706344..1f9e1a58 100644
        />
  
        <EditProviderDialog
-@@ -1801,6 +2560,17 @@ function App() {
+@@ -1801,6 +2546,17 @@ function App() {
          onSubmit={handleEditProvider}
          appId={activeApp}
          isProxyTakeover={isCurrentAppTakeoverActive}

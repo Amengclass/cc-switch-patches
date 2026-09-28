@@ -26,6 +26,9 @@ export function InstallCommandPopover({ command }: InstallCommandPopoverProps) {
   const [copied, setCopied] = useState(false);
   const [open, setOpen] = useState(false);
 
+  // 有些应用（如 MiniMax Code）没有自动安装命令 —— 此时不弹空白命令框，改为说明。
+  const hasCommand = command.trim().length > 0;
+
   const handleCopy = async () => {
     try {
       await copyText(command);
@@ -55,26 +58,37 @@ export function InstallCommandPopover({ command }: InstallCommandPopoverProps) {
         </button>
       </PopoverTrigger>
       <PopoverContent className="w-[320px]">
-        <div className="flex flex-col gap-2">
-          <code className="block break-all rounded-md bg-muted p-2 font-mono text-xs leading-relaxed text-foreground">
-            {command}
-          </code>
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => void handleCopy()}
-            className="w-full"
-          >
-            {copied ? (
-              <Check className="mr-1.5 h-3.5 w-3.5" />
-            ) : (
-              <Copy className="mr-1.5 h-3.5 w-3.5" />
-            )}
-            {copied
-              ? t("common.copied", { defaultValue: "已复制" })
-              : t("remote.copyInstallCmd", { defaultValue: "复制命令" })}
-          </Button>
-        </div>
+        {hasCommand ? (
+          <div className="flex flex-col gap-2">
+            <code className="block break-all rounded-md bg-muted p-2 font-mono text-xs leading-relaxed text-foreground">
+              {command}
+            </code>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => void handleCopy()}
+              className="w-full"
+            >
+              {copied ? (
+                <Check className="mr-1.5 h-3.5 w-3.5" />
+              ) : (
+                <Copy className="mr-1.5 h-3.5 w-3.5" />
+              )}
+              {copied
+                ? t("common.copied", { defaultValue: "已复制" })
+                : t("remote.copyInstallCmd", { defaultValue: "复制命令" })}
+            </Button>
+          </div>
+        ) : (
+          // 该应用没有自动安装命令就直说，而不是弹一个空白的命令框。
+          // 现状：MiniMax Code（mcode）—— 官方 v3.20.4 明确把「在关于页安装/升级」
+          // 排除在范围外，我们跟随官方，同样不提供安装命令。
+          <p className="text-xs leading-relaxed text-muted-foreground">
+            {t("remote.installNotSupported", {
+              defaultValue: "当前版本暂未支持该应用的自动安装，请参考其官方文档手动安装",
+            })}
+          </p>
+        )}
       </PopoverContent>
     </Popover>
   );
