@@ -134,6 +134,10 @@
   ],
   "src/components/hermes/HermesMemoryPanel.tsx": [
     {
+      "line": "import React, { useEffect } from \"react\";",
+      "why": "等价改写（超集）：目标切换时清草稿需要 useRef，合并后为 import React, { useEffect, useRef } from \"react\";，仍是官方 import 的超集，useEffect 原样保留。"
+    },
+    {
       "line": "export const HermesMemorySaveButton: React.FC = () => {",
       "why": "等价改写：v4.0.4 合并树在同一文件的远端/本机共用重构中改写了这一行，对应功能已人工核对仍存在。"
     },

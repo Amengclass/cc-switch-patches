@@ -2687,7 +2687,7 @@ index d83520cb..ba87c0d1 100644
          queryKey: sessionKeys.transcript(input.providerId, input.sourcePath),
        });
 diff --git a/src/lib/query/queries.ts b/src/lib/query/queries.ts
-index e2f34ca3..8368a85d 100644
+index e2f34ca3..38adc482 100644
 --- a/src/lib/query/queries.ts
 +++ b/src/lib/query/queries.ts
 @@ -10,6 +10,10 @@ import {
@@ -2719,7 +2719,7 @@ index e2f34ca3..8368a85d 100644
  
    // 计算 staleTime：如果有自动刷新间隔，使用该间隔；否则默认 5 分钟
    // 这样可以避免切换 app 页面时重复触发查询
-@@ -258,9 +264,23 @@ export const useUsageQuery = (
+@@ -258,9 +264,26 @@ export const useUsageQuery = (
        : 5 * 60 * 1000; // 默认 5 分钟
  
    const query = useQuery<UsageResult>({
@@ -2727,12 +2727,15 @@ index e2f34ca3..8368a85d 100644
 -    queryFn: async () => usageApi.query(providerId, appId),
 -    enabled: enabled && !!providerId,
 +    // 远端目标必须进 key：同一 provider id 在不同主机/容器上的额度互不相干，
-+    // 共用 key 会把 A 机器的余量显示到 B 机器上。
-+    queryKey: [
-+      ...usageKeys.script(providerId, appId),
-+      remote?.hostId ?? null,
-+      remote?.container ?? null,
-+    ],
++    // 共用 key 会把 A 机器的余量显示到 B 机器上。本地模式保持历史 key 不变，
++    // 避免既有缓存与依赖该 key 的调用方失效。
++    queryKey: remote
++      ? [
++          ...usageKeys.script(providerId, appId),
++          remote.hostId,
++          remote.container ?? null,
++        ]
++      : usageKeys.script(providerId, appId),
 +    queryFn: async () =>
 +      remote
 +        ? queryRemoteProviderUsage(
@@ -2746,7 +2749,7 @@ index e2f34ca3..8368a85d 100644
      refetchInterval:
        autoQueryInterval > 0
          ? Math.max(autoQueryInterval, 1) * 60 * 1000 // 最小1分钟
-@@ -305,10 +325,18 @@ export const useUsageQuery = (
+@@ -305,10 +328,18 @@ export const useUsageQuery = (
    };
  };
  

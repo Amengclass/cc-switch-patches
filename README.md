@@ -55,7 +55,7 @@
 ```
 1. 打开 仓库页面 → Actions → 「Build CC Switch Magic」
 2. 点「Run workflow」，填两个输入：
-     version   = 官方版本号（如 v3.20.1；留空 = base.json 锁定版）
+     version   = 官方版本号（如 v4.0.4；留空 = base.json 锁定版）
      platforms = 要构建哪些平台：全部 / Windows / Linux / macOS（可逗号分隔多个）
      make_release = 可选，勾了会顺手创建 Release
 3. 点绿色「Run workflow」，等 20~40 分钟
@@ -67,14 +67,14 @@
 或在本地推 tag 自动触发：
 
 ```bash
-git tag magic-v3.20.1
-git push origin magic-v3.20.1
+git tag v4.0.4-Magic
+git push origin v4.0.4-Magic
 ```
 
 ### 方式二：本地一键
 
 ```powershell
-.\magic.ps1 -Version v3.20.1     # 组装 + 验证 + 编译 → exe
+.\magic.ps1 -Version v4.0.4     # 组装 + 验证 + 编译 → exe
 ```
 
 产物：`cc-switch-build/src-tauri/target/debug/cc-switch-magic.exe`
@@ -84,10 +84,10 @@ git push origin magic-v3.20.1
 想看清楚每一步时，挨个跑（都是已经验证过的脚本）：
 
 ```powershell
-# ① 组装：拉官方 v3.20.1 → 套 overlay → 结构化合并 → 打 11 个补丁
-.\scripts\apply.ps1 -TargetDir <目标目录> -Version v3.20.1
+# ① 组装：拉官方 v4.0.4 → 套 overlay → 结构化合并 → 打 10 个补丁
+.\scripts\apply.ps1 -TargetDir <目标目录> -Version v4.0.4
 
-# ② 验证：42 条功能断言
+# ② 验证：55 条功能断言
 .\checks\feature-checks.ps1 -TargetDir <目标目录>
 
 # ③ 编译
@@ -236,7 +236,7 @@ t("myFeature.title")   // 然后在 src/i18n/locales/{zh,en,ja,zh-TW}.json 加 k
 | `scripts/compare-trees.mjs` | 树比对（JSON/TOML 走语义比较） |
 | `scripts/fix-crlf-patches.mjs` | 防护：CRLF 文件的补丁换行（`git diff --output=` 出问题时兜底） |
 | `scripts/_proxy.ps1` | git 代理自动探测（本机有代理就走，CI 直连） |
-| `checks/feature-checks.ps1` | 42 条功能断言 |
+| `checks/feature-checks.ps1` | 55 条功能断言 |
 
 ## ✅ 验证机制（保证「功能一个都没丢」）
 
@@ -262,7 +262,7 @@ t("myFeature.title")   // 然后在 src/i18n/locales/{zh,en,ja,zh-TW}.json 加 k
 
 ```powershell
 # 1) 组装：拉官方新版 → 套 overlay → 结构化合并 → 打补丁 → 锚点重放
-.\scripts\apply.ps1 -TargetDir <新目录> -Version v3.20.3
+.\scripts\apply.ps1 -TargetDir <新目录> -Version v4.0.4
 # 2) 零丢失门禁：证明官方新增的每一行都还在
 node .\scripts\check-upstream-sync.mjs --from <官方旧版树> --to <官方新版树> `
      --ours <我们的源码> --merged <组装结果> --waivers .\upstream-waivers.json
@@ -309,7 +309,7 @@ cc-switch-patches/
 ├── structured/                   # i18n / 配置 / 依赖 → 按 key 合并
 ├── anchors/                      # 加性改动 → 按符号锚点重放（6 份 / 35 条）
 ├── patches/                      # 对官方文件的逐行改动（11 个主题补丁）
-├── checks/feature-checks.ps1     # 42 条功能断言
+├── checks/feature-checks.ps1     # 55 条功能断言
 ├── scripts/                      # 组装 / 编译 / 验证 / 重抽取 / 门禁
 ├── upstream-waivers.json         # L5 门禁的显式豁免表（每条须写明等价改写）
 ├── .github/workflows/build.yml   # 全平台自动构建

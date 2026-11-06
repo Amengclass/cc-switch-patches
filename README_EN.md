@@ -56,7 +56,7 @@ Official + our features   ← only this patched tree gets compiled
 ```
 1. Open the repo → Actions → "Build CC Switch Magic"
 2. Click "Run workflow" and fill in the inputs:
-     version   = official tag (e.g. v3.20.1; empty = the version pinned in base.json)
+     version   = official tag (e.g. v4.0.4; empty = the version pinned in base.json)
      platforms = which platforms to build: 全部 (all) / Windows / Linux / macOS (comma-separated)
      make_release = optional; when checked it also creates a Release
 3. Click the green "Run workflow" and wait 20–40 minutes
@@ -68,14 +68,14 @@ Official + our features   ← only this patched tree gets compiled
 Or push a tag to trigger it locally:
 
 ```bash
-git tag magic-v3.20.1
-git push origin magic-v3.20.1
+git tag v4.0.4-Magic
+git push origin v4.0.4-Magic
 ```
 
 ### Option 2 — One command locally
 
 ```powershell
-.\magic.ps1 -Version v3.20.1     # assemble + verify + build → exe
+.\magic.ps1 -Version v4.0.4     # assemble + verify + build → exe
 ```
 
 Output: `cc-switch-build/src-tauri/target/debug/cc-switch-magic.exe`
@@ -85,8 +85,8 @@ Output: `cc-switch-build/src-tauri/target/debug/cc-switch-magic.exe`
 Prefer to see each stage? Run the (already verified) scripts one at a time:
 
 ```powershell
-# 1) Assemble: clone upstream v3.20.1 → overlay → structured merge → apply 11 patches
-.\scripts\apply.ps1 -TargetDir <target-dir> -Version v3.20.1
+# 1) Assemble: clone upstream v4.0.4 → overlay → structured merge → apply 10 patches
+.\scripts\apply.ps1 -TargetDir <target-dir> -Version v4.0.4
 
 # 2) Verify: 42 feature assertions
 .\checks\feature-checks.ps1 -TargetDir <target-dir>

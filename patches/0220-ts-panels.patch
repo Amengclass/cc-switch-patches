@@ -113,9 +113,15 @@ index aa52e5b6..bb9c5e45 100644
            className={cn(
              "inset-0 z-[60] flex flex-col bg-app",
 diff --git a/src/components/hermes/HermesMemoryPanel.tsx b/src/components/hermes/HermesMemoryPanel.tsx
-index 2707b593..99fc9cc4 100644
+index 2707b593..7be29f5d 100644
 --- a/src/components/hermes/HermesMemoryPanel.tsx
 +++ b/src/components/hermes/HermesMemoryPanel.tsx
+@@ -1,4 +1,4 @@
+-import React, { useEffect } from "react";
++import React, { useEffect, useRef } from "react";
+ import { useTranslation } from "react-i18next";
+ import { toast } from "@/lib/toast";
+ import { AlertTriangle, ExternalLink } from "lucide-react";
 @@ -13,6 +13,7 @@ import {
    useOpenHermesWebUI,
    useSaveHermesMemory,
@@ -168,7 +174,7 @@ index 2707b593..99fc9cc4 100644
  
    // 只在第一次读到文件时填草稿；保存后的重新读取不覆盖正在编辑的内容
    useEffect(() => {
-@@ -256,24 +265,32 @@ const MemoryTabPane: React.FC<MemoryTabPaneProps> = ({
+@@ -256,24 +265,38 @@ const MemoryTabPane: React.FC<MemoryTabPaneProps> = ({
    );
  };
  
@@ -197,14 +203,20 @@ index 2707b593..99fc9cc4 100644
  
    // 离开记忆页就丢掉草稿，回来时重新读文件
    useEffect(() => () => hermesMemoryDrafts.reset(), []);
-+  // 切换目标（本机 ↔ 远端 / 不同远端）：草稿来自另一个目标，必须清掉
++  // 切换目标（本机 ↔ 远端 / 不同远端）：草稿来自另一个目标，必须清掉。
++  // 首次挂载不清：草稿正是在这个 effect 之前从当前目标读进来的。
++  const targetKey = `${remoteTargetId ?? ""}|${remoteContainerId ?? ""}`;
++  const prevTargetKeyRef = useRef<string | null>(null);
 +  useEffect(() => {
-+    hermesMemoryDrafts.reset();
-+  }, [remoteTargetId, remoteContainerId]);
++    if (prevTargetKeyRef.current !== null && prevTargetKeyRef.current !== targetKey) {
++      hermesMemoryDrafts.reset();
++    }
++    prevTargetKeyRef.current = targetKey;
++  }, [hermesMemoryDrafts, targetKey]);
  
    const limitOf = (kind: HermesMemoryKind) =>
      (kind === "memory" ? limits?.memory : limits?.user) ??
-@@ -313,15 +330,18 @@ const HermesMemoryPanel: React.FC<HermesMemoryPanelProps> = ({
+@@ -313,15 +336,18 @@ const HermesMemoryPanel: React.FC<HermesMemoryPanelProps> = ({
            ),
          }))}
          trailing={
@@ -232,7 +244,7 @@ index 2707b593..99fc9cc4 100644
          }
        />
  
-@@ -341,7 +361,8 @@ const HermesMemoryPanel: React.FC<HermesMemoryPanelProps> = ({
+@@ -341,7 +367,8 @@ const HermesMemoryPanel: React.FC<HermesMemoryPanelProps> = ({
              kind={kind}
              limit={limitOf(kind)}
              enabled={enabledOf(kind)}
@@ -473,7 +485,7 @@ index 974162b6..52e85a22 100644
    const options = useMemo<ModelOption[]>(() => {
      const allProviders = providersData?.providers;
 diff --git a/src/components/prompts/PiNativePromptResources.tsx b/src/components/prompts/PiNativePromptResources.tsx
-index b315b8d8..0ea39c3a 100644
+index b315b8d8..ca039b1e 100644
 --- a/src/components/prompts/PiNativePromptResources.tsx
 +++ b/src/components/prompts/PiNativePromptResources.tsx
 @@ -39,6 +39,14 @@ import {
@@ -798,21 +810,35 @@ index b315b8d8..0ea39c3a 100644
      onSuccess: async (_removed, template) => {
        setEditor(null);
        await refresh();
-@@ -791,10 +921,12 @@ export const PiPromptTemplates = forwardRef<
+@@ -791,11 +921,22 @@ export const PiPromptTemplates = forwardRef<
          })}${t("pi.prompts.reloadAfterDelete")}`,
          undoneTitle: t("pi.prompts.templateRestored", { slug: template.slug }),
          onUndo: async () => {
 -          await promptsApi.upsertPiPromptTemplate(
-+          await piPromptApi.upsertTemplate(
-             template.slug,
-             "missing",
-             template.content,
-+            undefined,
-+            ctx,
-           );
+-            template.slug,
+-            "missing",
+-            template.content,
+-          );
++          if (ctx?.remoteTargetId) {
++            await piPromptApi.upsertTemplate(
++              template.slug,
++              "missing",
++              template.content,
++              undefined,
++              ctx,
++            );
++          } else {
++            // 本地保持官方调用形态（三个参数），远端才走远端写。
++            await promptsApi.upsertPiPromptTemplate(
++              template.slug,
++              "missing",
++              template.content,
++            );
++          }
            await refresh();
          },
-@@ -1019,6 +1151,7 @@ export const PiPromptTemplates = forwardRef<
+       });
+@@ -1019,6 +1160,7 @@ export const PiPromptTemplates = forwardRef<
            existingSlugs={existingSlugs}
            onClose={() => setEditor(null)}
            onChanged={refresh}
@@ -820,7 +846,7 @@ index b315b8d8..0ea39c3a 100644
          />
        )}
      </>
-@@ -1029,11 +1162,11 @@ export const PiPromptTemplates = forwardRef<
+@@ -1029,11 +1171,11 @@ export const PiPromptTemplates = forwardRef<
   * Kept as a compatibility export for callers that render the native resources
   * directly. The Pi page itself places these sections in separate segments.
   */
@@ -1129,18 +1155,9 @@ index baac860d..1cabfc96 100644
      })),
    });
 diff --git a/src/components/prompts/PromptPanel.tsx b/src/components/prompts/PromptPanel.tsx
-index 65004714..92fd0ba8 100644
+index 65004714..bc670bb3 100644
 --- a/src/components/prompts/PromptPanel.tsx
 +++ b/src/components/prompts/PromptPanel.tsx
-@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
- import { useTranslation } from "react-i18next";
- import { toast } from "@/lib/toast";
- import { APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
--import { promptsApi, type AppId, type Prompt } from "@/lib/api";
-+import { type AppId, type Prompt } from "@/lib/api";
- import { usePromptActions } from "@/hooks/usePromptActions";
- import { useDelayedFlag } from "@/hooks/useDelayedFlag";
- import { useTauriEvent } from "@/hooks/useTauriEvent";
 @@ -32,6 +32,9 @@ export interface PromptPanelProps {
    open?: boolean;
    onInteractionBlockedChange?: (blocked: boolean) => void;
@@ -1185,30 +1202,43 @@ index 65004714..92fd0ba8 100644
  
    const dialogOpen = copyingId !== null;
    const interactionBlocked =
-@@ -222,7 +235,7 @@ const StandardPromptPanel: React.FC<PromptPanelProps> = ({
+@@ -222,7 +235,12 @@ const StandardPromptPanel: React.FC<PromptPanelProps> = ({
          description: t("prompts.toast.deletedSub", { path: displayPath }),
          undoneTitle: t("prompts.toast.restored", { name: original.name }),
          onUndo: async () => {
 -          await promptsApi.upsertPrompt(app, id, original);
-+          await savePrompt(id, original);
++          // 本地保持官方实现（直接调 promptsApi），远端才走 hook 的远端写。
++          if (remoteTargetId) {
++            await savePrompt(id, original);
++          } else {
++            await promptsApi.upsertPrompt(app, id, original);
++          }
            afterUndo(app);
          },
        });
-@@ -264,7 +277,7 @@ const StandardPromptPanel: React.FC<PromptPanelProps> = ({
+@@ -264,7 +282,11 @@ const StandardPromptPanel: React.FC<PromptPanelProps> = ({
            }),
            description: effect || undefined,
            onUndo: async () => {
 -            await promptsApi.enablePrompt(app, id);
-+            await enablePrompt(id);
++            if (remoteTargetId) {
++              await enablePrompt(id);
++            } else {
++              await promptsApi.enablePrompt(app, id);
++            }
              afterUndo(app);
            },
          });
-@@ -284,16 +297,12 @@ const StandardPromptPanel: React.FC<PromptPanelProps> = ({
+@@ -284,16 +306,25 @@ const StandardPromptPanel: React.FC<PromptPanelProps> = ({
        // 撤销只给能原样还原的：之前有启用中的就换回去；之前文件是空的就停用
        const onUndo = previousActive
          ? async () => {
 -            await promptsApi.enablePrompt(app, previousActive[0]);
-+            await enablePrompt(previousActive[0]);
++            if (remoteTargetId) {
++              await enablePrompt(previousActive[0]);
++            } else {
++              await promptsApi.enablePrompt(app, previousActive[0]);
++            }
              afterUndo(app);
            }
          : fileWasBlank && !backup
@@ -1218,24 +1248,33 @@ index 65004714..92fd0ba8 100644
 -                ...latest,
 -                enabled: false,
 -              });
-+              await toggleEnabled(id, false);
++              if (remoteTargetId) {
++                await toggleEnabled(id, false);
++              } else {
++                // 官方实现：重新读一遍列表再写回启用状态，避免覆盖别人的改动
++                const latest = (await promptsApi.getPrompts(app))[id] ?? target;
++                await promptsApi.upsertPrompt(app, id, {
++                  ...latest,
++                  enabled: false,
++                });
++              }
                afterUndo(app);
              }
            : undefined;
-@@ -365,7 +374,7 @@ const StandardPromptPanel: React.FC<PromptPanelProps> = ({
+@@ -365,7 +396,11 @@ const StandardPromptPanel: React.FC<PromptPanelProps> = ({
        showPromptToast(t, {
          title: t("prompts.toast.imported", { path: displayPath }),
          onUndo: async () => {
 -          await promptsApi.deletePrompt(app, id);
-+          await deletePrompt(id);
++          if (remoteTargetId) {
++            await deletePrompt(id);
++          } else {
++            await promptsApi.deletePrompt(app, id);
++          }
            afterUndo(app);
          },
        });
-@@ -402,22 +411,12 @@ const StandardPromptPanel: React.FC<PromptPanelProps> = ({
-     const source = copyingId ? prompts[copyingId] : undefined;
-     if (!source) return;
-     if (!beginWrite()) return;
--    const timestamp = Math.floor(Date.now() / 1000);
+@@ -406,18 +441,24 @@ const StandardPromptPanel: React.FC<PromptPanelProps> = ({
      const created: Array<{ app: AppId; id: string }> = [];
      const failed: AppId[] = [];
      for (const target of targets) {
@@ -1251,21 +1290,40 @@ index 65004714..92fd0ba8 100644
 -          updatedAt: timestamp,
 -        });
 -        created.push({ app: target, id });
-+        const copy = await copyToApp(source, target);
-+        created.push({ app: target, id: copy.id });
++        if (remoteTargetId) {
++          const copy = await copyToApp(source, target);
++          created.push({ app: target, id: copy.id });
++        } else {
++          // 官方实现：本地直接写 promptsApi
++          const id = `prompt-${Date.now()}`;
++          await promptsApi.upsertPrompt(target, id, {
++            id,
++            name: source.name,
++            description: source.description,
++            content: source.content,
++            enabled: false,
++            createdAt: timestamp,
++            updatedAt: timestamp,
++          });
++          created.push({ app: target, id });
++        }
        } catch {
          failed.push(target);
        }
-@@ -434,7 +433,7 @@ const StandardPromptPanel: React.FC<PromptPanelProps> = ({
+@@ -434,7 +475,11 @@ const StandardPromptPanel: React.FC<PromptPanelProps> = ({
          }),
          onUndo: async () => {
            for (const item of created) {
 -            await promptsApi.deletePrompt(item.app, item.id);
-+            await deleteFromApp(item.app, item.id);
++            if (remoteTargetId) {
++              await deleteFromApp(item.app, item.id);
++            } else {
++              await promptsApi.deletePrompt(item.app, item.id);
++            }
            }
            invalidate();
          },
-@@ -522,6 +521,8 @@ const StandardPromptPanel: React.FC<PromptPanelProps> = ({
+@@ -522,6 +567,8 @@ const StandardPromptPanel: React.FC<PromptPanelProps> = ({
                resultCount,
              }
        }
@@ -1274,7 +1332,7 @@ index 65004714..92fd0ba8 100644
      >
        {listEmpty ? (
          loading ? (
-@@ -574,6 +575,8 @@ const StandardPromptPanel: React.FC<PromptPanelProps> = ({
+@@ -574,6 +621,8 @@ const StandardPromptPanel: React.FC<PromptPanelProps> = ({
              if (externalReloadQueuedRef.current) void runExternalReload();
            }}
            onConfirm={(targets) => void handleCopyToApps(targets)}
@@ -1283,7 +1341,7 @@ index 65004714..92fd0ba8 100644
          />
        ) : null}
      </PromptPageFrame>
-@@ -589,6 +592,8 @@ const PromptPanel: React.FC<PromptPanelProps> = (props) => {
+@@ -589,6 +638,8 @@ const PromptPanel: React.FC<PromptPanelProps> = (props) => {
          onAppChange={props.onAppChange}
          onInteractionBlockedChange={props.onInteractionBlockedChange}
          onNavigationBlockedChange={props.onNavigationBlockedChange}
