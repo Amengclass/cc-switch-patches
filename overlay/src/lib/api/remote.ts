@@ -1,12 +1,19 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  ContentRef,
   HermesModelConfig,
+  ImageRef,
   McpServer,
   Provider,
   SessionMessage,
   SessionMeta,
+  UsageResult,
 } from "@/types";
+import type { BlockContent } from "./sessions";
+import type { InstalledSkill, SkillBackupEntry } from "./skills";
 import type {
+  ProviderEditorSave,
+  ProviderEditorView,
   ProviderSortUpdate,
 } from "./providers";
 import type {
@@ -14,7 +21,6 @@ import type {
   RemoteConnectionInfo,
   RemoteEnvConflict,
   RemoteHost,
-  RemoteSessionInfo,
 } from "@/types/remote";
 
 /**
@@ -101,6 +107,8 @@ export async function testRemoteConnectionInfo(
   username: string,
   password: string,
   app: string,
+  authMethod?: "password" | "key",
+  privateKeyPath?: string,
 ): Promise<RemoteConnectionInfo> {
   return invoke<RemoteConnectionInfo>("test_remote_connection_info", {
     host,
@@ -108,6 +116,8 @@ export async function testRemoteConnectionInfo(
     username,
     password,
     app,
+    authMethod: authMethod ?? "password",
+    privateKeyPath: privateKeyPath ?? null,
   });
 }
 
@@ -161,11 +171,17 @@ export async function broadcastSwitchProvider(
   targets: BroadcastSwitchTarget[],
   providerId: string,
   app: string,
+  /** Provider 池来源：宿主机 id（不传 = 本机 DB） */
+  sourceHostId?: string,
+  /** 池来源为宿主机下的容器时传容器名 */
+  sourceContainer?: string,
 ): Promise<BroadcastSwitchResult[]> {
   return invoke<BroadcastSwitchResult[]>("broadcast_switch_provider", {
     targets,
     providerId,
     appType: app,
+    sourceHostId: sourceHostId ?? null,
+    sourceContainer: sourceContainer ?? null,
   });
 }
 
@@ -303,13 +319,15 @@ export async function addRemoteProvider(
 }
 
 /** 编辑远端目标的供应商（更新 SSOT；在生效位置时重写远端 live）。
- *  返回最新视图，调用方 setQueryData 直接刷新。 */
+ *  返回最新视图，调用方 setQueryData 直接刷新。
+ *  `editorSave`：编辑器保存上下文（与本地一致）——非关键字段的改动会写回远端 live。 */
 export async function updateRemoteProvider(
   hostId: string,
   app: string,
   provider: Provider,
   originalId?: string,
   container?: string,
+  editorSave?: ProviderEditorSave,
 ): Promise<RemoteProvidersView> {
   const view = await invoke<{
     providers: Provider[];
@@ -322,8 +340,47 @@ export async function updateRemoteProvider(
     provider,
     originalId: originalId ?? null,
     container: container ?? null,
+    editorSave: editorSave ?? null,
   });
   return toRemoteProvidersView(view);
+}
+
+/**
+ * 远端供应商余量查询：读目标机（宿主机 / 容器）自己的 SSOT 里的 usage_script，
+ * 再走与本机一致的查询分派。远端模式下卡片/用量页必须用这个，不能查本机 DB。
+ */
+export async function queryRemoteProviderUsage(
+  hostId: string,
+  app: string,
+  providerId: string,
+  container?: string,
+): Promise<UsageResult> {
+  return invoke<UsageResult>("query_remote_provider_usage", {
+    hostId,
+    app,
+    providerId,
+    container: container ?? null,
+  });
+}
+
+/** 远端供应商编辑器底部 JSON 的显示内容（与本地投影同源，读远端 live 计算）。
+ *  支持 claude / codex / gemini / grokbuild。 */
+export async function getRemoteProviderEditorView(
+  hostId: string,
+  app: string,
+  settingsConfig: Record<string, unknown>,
+  category?: string,
+  container?: string,
+  providerId?: string,
+): Promise<ProviderEditorView> {
+  return invoke<ProviderEditorView>("get_remote_provider_editor_view", {
+    hostId,
+    app,
+    settingsConfig,
+    category: category ?? null,
+    container: container ?? null,
+    providerId: providerId ?? null,
+  });
 }
 
 /** 删除远端目标的供应商（SSOT 移除；additive 且已写入 live 时同时移除 live）。
@@ -374,8 +431,13 @@ export async function removeRemoteProviderFromLive(
 export async function clearRemoteProviderRecord(
   hostId: string,
   app: string,
+  container?: string,
 ): Promise<void> {
-  return invoke("clear_remote_provider_record", { hostId, app });
+  return invoke("clear_remote_provider_record", {
+    hostId,
+    app,
+    container: container ?? null,
+  });
 }
 
 /** 扫描远端 shell 配置中的冲突环境变量 */
@@ -400,15 +462,20 @@ export async function cleanRemoteEnvConflicts(
   );
 }
 
-/** 列出远端会话 jsonl 文件 */
-export async function listRemoteSessions(
+/** 探测本机可用私钥（ssh config IdentityFile → ~/.ssh/id_ed25519 → id_rsa → id_ecdsa） */
+export async function detectLocalSshKeys(alias?: string): Promise<string[]> {
+  return invoke<string[]>("detect_local_ssh_keys", { alias: alias ?? null });
+}
+
+/**
+ * 一键「密码 → 密钥」：用密码登录一次，把本机公钥装到远端并改用私钥登录。
+ * 之后连接不再需要密码。
+ */
+export async function bootstrapRemoteKey(
   hostId: string,
-  container?: string,
-): Promise<RemoteSessionInfo[]> {
-  return invoke<RemoteSessionInfo[]>("list_remote_sessions", {
-    hostId,
-    container: container ?? null,
-  });
+  password: string,
+): Promise<RemoteHost> {
+  return invoke<RemoteHost>("bootstrap_remote_key", { hostId, password });
 }
 
 /** 读取远端 settings.json 并匹配出当前生效的本地供应商 id（per-app） */
@@ -440,19 +507,6 @@ export async function checkRemoteCliInstalled(
 /** 检测本机是否安装指定 app 的 CLI */
 export async function checkLocalCliInstalled(app: string): Promise<boolean> {
   return invoke<boolean>("check_local_cli_installed", { app });
-}
-
-/** 列出远端会话的完整元数据（复用本机 session_manager 解析逻辑） */
-export async function listRemoteSessionsDetailed(
-  hostId: string,
-  container?: string,
-  app?: string,
-): Promise<SessionMeta[]> {
-  return invoke<SessionMeta[]>("list_remote_sessions_detailed", {
-    hostId,
-    container: container ?? null,
-    app: app ?? "claude",
-  });
 }
 
 /** 列出远端所有 app 的会话（对齐本机 sessionsApi.list()，全量返回） */
@@ -497,6 +551,43 @@ export async function deleteRemoteSession(
     sessionId,
     container: container ?? null,
     app: app ?? "claude",
+  });
+}
+
+/** 远端会话按需取块全文（阅读页「加载更多」） */
+export async function getRemoteSessionBlockContent(
+  hostId: string,
+  sourcePath: string,
+  contentRef: ContentRef,
+  app: string,
+  page: { offset?: number; limit?: number } = {},
+  container?: string,
+): Promise<BlockContent> {
+  return invoke<BlockContent>("get_remote_session_block_content", {
+    hostId,
+    sourcePath,
+    container: container ?? null,
+    app,
+    contentRef,
+    offset: page.offset,
+    limit: page.limit,
+  });
+}
+
+/** 远端会话图片原始字节（阅读页图片预览） */
+export async function getRemoteSessionImage(
+  hostId: string,
+  sourcePath: string,
+  image: ImageRef,
+  app: string,
+  container?: string,
+): Promise<ArrayBuffer> {
+  return invoke<ArrayBuffer>("get_remote_session_image", {
+    hostId,
+    sourcePath,
+    container: container ?? null,
+    app,
+    image,
   });
 }
 
@@ -595,6 +686,19 @@ export async function importRemoteMcpFromApps(
 ): Promise<number> {
   return invoke<number>("import_remote_mcp_from_apps", {
     hostId,
+    container: container ?? null,
+  });
+}
+
+/** 重投影指定 app 的远端 live 配置（对齐本机 resyncToApps 的单 app 语义） */
+export async function reprojectRemoteMcpForApp(
+  hostId: string,
+  app: string,
+  container?: string,
+): Promise<void> {
+  return invoke<void>("reproject_remote_mcp_for_app", {
+    hostId,
+    app,
     container: container ?? null,
   });
 }
@@ -855,6 +959,17 @@ export async function deleteRemoteSkill(
   });
 }
 
+/** 重同步：把远端 SSOT 里所有技能按各自 apps 开关重新投影到各应用目录 */
+export async function resyncRemoteSkills(
+  hostId: string,
+  container?: string,
+): Promise<void> {
+  return invoke<void>("resync_remote_skills", {
+    hostId,
+    container: container ?? null,
+  });
+}
+
 /** 从本地 ZIP 安装技能到远端 SSOT，返回安装的技能完整记录 */
 export async function installRemoteSkillsFromZip(
   hostId: string,
@@ -924,8 +1039,8 @@ export async function updateRemoteSkill(
 export async function checkRemoteSkillUpdates(
   hostId: string,
   container?: string,
-): Promise<import("@/lib/api/skills").SkillUpdateInfo[]> {
-  return invoke<import("@/lib/api/skills").SkillUpdateInfo[]>(
+): Promise<import("@/lib/api/skills").SkillUpdateCheckResult> {
+  return invoke<import("@/lib/api/skills").SkillUpdateCheckResult>(
     "check_remote_skill_updates",
     { hostId, container: container ?? null },
   );
@@ -1043,6 +1158,105 @@ import type {
   OpenClawToolsConfig,
   OpenClawAgentsDefaults,
 } from "@/types";
+
+/** 列出远端技能备份（远端 ~/.cc-switch/skill-backups） */
+export async function listRemoteSkillBackups(
+  hostId: string,
+  container?: string,
+): Promise<SkillBackupEntry[]> {
+  return invoke("list_remote_skill_backups", {
+    hostId,
+    container: container ?? null,
+  });
+}
+
+/** 删除远端技能备份 */
+export async function deleteRemoteSkillBackup(
+  hostId: string,
+  backupId: string,
+  container?: string,
+): Promise<boolean> {
+  await invoke<void>("delete_remote_skill_backup", {
+    hostId,
+    backupId,
+    container: container ?? null,
+  });
+  return true;
+}
+
+/** 从远端备份恢复技能（仅启用当前 app，对齐本机语义） */
+export async function restoreRemoteSkillBackup(
+  hostId: string,
+  backupId: string,
+  currentApp: string,
+  container?: string,
+): Promise<InstalledSkill> {
+  return invoke<InstalledSkill>("restore_remote_skill_backup", {
+    hostId,
+    backupId,
+    currentApp,
+    container: container ?? null,
+  });
+}
+
+/** 读取远端 Hermes 记忆文件（MEMORY.md / USER.md） */
+export async function getRemoteHermesMemory(
+  hostId: string,
+  kind: "memory" | "user",
+  container?: string,
+): Promise<string> {
+  return invoke<string>("get_remote_hermes_memory", {
+    hostId,
+    kind,
+    container: container ?? null,
+  });
+}
+
+/** 原子写远端 Hermes 记忆文件 */
+export async function setRemoteHermesMemory(
+  hostId: string,
+  kind: "memory" | "user",
+  content: string,
+  container?: string,
+): Promise<void> {
+  return invoke<void>("set_remote_hermes_memory", {
+    hostId,
+    kind,
+    content,
+    container: container ?? null,
+  });
+}
+
+/** 读取远端 Hermes 记忆限额/开关（config.yaml memory 段） */
+export async function getRemoteHermesMemoryLimits(
+  hostId: string,
+  container?: string,
+): Promise<{
+  memory: number;
+  user: number;
+  memoryEnabled: boolean;
+  userEnabled: boolean;
+}> {
+  return invoke("get_remote_hermes_memory_limits", {
+    hostId,
+    container: container ?? null,
+  });
+}
+
+/** 设置远端 Hermes 记忆开关（保留 config.yaml 其余内容与注释） */
+export async function setRemoteHermesMemoryEnabled(
+  hostId: string,
+  kind: "memory" | "user",
+  enabled: boolean,
+  container?: string,
+): Promise<void> {
+  return invoke<void>("set_remote_hermes_memory_enabled", {
+    hostId,
+    kind,
+    enabled,
+    container: container ?? null,
+  });
+}
 
 /** 获取远端 OpenClaw 的 env 配置 */
 export async function getRemoteOpenClawEnv(

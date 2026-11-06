@@ -46,19 +46,59 @@ pub fn ensure(conn: &Connection) -> Result<(), AppError> {
     )
     .map_err(|e| AppError::Database(e.to_string()))?;
 
-    // 远程主机「当前生效供应商」记录（per-app），含完整 provider 配置 JSON（解耦路由基座）。
+    // 远程主机「当前生效供应商」记录（per-target，含完整 provider 配置 JSON，解耦路由基座）。
+    // 路由身份 = 「目标器」：宿主机（container=''）与它下面的每个容器各自独立一条。
+    // 每个目标器有自己的供应商 SSOT / 面板，路由时必须按目标器区分（方案乙）。
     conn.execute(
         "CREATE TABLE IF NOT EXISTS remote_current_providers (
             host_id TEXT NOT NULL,
+            container TEXT NOT NULL DEFAULT '',
             app TEXT NOT NULL,
             provider_id TEXT NOT NULL,
             provider_config TEXT,
             updated_at INTEGER NOT NULL DEFAULT 0,
-            PRIMARY KEY (host_id, app)
+            PRIMARY KEY (host_id, container, app)
         )",
         [],
     )
     .map_err(|e| AppError::Database(e.to_string()))?;
+
+    // ---- 旧库升级：container 维度（方案乙，2026-10-12）----
+    // 旧表主键 (host_id, app)，无 container → 所有记录归为宿主机（container=''）。
+    // SQLite 不能改主键，重建表 + 拷贝数据（幂等：已含 container 列则跳过）。
+    if table_exists(conn, "remote_current_providers")?
+        && !has_column(conn, "remote_current_providers", "container")?
+    {
+        log::info!("[magic] 迁移 remote_current_providers：补 container 维度（旧记录归为宿主机）");
+        conn.execute(
+            "CREATE TABLE remote_current_providers_v2 (
+                host_id TEXT NOT NULL,
+                container TEXT NOT NULL DEFAULT '',
+                app TEXT NOT NULL,
+                provider_id TEXT NOT NULL,
+                provider_config TEXT,
+                updated_at INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (host_id, container, app)
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database("建 remote_current_providers_v2 失败".to_string()))?;
+        conn.execute(
+            "INSERT OR IGNORE INTO remote_current_providers_v2
+                (host_id, container, app, provider_id, provider_config, updated_at)
+             SELECT host_id, '', app, provider_id, provider_config, updated_at
+             FROM remote_current_providers",
+            [],
+        )
+        .map_err(|e| AppError::Database("迁移 remote_current_providers 数据失败".to_string()))?;
+        conn.execute("DROP TABLE remote_current_providers", [])
+            .map_err(|e| AppError::Database("删除旧 remote_current_providers 失败".to_string()))?;
+        conn.execute(
+            "ALTER TABLE remote_current_providers_v2 RENAME TO remote_current_providers",
+            [],
+        )
+        .map_err(|e| AppError::Database("重命名新 remote_current_providers 失败".to_string()))?;
+    }
 
     // ---- 3) 旧库升级：补列 + 数据迁移（幂等）----
     // 列已存在时 ALTER 会报错，用 `let _` 吞掉；新库建表已含全部列，对它是空操作。
@@ -90,6 +130,8 @@ pub fn ensure(conn: &Connection) -> Result<(), AppError> {
         "ALTER TABLE remote_hosts ADD COLUMN disabled BOOLEAN NOT NULL DEFAULT 0",
         [],
     );
+    // 密钥认证：私钥文件路径（空 = 未配置）。不落库敏感内容，只存路径。
+    add_column_if_missing(conn, "remote_hosts", "private_key_path", "TEXT")?;
 
     Ok(())
 }

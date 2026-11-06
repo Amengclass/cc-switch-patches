@@ -1,4 +1,11 @@
 {
+  "common": {
+    "localScope": "本機",
+    "remoteScope": "遠端"
+  },
+  "provider": {
+    "importDisabledRemote": "遠端目標下暫不支援從 live 匯入"
+  },
   "settings": {
     "advanced": {
       "proxy": {
@@ -54,6 +61,10 @@
     "modifiedAppTitle": "CC Switch Magic",
     "modifiedVersionSuffix": "magic"
   },
+  "sessionManager": {
+    "whereLeadRemote": "CC Switch 從遠端目標（所選主機/容器）的這些位置讀取工作階段，~ 指遠端使用者的 home。",
+    "resumeCopiedRemote": "已複製繼續指令。請在遠端主機/容器對應目錄下執行（本機終端機無法直接繼續遠端工作階段）"
+  },
   "proxy": {
     "takeover": {
       "hint": "僅影響本機應用。選擇要路由的本機應用，啟用後該應用程式的請求將透過本地路由轉發；遠端接管請在對應主機目標下設定",
@@ -69,6 +80,26 @@
   },
   "proxyConfig": {
     "appTakeover": "本機應用接管啟用"
+  },
+  "nav": {
+    "remote": "遠端主機"
+  },
+  "routingSettings": {
+    "remoteRoute": "遠端路由",
+    "remoteRouteDetail": "「{{target}}」經本機代理",
+    "remoteRouteContainerDetail": "「{{target}} 容器 {{container}}」經本機代理",
+    "exitingAll": "正在讓所有應用回到直連，請稍候…"
+  },
+  "skillsPage": {
+    "addMenu": {
+      "import": "匯入{{scope}}已有"
+    },
+    "emptyBody": "從探索裡安裝，或者匯入{{scope}}已有的 Skill。",
+    "importCount": "匯入{{scope}}已有（{{count}}）",
+    "import": {
+      "title": "匯入{{scope}}已有的 Skill",
+      "helpTitle": "哪些算{{scope}}已有"
+    }
   },
   "remote": {
     "readingConfigPrefix": "正在讀取 ",
@@ -90,13 +121,17 @@
     "editTitle": "編輯遠端主機",
     "description": "透過 SSH 直連 Linux 伺服器，統一管理遠端各應用（Claude Code / Codex / Gemini / Grok Build / OpenCode 等）的設定與供應商切換，實現「一處設定、多機生效」。",
     "empty": "還沒有遠端主機",
-    "emptyHint": "點「新增遠端主機」連接你的 GPU 伺服器 / 雲主機",
+    "emptyHint": "點「新增遠端主機」連接你的伺服器 / 雲主機",
     "searchPlaceholder": "搜尋主機名稱 / 位址 / 使用者名稱…",
     "searchAriaLabel": "搜尋遠端主機",
     "searchEmpty": "沒有符合的主機",
     "filterAll": "全部",
     "filterEnabled": "僅啟用",
     "filterDisabled": "僅停用",
+    "filterAriaLabel": "依狀態篩選",
+    "count": "{{count}} 台主機",
+    "loading": "載入中…",
+    "listLabel": "遠端主機",
     "loadError": "無法連接遠端",
     "hostRequired": "主機位址不能為空",
     "usernameRequired": "使用者名稱不能為空",
@@ -126,6 +161,15 @@
     "statusDisabled": "已停用",
     "test": "測試連線",
     "testing": "測試中…",
+    "moreActions": "更多操作",
+    "testAll": "測試全部連線",
+    "testAllOk": "{{count}} 台主機全部連線正常",
+    "testAllPartial": "{{ok}}/{{total}} 台連線正常",
+    "testOkShort": "連通",
+    "testFailShort": "失敗",
+    "loadingContainers": "載入容器…",
+    "groupServers": "伺服器",
+    "groupContainers": "容器",
     "testingShort": "測試中…",
     "env": "環境變數",
     "envTitle": "衝突環境變數",
@@ -137,7 +181,7 @@
     "basicInfo": "基礎資訊",
     "nameLabel": "名稱",
     "optional": "選填",
-    "namePlaceholder": "GPU 訓練機 / 生產伺服器…",
+    "namePlaceholder": "生產伺服器 / 開發機…",
     "nameHint": "不填時將使用主機位址作為顯示名稱",
     "connectionInfo": "連線資訊",
     "hostLabel": "主機位址",
@@ -156,7 +200,24 @@
     "showPassword": "顯示密碼",
     "savePassword": "加密儲存密碼",
     "savePasswordHint": "密碼經 Windows DPAPI 加密，綁定目前帳戶，用於一鍵連線 / 切換",
-    "formHint": "M1 階段僅支援密碼認證；金鑰認證將在後續版本加入。",
+    "passwordStoredHint": "密碼會以 Windows DPAPI 加密保存在本機（僅目前 Windows 帳戶可解密），用於一鍵連線 / 切換；設定金鑰成功後會刪除。",
+    "passphraseStoredHint": "口令會用 Windows DPAPI 加密保存在本機（僅目前 Windows 帳戶可解密），用於自動連線。",
+    "authMethodLabel": "認證方式",
+    "authPassword": "密碼",
+    "authKey": "金鑰",
+    "privateKeyPathLabel": "金鑰檔案路徑",
+    "privateKeyPathPlaceholder": "例如 ~/.ssh/id_ed25519",
+    "privateKeyPathHint": "未偵測到本機金鑰，請手動填寫路徑；有口令時填在下方密碼框",
+    "privateKeyPathDetected": "已自動填入本機金鑰；可改成其他路徑。有口令時填在下方，會加密保存",
+    "privateKeyRequired": "金鑰認證需要填寫金鑰檔案路徑",
+    "passphraseLabel": "金鑰口令（可選）",
+    "passphrasePlaceholder": "金鑰無口令可留空",
+    "savePassphrase": "加密保存口令",
+    "formHint": "支援密碼與金鑰認證；金鑰需位於本機，口令會加密保存。",
+    "bootstrapKey": "首次登入後自動設定金鑰（推薦）",
+    "bootstrapKeyHint": "用剛填的密碼登入一次：在本機產生金鑰、把公鑰裝到遠端，之後連線不再需要密碼（對齊 VS Code 的首次體驗）",
+    "keyConfigured": "已自動設定金鑰登入，以後無需輸入密碼",
+    "keyConfigureFailed": "自動設定金鑰失敗，已保留密碼登入",
     "routeThroughLocalProxy": "遠端接管（宿主機）",
     "routeThroughLocalProxyHint": "作用於該宿主機：開啟後，對應應用的供應商會經 SSH 反向隧道使用你本機正在執行的代理；未執行時會自動啟動本機代理。容器目標請到容器下單獨設定",
     "addDone": "已新增到遠端 {{target}}",
@@ -189,6 +250,8 @@
   "batchApply": {
     "title": "批次套用",
     "noProvider": "（無可用 Provider）",
+    "source": "Provider 來源",
+    "sourceLocal": "本機",
     "host": "宿主機",
     "container": "容器",
     "searchPlaceholder": "搜尋主機名 / 位址 / 容器名…",

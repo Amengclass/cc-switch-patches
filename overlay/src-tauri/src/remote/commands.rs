@@ -7,6 +7,7 @@ use std::str::FromStr;
 use tauri::{Emitter, State};
 
 use crate::fsops::FileOps as _;
+use crate::live::patch::LivePatch as _;
 #[cfg(target_os = "windows")]
 use crate::remote::credentials;
 use crate::remote::effect::EffectReport;
@@ -98,6 +99,35 @@ use crate::store::AppState;
 const SQLITE_HELPER_X86_64: &[u8] = include_bytes!("../../resources/sqlite-helper-x86_64-linux");
 const SQLITE_HELPER_AARCH64: &[u8] = include_bytes!("../../resources/sqlite-helper-aarch64-linux");
 
+/// 在宿主机（`sh -c`）或容器内（`docker exec ... sh -c`）执行一段 POSIX sh 脚本。
+async fn exec_in_target(
+    session: &connection::RemoteSession,
+    container: Option<&str>,
+    script: &str,
+) -> Result<String, String> {
+    match container {
+        None => {
+            connection::exec_command(
+                &session.channel,
+                &format!("sh -c {}", connection::shell_quote(script)),
+            )
+            .await
+        }
+        Some(c) => {
+            let ops = crate::remote::docker::DockerExecFileOps::new(&session.channel, c)?;
+            connection::exec_command(
+                &session.channel,
+                &format!(
+                    "docker exec {} sh -c {}",
+                    ops.container,
+                    connection::shell_quote(script)
+                ),
+            )
+            .await
+        }
+    }
+}
+
 /// 确保远端 `~/.cc-switch/sqlite-helper` 已部署（按远端架构从内嵌资源上传），
 /// 返回 helper 的绝对路径。仅首次上传（`test -x` 命中即跳过）。
 async fn ensure_remote_sqlite_helper(
@@ -106,23 +136,40 @@ async fn ensure_remote_sqlite_helper(
     root: &str,
 ) -> Result<String, String> {
     let path = format!("{root}/.cc-switch/sqlite-helper");
+    let parent = format!("{root}/.cc-switch");
+    // 注意：`test -x` 无论成功失败都没有 stdout，而 exec 通道不看退出码——
+    // 必须显式 echo yes/no，否则永远误判「已存在」而从不真正上传。
+    let probe = format!("if test -x {path}; then echo yes; else echo no; fi");
     let check_cmd = match container {
-        None => format!(
-            "sh -c {}",
-            connection::shell_quote(&format!("test -x {path}"))
-        ),
+        None => format!("sh -c {}", connection::shell_quote(&probe)),
         Some(c) => {
             let ops = crate::remote::docker::DockerExecFileOps::new(&session.channel, c)?;
             format!(
                 "docker exec {} sh -c {}",
                 ops.container,
-                connection::shell_quote(&format!("test -x {path}"))
+                connection::shell_quote(&probe)
             )
         }
     };
     if let Ok(out) = connection::exec_command(&session.channel, &check_cmd).await {
-        if out.trim().is_empty() {
+        if out.trim() == "yes" {
             return Ok(path);
+        }
+    }
+
+    // 确保目录存在（首次使用时 ~/.cc-switch 可能还没建）
+    let mkdir = format!("sh -c {}", connection::shell_quote(&format!("mkdir -p {parent}")));
+    match container {
+        None => {
+            connection::exec_command(&session.channel, &mkdir).await?;
+        }
+        Some(c) => {
+            let ops = crate::remote::docker::DockerExecFileOps::new(&session.channel, c)?;
+            connection::exec_command(
+                &session.channel,
+                &format!("docker exec {} {}", ops.container, mkdir),
+            )
+            .await?;
         }
     }
 
@@ -313,6 +360,139 @@ pub async fn list_remote_hosts(state: State<'_, AppState>) -> Result<Vec<RemoteH
     state.db.list_remote_hosts().map_err(|e| e.to_string())
 }
 
+/// 探测本机可用的 SSH 私钥（供「私钥」认证自动填充，用户无需手填路径）。
+///
+/// 顺序：ssh config 的 IdentityFile（按别名） → `~/.ssh/id_ed25519` → `id_rsa` → `id_ecdsa`。
+#[tauri::command]
+pub fn detect_local_ssh_keys(alias: Option<String>) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut push = |path: Option<String>| {
+        if let Some(path) = path {
+            let p = std::path::PathBuf::from(&path);
+            if p.is_file() && !out.iter().any(|existing| existing == &path) {
+                out.push(path);
+            }
+        }
+    };
+
+    if let Some(alias) = alias.as_deref().filter(|a| !a.trim().is_empty()) {
+        push(connection::ssh_config_identity_file(alias));
+    }
+    if let Some(home) = dirs::home_dir() {
+        for name in ["id_ed25519", "id_rsa", "id_ecdsa"] {
+            push(Some(
+                home.join(".ssh").join(name).to_string_lossy().to_string(),
+            ));
+        }
+    }
+    out
+}
+
+/// 一键「密码 → 密钥」：用密码登录一次，把本机公钥装到远端，再改用私钥登录。
+///
+/// 之后连接不再需要密码。失败时保持原记录不变（远端公钥可能已追加，但不影响密码登录）。
+#[tauri::command]
+pub async fn bootstrap_remote_key(
+    state: State<'_, AppState>,
+    host_id: String,
+    password: String,
+) -> Result<RemoteHost, String> {
+    let mut host = load_host(&state, &host_id)?;
+
+    // 没传密码时回退用已保存的密码
+    let password = if password.trim().is_empty() {
+        #[cfg(target_os = "windows")]
+        {
+            credentials::get_password(&host.id)?.unwrap_or_default()
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            String::new()
+        }
+    } else {
+        password
+    };
+    if password.is_empty() {
+        return Err("需要先输入一次登录密码才能自动配置密钥".to_string());
+    }
+
+    // 1) 用密码建连（fresh，避免复用池里的旧连接）
+    let mut probe = host.clone();
+    probe.auth_method = AuthMethod::Password;
+    probe.private_key_path = None;
+    let session = connection::connect_fresh(&probe, Some(&password)).await?;
+
+    // 2) 确保本机应用密钥存在（放在 CC Switch 自己的目录，不碰 ~/.ssh）
+    let key_dir = crate::config::get_app_config_dir().join("ssh");
+    std::fs::create_dir_all(&key_dir)
+        .map_err(|e| format!("创建密钥目录失败 {}: {e}", key_dir.display()))?;
+    let key_path = key_dir.join("id_ed25519");
+    if !key_path.exists() {
+        let output = std::process::Command::new("ssh-keygen")
+            .args(["-t", "ed25519", "-N", "", "-C", "cc-switch", "-q", "-f"])
+            .arg(&key_path)
+            .output()
+            .map_err(|e| {
+                format!("调用 ssh-keygen 失败（请确认已安装 OpenSSH 客户端）: {e}")
+            })?;
+        if !output.status.success() {
+            return Err(format!(
+                "生成密钥失败: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            ));
+        }
+    }
+    let pub_path = key_dir.join("id_ed25519.pub");
+    let pub_key = std::fs::read_to_string(&pub_path)
+        .map_err(|e| format!("读取公钥失败 {}: {e}", pub_path.display()))?
+        .trim()
+        .to_string();
+    if pub_key.is_empty() {
+        return Err("公钥为空，无法配置".to_string());
+    }
+
+    // 3) 追加到远端 authorized_keys：去重 + 权限 700/600
+    let home = host.default_home();
+    let ssh_dir = format!("{home}/.ssh");
+    let authorized_keys = format!("{ssh_dir}/authorized_keys");
+    let script = format!(
+        "mkdir -p {dir} && chmod 700 {dir} && touch {ak} && chmod 600 {ak} && \
+         (grep -qxF {pubq} {ak} || printf '%s\\n' {pubq} >> {ak}) && echo CC_KEY_OK",
+        dir = connection::shell_quote(&ssh_dir),
+        ak = connection::shell_quote(&authorized_keys),
+        pubq = connection::shell_quote(&pub_key),
+    );
+    let out = exec_in_target(&session, None, &script).await?;
+    if !out.contains("CC_KEY_OK") {
+        return Err(format!("写入远端 authorized_keys 失败: {}", out.trim()));
+    }
+
+    // 4) 用新私钥验证一次，成功才切换认证方式
+    let key_path_text = key_path.to_string_lossy().to_string();
+    let mut key_probe = host.clone();
+    key_probe.auth_method = AuthMethod::Key;
+    key_probe.private_key_path = Some(key_path_text.clone());
+    connection::connect_fresh(&key_probe, None)
+        .await
+        .map_err(|e| format!("公钥已写入，但私钥登录验证失败: {e}"))?;
+
+    // 5) 更新记录：改用私钥，删掉保存的密码
+    host.auth_method = AuthMethod::Key;
+    host.private_key_path = Some(key_path_text);
+    host.save_password = false;
+    host.updated_at = chrono::Utc::now().timestamp_millis();
+    state
+        .db
+        .upsert_remote_host(&host)
+        .map_err(|e| e.to_string())?;
+    #[cfg(target_os = "windows")]
+    let _ = credentials::delete_password(&host.id);
+    crate::remote::forget_probed_home(&host.id);
+
+    log::info!("[remote] 已为 {} 自动配置密钥登录", host.name);
+    Ok(host)
+}
+
 /// 保存（新增或更新）远程主机；可选携带密码并写入系统钥匙串。
 #[tauri::command]
 pub async fn save_remote_host(
@@ -339,8 +519,9 @@ pub async fn save_remote_host(
     // 下次连接重新探测（复用旧连接时 connection::ensure_probed_home 会补探测）。
     crate::remote::forget_probed_home(&host.id);
 
-    // 只要提供了密码，就无条件写入系统钥匙串，保证连接/切换可用。
-    // save_password 仅作为「记住密码」的偏好标记；若用户刻意留空密码则不覆盖旧密码。
+    // 只要提供了密码，就无条件写入系统钥匙串（DPAPI 加密），保证连接/切换可用。
+    // 没有「不保存密码」选项：连接时没有地方临时输入密码，不保存只会让远端操作失败。
+    // 删除密码只发生在「改用密钥认证」成功后（bootstrap_remote_key）。
     if let Some(pw) = password.as_deref().filter(|p| !p.is_empty()) {
         log::info!("[remote] 保存密码到钥匙串 id={}", host.id);
         #[cfg(target_os = "windows")]
@@ -349,10 +530,6 @@ pub async fn save_remote_host(
             return Err(e);
         }
         log::info!("[remote] 钥匙串保存成功 id={}", host.id);
-    } else if !host.save_password {
-        log::info!("[remote] 删除钥匙串密码 id={}", host.id);
-        #[cfg(target_os = "windows")]
-        let _ = credentials::delete_password(&host.id);
     }
     Ok(host)
 }
@@ -371,18 +548,30 @@ pub async fn set_remote_route_proxy_app(
     enabled: bool,
     container: Option<String>,
 ) -> Result<RemoteHost, String> {
-    let mut host = load_host(&state, &host_id)?;
+    set_route_switch_inner(&state, &host_id, &app, enabled, container.as_deref()).await
+}
+
+/// [`set_remote_route_proxy_app`] 的核心（无 `State` 包装）：命令本体与
+/// 「全部回到直连」的远端半场复用同一份写库 / 起停代理 / 对账隧道逻辑。
+pub(crate) async fn set_route_switch_inner(
+    state: &AppState,
+    host_id: &str,
+    app: &str,
+    enabled: bool,
+    container: Option<&str>,
+) -> Result<RemoteHost, String> {
+    let mut host = load_host(state, host_id)?;
     host.updated_at = chrono::Utc::now().timestamp_millis();
-    if let Some(c) = container.as_deref() {
+    if let Some(c) = container {
         let entry = host
             .route_proxy_container_apps
             .entry(c.to_string())
             .or_default();
-        entry.insert(app.clone(), enabled);
+        entry.insert(app.to_string(), enabled);
     } else if enabled {
-        host.route_proxy_apps.insert(app.clone(), true);
+        host.route_proxy_apps.insert(app.to_string(), true);
     } else {
-        host.route_proxy_apps.insert(app.clone(), false);
+        host.route_proxy_apps.insert(app.to_string(), false);
     }
     state
         .db
@@ -398,7 +587,7 @@ pub async fn set_remote_route_proxy_app(
                 .await
                 .map_err(|e| format!("开启远端接管时启动本机代理失败: {e}"))?;
         }
-    } else if !any_route_consumer(&state).await && state.proxy_service.is_running().await {
+    } else if !any_route_consumer(state).await && state.proxy_service.is_running().await {
         log::info!("[remote] 关闭 {app} 远端接管后无任何接管/路由需要，自动停止本机代理进程");
         let _ = state.proxy_service.stop().await;
     }
@@ -409,6 +598,74 @@ pub async fn set_remote_route_proxy_app(
     connection::sync_tunnel_now(&host).await;
 
     Ok(host)
+}
+
+/// 「全部回到直连」的远端半场：把所有宿主机 / 容器上仍开着的 per-app 路由开关
+/// 逐个关掉（写库 + 撤隧道），并把受影响目标器的 live 重投影回直连。
+///
+/// 本机半场由 `mode::controller::exit_all` 负责；本函数补齐远端 —— 否则远端
+/// 目标器的路由开关仍是 true、隧道仍在、live 仍是隧道占位配置，
+/// 「全部回到直连」对远端形同虚设（用户实测确认）。
+pub(crate) async fn exit_all_remote_route(state: &AppState) -> Vec<String> {
+    let hosts = match state.db.list_remote_hosts() {
+        Ok(h) => h,
+        Err(e) => return vec![format!("读取远端主机列表失败: {e}")],
+    };
+    let mut errors = Vec::new();
+    for host in hosts {
+        // 禁用的主机不操作（其接管意图已不参与判定，live 也不该在未排除故障的情况下被改写）
+        if host.disabled {
+            continue;
+        }
+        // 收集 (app, container) 待关闭项：宿主机开关 + 每个容器的开关。
+        let mut pending: Vec<(String, Option<String>)> = Vec::new();
+        for (app, on) in &host.route_proxy_apps {
+            if *on {
+                pending.push((app.clone(), None));
+            }
+        }
+        for (container, apps) in &host.route_proxy_container_apps {
+            for (app, on) in apps {
+                if *on {
+                    pending.push((app.clone(), Some(container.clone())));
+                }
+            }
+        }
+        if pending.is_empty() {
+            continue;
+        }
+
+        // 逐个关开关（每次写库都会重算 any_route_consumer + 对账隧道）；
+        // 全部关完时最后一次写库会因「全局再无路由消费者」停掉本机代理并撤该主机隧道。
+        for (app, container) in &pending {
+            if let Err(e) =
+                set_route_switch_inner(state, &host.id, app, false, container.as_deref()).await
+            {
+                errors.push(format!(
+                    "{} {app}{}: {e}",
+                    host.name,
+                    container
+                        .as_deref()
+                        .map(|c| format!(" 容器 {c}"))
+                        .unwrap_or_default()
+                ));
+            }
+        }
+
+        // 把每个受影响目标器的 live 重投影回直连（开关已关，reapply 按直连写）。
+        for (app, container) in &pending {
+            if let Err(e) =
+                reapply_remote_provider_target(state, &host.id, app, container.as_deref()).await
+            {
+                // reapply 失败不阻塞其余目标器：开关已关，live 缺的只是回写。
+                log::warn!(
+                    "[remote] 全部回到直连：{} {app} 重投影 live 失败: {e}",
+                    host.name
+                );
+            }
+        }
+    }
+    errors
 }
 
 /// 是否有任何「需要本机代理进程」的使用者：
@@ -479,6 +736,8 @@ pub async fn test_remote_connection_info(
     username: String,
     password: String,
     app: String,
+    auth_method: Option<String>,
+    private_key_path: Option<String>,
 ) -> Result<serde_json::Value, String> {
     let host_info = RemoteHost {
         id: "temp".to_string(),
@@ -486,7 +745,12 @@ pub async fn test_remote_connection_info(
         host,
         port,
         username,
-        auth_method: AuthMethod::Password,
+        auth_method: if auth_method.as_deref() == Some("key") {
+            AuthMethod::Key
+        } else {
+            AuthMethod::Password
+        },
+        private_key_path,
         save_password: false,
         route_through_local_proxy: false,
         route_proxy_apps: std::collections::HashMap::new(),
@@ -835,6 +1099,22 @@ async fn build_remote_providers_view(
         state, host_id, target, home, app, container, session, &ssot,
     )
     .await?;
+    // 把该目标器的当前供应商**完整配置**同步进本机表（路由基座）：
+    // 面板显示什么、路由就能用什么——切目标/查看面板即预热路由数据，
+    // 不必等用户「切换一次」才写入（否则开路由时查不到 provider_config）。
+    // 仅非 additive（无「当前供应商」概念的 additive 走 live，不适用）。
+    if let Some(cid) = current_provider_id.as_deref() {
+        if let Some(p) = ssot.providers.iter().find(|p| p.id == cid) {
+            let _ = crate::remote::current::save_current_provider(
+                state.db.as_ref(),
+                host_id,
+                container,
+                app,
+                cid,
+                Some(p),
+            );
+        }
+    }
     let route_proxy_enabled = route_proxy_for_target(&load_host(state, host_id)?, container, app);
     Ok(RemoteProvidersView {
         providers: ssot.providers,
@@ -952,6 +1232,7 @@ pub async fn add_remote_provider(
             let _ = crate::remote::current::save_current_provider(
                 state.db.as_ref(),
                 &host_id,
+                container.as_deref(),
                 &app,
                 &provider_id,
                 Some(p),
@@ -991,6 +1272,7 @@ pub async fn update_remote_provider(
     provider: crate::provider::Provider,
     original_id: Option<String>,
     container: Option<String>,
+    editor_save: Option<crate::services::provider::EditorSave>,
 ) -> Result<RemoteProvidersView, String> {
     let host = load_host(&state, &host_id)?;
     let password = resolve_password(&host)?;
@@ -1007,9 +1289,75 @@ pub async fn update_remote_provider(
     // 非空库不读 live（方案 A：容器场景省一次 docker exec）
     let mut ssot = load_remote_ssot_for_mutation(&target, &home, &app).await?;
     let original_id = original_id.unwrap_or_else(|| provider.id.clone());
-    let _existing = ssot.providers.iter().find(|p| p.id == original_id).cloned();
+    let existing = ssot.providers.iter().find(|p| p.id == original_id).cloned();
     let mut provider = provider;
     let additive = crate::remote::providers::is_additive_app(&app);
+
+    // 编辑器保存（claude/codex/gemini/grokbuild）：与本地同一套 `plan_save` 拆分行内容和
+    // 「相对 live 的全局改动」。行里只留关键字段/独有字段，其余键（permissions、hooks、
+    // approval_policy、.env 的全局变量等用户设置）的增删改要写回远端 live——本地编辑器
+    // 就是这么做的，远端不能少这一半。
+    enum RemoteEditorPlan {
+        Claude(crate::services::provider::claude_editor::EditorPlan),
+        Codex(crate::services::provider::codex_editor::CodexEditorPlan),
+        Gemini(crate::services::provider::gemini_editor::GeminiEditorPlan),
+        Grok(crate::services::provider::grok_editor::GrokEditorPlan),
+    }
+    let stored_settings = existing.as_ref().map(|p| &p.settings_config);
+    let editor_plan = match (app.as_str(), editor_save.as_ref()) {
+        ("claude", Some(editor)) => {
+            let plan = crate::services::provider::claude_editor::plan_save(
+                stored_settings,
+                &provider.settings_config,
+                &editor.base,
+            )
+            .map_err(|e| e.to_string())?;
+            provider.settings_config = plan.row_settings.clone();
+            Some(RemoteEditorPlan::Claude(plan))
+        }
+        ("codex", Some(editor)) => {
+            let origin = crate::services::provider::codex_editor::Origin::row(
+                stored_settings.unwrap_or(&provider.settings_config),
+            )
+            .map_err(|e| e.to_string())?;
+            let plan = crate::services::provider::codex_editor::plan_save(
+                stored_settings,
+                &provider.settings_config,
+                &editor.base,
+                &origin,
+                crate::services::provider::codex_direct::is_official(&provider),
+                provider.uses_proxy_injected_oauth(),
+                editor.on_conflict,
+            )
+            .map_err(|e| e.to_string())?;
+            provider.settings_config = plan.row_settings.clone();
+            Some(RemoteEditorPlan::Codex(plan))
+        }
+        ("gemini", Some(editor)) => {
+            let plan = crate::services::provider::gemini_editor::plan_save(
+                stored_settings,
+                &provider.settings_config,
+                &editor.base,
+                editor.on_conflict,
+            )
+            .map_err(|e| e.to_string())?;
+            provider.settings_config = plan.row_settings.clone();
+            Some(RemoteEditorPlan::Gemini(plan))
+        }
+        ("grokbuild", Some(editor)) => {
+            let plan = crate::services::provider::grok_editor::plan_save(
+                stored_settings,
+                &provider.settings_config,
+                &editor.base,
+                crate::services::provider::grok_direct::is_official(&provider),
+                editor.on_conflict,
+            )
+            .map_err(|e| e.to_string())?;
+            provider.settings_config = plan.row_settings.clone();
+            Some(RemoteEditorPlan::Grok(plan))
+        }
+        _ => None,
+    };
 
     // 对齐本机 update：非 additive 不允许修改供应商 id（provider/mod.rs:2620）
     if !additive && original_id != provider.id {
@@ -1034,7 +1382,25 @@ pub async fn update_remote_provider(
         }
     }
 
-    let is_current = ssot.current_provider_id.as_deref() == Some(original_id.as_str());
+    // 当前供应商判定必须与面板（build_remote_providers_view）同源，否则会出现
+    // 「面板上高亮的供应商编辑后保存，远端 live 却没变」：老配置（从 live 导入、
+    // 从未经本应用切换）的 SSOT current 是空的，当前项只存在于持久化记录里。
+    // 这里只读同步数据（持久化记录 → SSOT current），不 await 远端解析——查看
+    // 面板时 build_remote_providers_view 已把解析结果（含 live base_url 兜底）
+    // 落库，persisted 即为最新结论。
+    let persisted_current = current_provider_id_from_persisted(
+        &state,
+        &host_id,
+        container.as_deref(),
+        &app,
+        &ssot,
+    )?;
+    let is_current = persisted_current.as_deref() == Some(original_id.as_str());
+    log::info!(
+        "[remote] update {app} original_id={original_id} resolved_current={:?} ssot_current={:?} is_current={is_current}",
+        persisted_current.as_deref(),
+        ssot.current_provider_id.as_deref()
+    );
     let need_live_rewrite = if additive {
         // 对齐本机 check_live_config_exists（provider/mod.rs:2434）：以 live 文件为唯一
         // 事实来源——读远端 live 确认该供应商是否在 live 中，而非只信 SSOT 标记。
@@ -1102,10 +1468,123 @@ pub async fn update_remote_provider(
         let _ = crate::remote::current::save_current_provider(
             state.db.as_ref(),
             &host_id,
+            container.as_deref(),
             &app,
             &provider_id_after,
             Some(p),
         );
+    }
+
+    // 编辑器保存的全局改动：关键字段已按供应商语义写过，这里只把「不归供应商管」的
+    // 键（permissions、hooks、approval_policy、.env 的全局变量……）的增删改应用到
+    // 远端 live，和本地编辑器保存逐键一致。
+    if let (Some(plan), Some(editor)) = (editor_plan.as_ref(), editor_save.as_ref()) {
+        use crate::services::provider::gemini_editor;
+        match plan {
+            RemoteEditorPlan::Claude(plan) => {
+                if !plan.changes().is_empty() {
+                    let settings_path = crate::remote::settings::remote_settings_path(&home);
+                    let path = std::path::Path::new(&settings_path);
+                    let pre = session
+                        .read_remote_text(&settings_path, container.as_deref())
+                        .await?;
+                    let bytes = crate::services::provider::claude_editor::apply_editor_plan(
+                        path,
+                        pre.as_deref().map(str::as_bytes),
+                        plan,
+                        editor.on_conflict,
+                        None,
+                    )
+                    .map_err(|e| format!("远端 settings.json 改写失败: {e}"))?;
+                    let text =
+                        String::from_utf8(bytes).map_err(|_| "改写结果不是 UTF-8".to_string())?;
+                    session
+                        .write_settings_with_backup(
+                            &settings_path,
+                            &text,
+                            container.as_deref(),
+                            None,
+                        )
+                        .await?;
+                }
+            }
+            RemoteEditorPlan::Codex(plan) => {
+                if !plan.edits.is_empty() {
+                    let path_str = format!("{home}/.codex/config.toml");
+                    let path = std::path::Path::new(&path_str);
+                    let pre = session.read_remote_text(&path_str, container.as_deref()).await?;
+                    let mut doc =
+                        crate::live::patch::toml::parse(path, pre.as_deref().map(str::as_bytes))
+                            .map_err(|e| format!("远端 config.toml 解析失败: {e}"))?;
+                    plan.edits
+                        .apply_to(path, &mut doc)
+                        .map_err(|e| format!("远端 config.toml 改写失败: {e}"))?;
+                    session
+                        .write_settings_with_backup(
+                            &path_str,
+                            &doc.to_string(),
+                            container.as_deref(),
+                            None,
+                        )
+                        .await?;
+                }
+            }
+            RemoteEditorPlan::Gemini(plan) => {
+                if plan.edits.touches_env() {
+                    let path_str = format!("{home}/.gemini/.env");
+                    let path = std::path::Path::new(&path_str);
+                    let pre = session.read_remote_text(&path_str, container.as_deref()).await?;
+                    let bytes = gemini_editor::EnvWrite {
+                        edits: Some(&plan.edits),
+                        key_fields: None,
+                    }
+                    .apply(path, pre.as_deref().map(str::as_bytes))
+                    .map_err(|e| format!("远端 .env 改写失败: {e}"))?;
+                    let text =
+                        String::from_utf8(bytes).map_err(|_| "改写结果不是 UTF-8".to_string())?;
+                    session
+                        .write_settings_with_backup(&path_str, &text, container.as_deref(), None)
+                        .await?;
+                }
+                if plan.edits.touches_settings() {
+                    let path_str = format!("{home}/.gemini/settings.json");
+                    let path = std::path::Path::new(&path_str);
+                    let pre = session.read_remote_text(&path_str, container.as_deref()).await?;
+                    let bytes = gemini_editor::SettingsWrite {
+                        edits: Some(&plan.edits),
+                        key_fields: None,
+                    }
+                    .apply(path, pre.as_deref().map(str::as_bytes))
+                    .map_err(|e| format!("远端 settings.json 改写失败: {e}"))?;
+                    let text =
+                        String::from_utf8(bytes).map_err(|_| "改写结果不是 UTF-8".to_string())?;
+                    session
+                        .write_settings_with_backup(&path_str, &text, container.as_deref(), None)
+                        .await?;
+                }
+            }
+            RemoteEditorPlan::Grok(plan) => {
+                if !plan.edits.is_empty() {
+                    let path_str = format!("{home}/.grok/config.toml");
+                    let path = std::path::Path::new(&path_str);
+                    let pre = session.read_remote_text(&path_str, container.as_deref()).await?;
+                    let mut doc =
+                        crate::live::patch::toml::parse(path, pre.as_deref().map(str::as_bytes))
+                            .map_err(|e| format!("远端 config.toml 解析失败: {e}"))?;
+                    plan.edits
+                        .apply_to(path, &mut doc)
+                        .map_err(|e| format!("远端 config.toml 改写失败: {e}"))?;
+                    session
+                        .write_settings_with_backup(
+                            &path_str,
+                            &doc.to_string(),
+                            container.as_deref(),
+                            None,
+                        )
+                        .await?;
+                }
+            }
+        }
     }
 
     // 带回最新视图（复用内存 SSOT；live_ids 操作后读一次——additive 写 live 后
@@ -1154,7 +1633,16 @@ pub async fn delete_remote_provider(
     let mut ssot = load_remote_ssot_for_mutation(&target, &home, &app).await?;
     let additive = crate::remote::providers::is_additive_app(&app);
 
-    if !additive && ssot.current_provider_id.as_deref() == Some(provider_id.as_str()) {
+    // 与面板同源判定当前供应商（持久化记录 → SSOT current），避免删掉
+    // 面板上高亮、但 SSOT current 为空（从 live 导入）的当前供应商。
+    let current_id = current_provider_id_from_persisted(
+        &state,
+        &host_id,
+        container.as_deref(),
+        &app,
+        &ssot,
+    )?;
+    if !additive && current_id.as_deref() == Some(provider_id.as_str()) {
         return Err(format!(
             "当前生效的供应商 '{provider_id}' 不能删除，请先切换其他供应商"
         ));
@@ -1180,8 +1668,12 @@ pub async fn delete_remote_provider(
     crate::remote::providers::write_remote_providers_ssot(&target, &home, &app, &ssot).await?;
 
     // 清理该远端「当前供应商」持久化记录（对齐本机 delete 后前端清 current）
-    let _ =
-        crate::remote::current::delete_current_provider_for_app(state.db.as_ref(), &host_id, &app);
+    let _ = crate::remote::current::delete_current_provider_for_app(
+        state.db.as_ref(),
+        &host_id,
+        container.as_deref(),
+        &app,
+    );
 
     // 带回最新视图（复用内存 SSOT；live_ids 操作后读一次——additive 写 live 后
     // 按钮态需要最新集合）
@@ -1211,9 +1703,15 @@ pub async fn clear_remote_provider_record(
     state: State<'_, AppState>,
     host_id: String,
     app: String,
+    container: Option<String>,
 ) -> Result<(), String> {
     let _ = state;
-    crate::remote::current::delete_current_provider_for_app(state.db.as_ref(), &host_id, &app)
+    crate::remote::current::delete_current_provider_for_app(
+        state.db.as_ref(),
+        &host_id,
+        container.as_deref(),
+        &app,
+    )
 }
 
 /// 对远程主机执行供应商切换：将该远端目标（宿主机/容器）SSOT 中保存的供应商定义
@@ -1237,8 +1735,43 @@ pub async fn switch_remote_provider(
         &app,
         container.as_deref(),
         false, // 单机切换：不自动从本机库兜底，保持原「远端需已配置」严格语义
+        None,  // 单机切换不涉及「Provider 池来源」
     )
     .await
+}
+
+/// 从「Provider 池来源」取供应商完整定义。
+/// - `source_host_id = None`：本机 DB；
+/// - `Some(h)`：那台宿主机（`source_container` 为其容器，None 为宿主机本体）自己的 SSOT。
+async fn provider_from_pool(
+    state: &AppState,
+    source_host_id: Option<&str>,
+    source_container: Option<&str>,
+    app: &str,
+    provider_id: &str,
+) -> Option<crate::provider::Provider> {
+    let Some(source_host_id) = source_host_id else {
+        return state
+            .db
+            .as_ref()
+            .get_provider_by_id(provider_id, app)
+            .ok()
+            .flatten();
+    };
+    let host = load_host(state, source_host_id).ok()?;
+    let password = resolve_password(&host).ok()?;
+    let session = connection::connect(&host, Some(&password)).await.ok()?;
+    let home = host.default_home();
+    let target = crate::remote::docker::RemoteTarget::new(
+        &session.sftp,
+        &session.channel,
+        source_container,
+    )
+    .ok()?;
+    let ssot = load_remote_ssot_for_mutation(&target, &home, app)
+        .await
+        .ok()?;
+    ssot.providers.into_iter().find(|p| p.id == provider_id)
 }
 
 /// 单个落点（宿主机 或 宿主机下的容器）的一次远程切换。被单机命令
@@ -1253,6 +1786,8 @@ async fn switch_remote_provider_target(
     // 单机切换传 false（远端未配置该 Provider 即严格报错）；
     // 批量广播传 true（远端没有时从「Provider 池来源」取定义写入远端再切换）。
     allow_local_fallback: bool,
+    // 「Provider 池来源」：None = 本机 DB；Some((host_id, container)) = 那台机器自己的 SSOT。
+    pool_source: Option<(&str, Option<&str>)>,
 ) -> Result<EffectReport, String> {
     let host = load_host(state, host_id)?;
     let password = resolve_password(&host)?;
@@ -1266,21 +1801,19 @@ async fn switch_remote_provider_target(
     // 首次访问（SSOT 空）时从远端 live 导入（对齐本机启动导入语义）
     let mut ssot = load_remote_ssot_for_mutation(&target, &home, app).await?;
     // 单机切换（switch_remote_provider）：要求远端 SSOT 已有该 Provider，不存在即报错；
-    // 批量广播（broadcast_switch_provider）：远端没有时，把「本机 DB 里的 Provider 完整定义」
-    // 作为标准配置写入远端 SSOT（真正「一处配置、多处生效」），再切换。
-    //
-    // ===== 如何改「Provider 池来源」=====
-    // 当前来源 = 本机 DB（get_provider_by_id）。若未来想改成从其它源取（如某台远端 SSOT、
-    // 某个配置文件），只需改下面这一处「取 Provider 完整定义」的调用即可，写入/切换逻辑不变。
+    // 批量广播（broadcast_switch_provider）：远端没有时，从「Provider 池来源」取完整定义
+    // 写入远端 SSOT（真正「一处配置、多处生效」），再切换。池来源由前端选择：本机 DB（默认）
+    // 或某台宿主机/容器自己的 SSOT（`provider_from_pool`）。
     let mut provider = ssot.providers.iter().find(|p| p.id == provider_id).cloned();
     if provider.is_none() && allow_local_fallback {
         // 批量广播：远端没有该 Provider 时，从「Provider 池来源」取定义写入远端再切换。
         // 单机切换（allow_local_fallback=false）不走这里 → 保持原「严格报错」行为不变。
         //
-        // ===== 如何改「Provider 池来源」=====
-        // 当前来源 = 本机 DB（state.db.get_provider_by_id）。若未来想改从其它源取
-        // （如某台远端 SSOT、某配置文件），只需改下面这一处调用即可，写入/切换逻辑不变。
-        if let Ok(Some(p)) = state.db.as_ref().get_provider_by_id(provider_id, app) {
+        // 「Provider 池来源」：默认本机 DB；批量面板选了某台机器/容器时，从它的 SSOT 取。
+        if let Some(p) =
+            provider_from_pool(state, pool_source.map(|(h, _)| h), pool_source.and_then(|(_, c)| c), app, provider_id)
+                .await
+        {
             // upsert 进远端 SSOT：无则追加，有则覆盖（以「池来源」的定义为标准）
             if let Some(existing) = ssot.providers.iter_mut().find(|p| p.id == provider_id) {
                 *existing = p.clone();
@@ -1355,6 +1888,7 @@ async fn switch_remote_provider_target(
     if let Err(e) = crate::remote::current::save_current_provider(
         state.db.as_ref(),
         host_id,
+        container.as_deref(),
         app,
         provider_id,
         Some(&provider),
@@ -1362,24 +1896,12 @@ async fn switch_remote_provider_target(
         log::warn!("[remote] 持久化当前供应商失败 host_id={host_id}: {e}");
     }
 
-    // 切换整文件覆盖了该 app 的 live（codex/gemini/grok 的 MCP 与 live 同文件），
-    // 对齐本机 McpService::sync_enabled_for_app：把远端 SSOT 中已启用的 MCP
-    // 重新投影回 live，避免切换后 MCP 失效。失败降级为警告（投影自愈：
-    // 下次切换 / 任一 MCP 启停都会重新投影），不阻断已成功的切换。
-    let reproject = match container {
-        Some(c) => match crate::remote::docker::DockerExecFileOps::new(&session.channel, c) {
-            Ok(ops) => crate::remote::mcp::reproject_remote_mcp_for_app(&ops, &home, app).await,
-            Err(e) => Err(e),
-        },
-        None => {
-            let ops = crate::fsops::RemoteSftpFileOps {
-                sftp: &session.sftp,
-            };
-            crate::remote::mcp::reproject_remote_mcp_for_app(&ops, &home, app).await
-        }
-    };
-    if let Err(e) = reproject {
-        log::warn!("[remote] 切换 {app} 后重投影远端 MCP 失败（将在下次 MCP 操作时自愈）: {e}");
+    // 切换后重投影远端 MCP：codex/gemini/grok 等的 MCP 与 live 同文件，
+    // 整文件覆盖 live 后要把远端 SSOT 里已启用的 MCP 投影回去，否则切换后 MCP 失效。
+    // claude 的 MCP 在独立文件（~/.claude.json），该函数对它自然 no-op。
+    if let Err(e) = crate::remote::mcp::reproject_remote_mcp_for_app(&target, &home, app).await {
+        // 失败不阻断切换（下次切换 / 任一 MCP 启停会重投影自愈）
+        log::warn!("[remote] 切换后 MCP 重投影失败 host_id={host_id} app={app}: {e}");
     }
 
     // 隧道未建立（warnings 非空）：接管实际未生效，回退开关状态，避免 UI 显示已开
@@ -1415,6 +1937,10 @@ pub async fn broadcast_switch_provider(
     targets: Vec<RemoteSwitchTarget>,
     provider_id: String,
     app_type: String,
+    // 「Provider 池来源」宿主机 id；None = 本机 DB
+    source_host_id: Option<String>,
+    // 池来源为该宿主机下的容器时（None = 宿主机本体）
+    source_container: Option<String>,
 ) -> Result<Vec<RemoteSwitchResult>, String> {
     let mut out = Vec::with_capacity(targets.len());
     for t in &targets {
@@ -1435,7 +1961,10 @@ pub async fn broadcast_switch_provider(
             &provider_id,
             &app_type,
             t.container.as_deref(),
-            true, // 广播：远端没有该 Provider 时从本机库写入并切换（真正「一处配置、多处生效」）
+            true, // 广播：远端没有该 Provider 时从「池来源」写入并切换（真正「一处配置、多处生效」）
+            source_host_id
+                .as_deref()
+                .map(|h| (h, source_container.as_deref())),
         )
         .await;
         let item = match result {
@@ -1492,8 +2021,19 @@ pub async fn reapply_remote_provider(
     app: String,
     container: Option<String>,
 ) -> Result<EffectReport, String> {
+    reapply_remote_provider_target(&state, &host_id, &app, container.as_deref()).await
+}
+
+/// [`reapply_remote_provider`] 的核心（无 `State` 包装）：命令本体与
+/// 「全部回到直连」的远端半场复用。
+pub(crate) async fn reapply_remote_provider_target(
+    state: &AppState,
+    host_id: &str,
+    app: &str,
+    container: Option<&str>,
+) -> Result<EffectReport, String> {
     // additive 无「当前供应商」概念且不走路由改写，直接返回空报告
-    if crate::remote::providers::is_additive_app(&app) {
+    if crate::remote::providers::is_additive_app(app) {
         return Ok(EffectReport {
             target: String::new(),
             provider_name: String::new(),
@@ -1503,25 +2043,30 @@ pub async fn reapply_remote_provider(
             warnings: Vec::new(),
         });
     }
-    let host = load_host(&state, &host_id)?;
+    let host = load_host(state, host_id)?;
     let password = resolve_password(&host)?;
     let session = connection::connect(&host, Some(&password)).await?;
     let home = host.default_home();
     let target = crate::remote::docker::RemoteTarget::new(
         &session.sftp,
         &session.channel,
-        container.as_deref(),
+        container,
     )?;
 
-    let ssot = load_remote_ssot_for_mutation(&target, &home, &app).await?;
+    let ssot = load_remote_ssot_for_mutation(&target, &home, app).await?;
     // 当前供应商：SSOT current 优先，fallback 本地持久化记录
     let provider_id = ssot
         .current_provider_id
         .clone()
         .or_else(|| {
-            crate::remote::current::get_current_provider(state.db.as_ref(), &host_id, &app)
-                .ok()
-                .flatten()
+            crate::remote::current::get_current_provider(
+                state.db.as_ref(),
+                host_id,
+                container,
+                app,
+            )
+            .ok()
+            .flatten()
         })
         .ok_or_else(|| {
             format!(
@@ -1544,14 +2089,14 @@ pub async fn reapply_remote_provider(
     let report = crate::remote::providers::apply_remote_provider_to_live(
         state.db.as_ref(),
         &session,
-        container.as_deref(),
+        container,
         &home,
         &host.name,
-        &app,
+        app,
         &provider,
         effective_route_proxy(
             &state.proxy_service,
-            route_proxy_for_target(&host, container.as_deref(), &app),
+            route_proxy_for_target(&host, container, app),
         )
         .await,
         current_proxy_port(state.db.as_ref(), &state.proxy_service).await?,
@@ -1563,34 +2108,28 @@ pub async fn reapply_remote_provider(
     // 本机代理按远端路由时才能取到 base_url 与密钥。
     if let Err(e) = crate::remote::current::save_current_provider(
         state.db.as_ref(),
-        &host_id,
-        &app,
+        host_id,
+        container,
+        app,
         &provider_id,
         Some(&provider),
     ) {
         log::warn!("[remote] 重新应用后持久化当前供应商失败 host_id={host_id}: {e}");
     }
 
-    // MCP 投影（与 switch 一致，避免整文件覆盖后 MCP 失效），失败降级为警告
-    let reproject = match container.as_deref() {
-        Some(c) => match crate::remote::docker::DockerExecFileOps::new(&session.channel, c) {
-            Ok(ops) => crate::remote::mcp::reproject_remote_mcp_for_app(&ops, &home, &app).await,
-            Err(e) => Err(e),
-        },
-        None => {
-            let ops = crate::fsops::RemoteSftpFileOps {
-                sftp: &session.sftp,
-            };
-            crate::remote::mcp::reproject_remote_mcp_for_app(&ops, &home, &app).await
+    // 重新应用后重投影远端 MCP（与切换同一语义：live 被整文件覆盖后补回已启用项）。
+    if let Ok(target) =
+        crate::remote::docker::RemoteTarget::new(&session.sftp, &session.channel, container)
+    {
+        if let Err(e) =
+            crate::remote::mcp::reproject_remote_mcp_for_app(&target, &home, app).await
+        {
+            log::warn!("[remote] 重新应用后 MCP 重投影失败 host_id={host_id} app={app}: {e}");
         }
-    };
-    if let Err(e) = reproject {
-        log::warn!("[remote] 重新应用 {app} 后重投影远端 MCP 失败（将在下次 MCP 操作时自愈）: {e}");
     }
 
     // 隧道未建立（warnings 非空）：接管实际未生效，回退开关状态，避免 UI 显示已开
-    revert_route_switch_on_tunnel_failure(&state, &report, &host_id, container.as_deref(), &app)
-        .await;
+    revert_route_switch_on_tunnel_failure(state, &report, host_id, container, app).await;
 
     let mut report = report;
     report.current_provider_id = Some(provider_id);
@@ -1709,6 +2248,168 @@ pub async fn update_remote_provider_meta(
     Ok(true)
 }
 
+/// 远端供应商编辑器底部 JSON 的显示内容：切到这个供应商之后**远端** live 会是什么样。
+///
+/// 与本地 `get_provider_editor_view` 同源，但只依赖远端数据：
+/// - claude / gemini：完全复用本地的纯投影器（读远端 live / `.env` / `settings.json`）；
+/// - codex / grokbuild：本地投影依赖本机 DB（官方账号、模型目录、设备签名）。远端在编辑
+///   「当前供应商」（或新增）时直接显示远端 live 本身（此时 live 就是切换后的样子）；
+///   编辑非当前供应商时回退到行本身（与未接编辑器时一致）。判定依据是前端传入的
+///   `providerId` 是否等于远端当前供应商，而不是「当前供应商是否存在」。
+#[tauri::command]
+pub async fn get_remote_provider_editor_view(
+    state: State<'_, AppState>,
+    host_id: String,
+    app: String,
+    container: Option<String>,
+    settings_config: Value,
+    category: Option<String>,
+    provider_id: Option<String>,
+) -> Result<crate::services::provider::EditorView, String> {
+    use crate::services::provider::EditorView;
+    use crate::services::provider::{codex_editor, editor_toml, gemini_editor, grok_editor};
+
+    let host = load_host(&state, &host_id)?;
+    let password = resolve_password(&host)?;
+    let session = connection::connect(&host, Some(&password)).await?;
+    let home = host.default_home();
+    let target = crate::remote::docker::RemoteTarget::new(
+        &session.sftp,
+        &session.channel,
+        container.as_deref(),
+    )?;
+
+    let ssot = load_remote_ssot_for_mutation(&target, &home, &app).await?;
+    let current_id = current_provider_id_from_persisted(
+        &state,
+        &host_id,
+        container.as_deref(),
+        &app,
+        &ssot,
+    )?;
+    // 只有「正在编辑当前供应商」或「新增供应商（未传 id）」时，才把当前 live
+    // 当作投影基底；编辑非当前供应商时必须回退到行本身 —— 否则会把当前供应商的
+    // live 配置拼到另一行上，预览的不是切换后的真实效果。
+    let editing_current = match provider_id.as_deref() {
+        Some(id) => current_id.as_deref() == Some(id),
+        None => true,
+    };
+    let current_row = if editing_current {
+        current_id
+            .as_deref()
+            .and_then(|id| ssot.providers.iter().find(|p| p.id == id))
+    } else {
+        None
+    };
+
+    match app.as_str() {
+        "claude" => {
+            use crate::live::project::claude::{project_onto, ClaudeProjection};
+            let prev = current_row.map(|p| ClaudeProjection::of(&p.settings_config));
+            let settings_path = crate::remote::settings::remote_settings_path(&home);
+            let path = std::path::Path::new(&settings_path);
+            let pre = session
+                .read_remote_text(&settings_path, container.as_deref())
+                .await?;
+            let (live, _) = crate::live::patch::json::parse(path, pre.as_deref().map(str::as_bytes))
+                .map_err(|e| format!("读取远端 settings.json 失败: {e}"))?;
+            let settings = project_onto(
+                path,
+                &live,
+                prev.as_ref(),
+                &ClaudeProjection::of(&settings_config),
+            )
+            .map_err(|e| format!("远端设置投影失败: {e}"))?;
+            let inactive = crate::services::provider::claude_editor::inactive_fields(
+                &settings_config,
+                &settings,
+            );
+            Ok(EditorView { settings, inactive })
+        }
+        "gemini" => {
+            use crate::live::project::gemini::GeminiProjection;
+            let projection = GeminiProjection::of(
+                &settings_config,
+                category.as_deref() == Some("official"),
+            );
+
+            let env_path = format!("{home}/.gemini/.env");
+            let env_pre = session
+                .read_remote_text(&env_path, container.as_deref())
+                .await?;
+            let env_bytes = projection
+                .env_patch()
+                .apply(
+                    std::path::Path::new(&env_path),
+                    env_pre.as_deref().map(str::as_bytes),
+                )
+                .map_err(|e| format!("读取远端 .env 失败: {e}"))?;
+            let env: serde_json::Map<String, Value> =
+                crate::live::patch::dotenv::entries(&String::from_utf8_lossy(&env_bytes))
+                    .into_iter()
+                    .map(|(key, value)| (key, Value::String(value)))
+                    .collect();
+
+            let settings_path = format!("{home}/.gemini/settings.json");
+            let path = std::path::Path::new(&settings_path);
+            let settings_pre = session
+                .read_remote_text(&settings_path, container.as_deref())
+                .await?;
+            let (mut config, _) =
+                crate::live::patch::json::parse(path, settings_pre.as_deref().map(str::as_bytes))
+                    .map_err(|e| format!("读取远端 settings.json 失败: {e}"))?;
+            projection
+                .settings_patch()
+                .apply_to(path, &mut config)
+                .map_err(|e| format!("远端 settings.json 投影失败: {e}"))?;
+
+            let mut shown = settings_config.as_object().cloned().unwrap_or_default();
+            shown.insert("env".to_string(), Value::Object(env.clone()));
+            shown.insert("config".to_string(), config.clone());
+            let inactive = gemini_editor::inactive_fields(&settings_config, &env, &config);
+            Ok(EditorView {
+                settings: Value::Object(shown),
+                inactive,
+            })
+        }
+        "codex" | "grokbuild" => {
+            // 非当前供应商：本地投影依赖本机 DB，远端回退到行本身。
+            let Some(_) = current_row else {
+                return Ok(EditorView {
+                    settings: settings_config,
+                    inactive: Vec::new(),
+                });
+            };
+            let path_str = if app == "codex" {
+                format!("{home}/.codex/config.toml")
+            } else {
+                format!("{home}/.grok/config.toml")
+            };
+            let path = std::path::Path::new(&path_str);
+            let pre = session.read_remote_text(&path_str, container.as_deref()).await?;
+            let doc = crate::live::patch::toml::parse(path, pre.as_deref().map(str::as_bytes))
+                .map_err(|e| format!("读取远端 {path_str} 失败: {e}"))?;
+            let mut settings = settings_config.as_object().cloned().unwrap_or_default();
+            settings.insert("config".to_string(), Value::String(doc.to_string()));
+            if app == "codex" {
+                settings
+                    .entry("auth".to_string())
+                    .or_insert_with(|| Value::Object(serde_json::Map::new()));
+            }
+            let inactive = if app == "codex" {
+                codex_editor::inactive_fields(editor_toml::config_text(&settings_config), &doc)
+            } else {
+                grok_editor::inactive_fields_for(&settings_config, &doc)
+            };
+            Ok(EditorView {
+                settings: Value::Object(settings),
+                inactive,
+            })
+        }
+        other => Err(format!("远端编辑器预览不支持应用 {other}")),
+    }
+}
+
 #[tauri::command]
 pub async fn get_remote_current_provider(
     state: State<'_, AppState>,
@@ -1740,6 +2441,41 @@ pub async fn get_remote_current_provider(
     .await
 }
 
+/// 同步版当前供应商判定（不读远端 live）：持久化记录 → SSOT current。
+///
+/// 与 `resolve_remote_current_provider_id` 的前两级完全一致。写操作（编辑/删除）
+/// 用它而不是 full resolver：查看面板时 `build_remote_providers_view` 已把
+/// 含 live 兜底的结论落库，同步判定即可命中；同时避免在巨型 async fn 里再
+/// await 远端解析（rustc 在 Windows 上把两层状态机内联会爆栈）。
+fn current_provider_id_from_persisted(
+    state: &AppState,
+    host_id: &str,
+    container: Option<&str>,
+    app: &str,
+    ssot: &crate::remote::providers::RemoteProvidersSsot,
+) -> Result<Option<String>, String> {
+    if let Some(persisted) = crate::remote::current::get_current_provider(
+        state.db.as_ref(),
+        host_id,
+        container,
+        app,
+    )? {
+        if ssot.providers.iter().any(|p| p.id == persisted) {
+            return Ok(Some(persisted));
+        }
+    }
+
+    if !crate::remote::providers::is_additive_app(app) {
+        if let Some(current) = ssot.current_provider_id.as_deref() {
+            if ssot.providers.iter().any(|p| p.id == current) {
+                return Ok(Some(current.to_string()));
+            }
+        }
+    }
+
+    Ok(None)
+}
+
 /// 远端当前供应商判定（`get_remote_providers` / `get_remote_current_provider` 共用）。
 #[allow(clippy::too_many_arguments)]
 async fn resolve_remote_current_provider_id(
@@ -1755,8 +2491,12 @@ async fn resolve_remote_current_provider_id(
     // 1) 持久化记录优先：本应用上次「切换」写入的真实当前供应商，不受用户后续
     //    编辑 base_url / 通用配置片段影响（那正是匹配法失效的场景）。校验其仍
     //    存在于该远端 SSOT（per-target 独立：本机 DB 里有没有不再相关）。
-    if let Some(persisted) =
-        crate::remote::current::get_current_provider(state.db.as_ref(), host_id, app)?
+    if let Some(persisted) = crate::remote::current::get_current_provider(
+        state.db.as_ref(),
+        host_id,
+        container,
+        app,
+    )?
     {
         if ssot.providers.iter().any(|p| p.id == persisted) {
             return Ok(Some(persisted));
@@ -1823,14 +2563,11 @@ async fn resolve_remote_current_provider_id(
     let app_type =
         crate::app_config::AppType::from_str(app).map_err(|_| format!("未知应用类型: {app}"))?;
     for p in &ssot.providers {
-        // 远端 live 里存的是「生效配置」——即合并通用配置片段后的结果，
-        // 与 switch_remote_provider 写入时一致。因此这里必须用同一份生效配置的
-        // base_url 去比对，否则开启了通用配置的供应商永远匹配不上，编辑推送会被跳过。
-        let effective =
-            crate::services::provider::live::build_effective_settings_with_common_config(
-                &state.db, &app_type, p,
-            )
-            .map_err(|e| e.to_string())?;
+        // 远端 live 里存的就是供应商自己的 settings_config —— 官方 v4.0.4 已废弃
+        // 「回填 / 合并通用配置片段」（见 official services/provider/claude_direct.rs
+        // 的模块文档：「用户的设置本来就留在 live 里」），所以这里直接拿它比对即可，
+        // 不再另算一份「生效配置」。
+        let effective = p.settings_config.clone();
         let local_base = match app {
             "codex" => effective
                 .get("config")
@@ -1935,140 +2672,7 @@ pub async fn check_remote_cli_installed(
     }
 }
 
-/// 列出远端 `~/.claude/projects/` 下的会话 jsonl 文件。
-#[tauri::command]
-pub async fn list_remote_sessions(
-    state: State<'_, AppState>,
-    host_id: String,
-    container: Option<String>,
-) -> Result<Vec<crate::remote::sessions::RemoteSessionInfo>, String> {
-    let host = load_host(&state, &host_id)?;
-    let password = resolve_password(&host)?;
-    let session = connection::connect(&host, Some(&password)).await?;
-    let target = crate::remote::docker::RemoteTarget::new(
-        &session.sftp,
-        &session.channel,
-        container.as_deref(),
-    )?;
-    crate::remote::sessions::list_remote_sessions(&target, &host.default_home()).await
-}
-
-/// 复用本机 `session_manager` 的解析逻辑，列出远端会话的**完整元数据**（标题/摘要/时间等）。
-/// 通过 `FileOps` + 共享的 `scan_sessions_fs` 实现「一套逻辑、本机/远端/容器三套数据源」。
-/// `app`：claude / grokbuild 已支持；其余待扩展（hermes/opencode 含 SQLite 主存储，暂不支持）。
-#[tauri::command]
-pub async fn list_remote_sessions_detailed(
-    state: State<'_, AppState>,
-    host_id: String,
-    container: Option<String>,
-    app: String,
-) -> Result<Vec<crate::session_manager::SessionMeta>, String> {
-    let host = load_host(&state, &host_id)?;
-    let password = resolve_password(&host)?;
-    let session = connection::connect(&host, Some(&password)).await?;
-    let target = crate::remote::docker::RemoteTarget::new(
-        &session.sftp,
-        &session.channel,
-        container.as_deref(),
-    )?;
-    let home = host.default_home();
-    let root = match app.as_str() {
-        "claude" => format!("{home}/.claude/projects"),
-        "grokbuild" => format!("{home}/.grok/sessions"),
-        "codex" => format!("{home}/.codex"),
-        "gemini" => format!("{home}/.gemini/tmp"),
-        "openclaw" => format!("{home}/.openclaw/agents"),
-        "pi" => format!("{home}/.pi/agent/sessions"),
-        "hermes" | "opencode" => home.clone(),
-        other => {
-            return Err(format!("远程会话管理暂不支持应用 {other}"));
-        }
-    };
-
-    // hermes / opencode：SQLite 主存储，经远端 sqlite-helper 查询（复用本机 provider SQL）
-    if app == "hermes" || app == "opencode" {
-        let helper = ensure_remote_sqlite_helper(&session, container.as_deref(), &home).await?;
-        let (db, sql) = if app == "hermes" {
-            (
-                format!("{home}/.hermes/state.db"),
-                "SELECT * FROM sessions ORDER BY rowid DESC LIMIT 500".to_string(),
-            )
-        } else {
-            (
-                format!("{home}/.local/share/opencode/opencode.db"),
-                "SELECT id, title, directory, time_created, time_updated FROM session ORDER BY time_updated DESC"
-                    .to_string(),
-            )
-        };
-        return match run_sqlite_helper(
-            &session,
-            container.as_deref(),
-            &helper,
-            "query",
-            &db,
-            &sql,
-            &[],
-        )
-        .await
-        {
-            Ok(v) => {
-                let rows = v
-                    .get("rows")
-                    .and_then(Value::as_array)
-                    .cloned()
-                    .unwrap_or_default();
-                let mut out = Vec::new();
-                for row in rows {
-                    let meta = if app == "hermes" {
-                        crate::session_manager::providers::hermes::sqlite_row_to_session_meta(
-                            &row,
-                            &format!("sqlite:{db}"),
-                        )
-                    } else {
-                        crate::session_manager::providers::opencode::opencode_row_to_session_meta(
-                            &row, &db,
-                        )
-                    };
-                    if let Some(m) = meta {
-                        out.push(m);
-                    }
-                }
-                Ok(out)
-            }
-            Err(e) => {
-                // db 不存在（该 app 在远端从未使用）→ 视为空列表
-                if e.contains("unable to open") || e.contains("open db") {
-                    Ok(Vec::new())
-                } else {
-                    Err(e)
-                }
-            }
-        };
-    }
-
-    Ok(match app.as_str() {
-        "claude" => {
-            crate::session_manager::providers::claude::scan_sessions_fs(&target, &root).await
-        }
-        "grokbuild" => {
-            crate::session_manager::providers::grokbuild::scan_sessions_fs(&target, &root).await
-        }
-        "codex" => crate::session_manager::providers::codex::scan_sessions_fs(&target, &root).await,
-        "gemini" => {
-            crate::session_manager::providers::gemini::scan_sessions_fs(&target, &root).await
-        }
-        "openclaw" => {
-            crate::session_manager::providers::openclaw::scan_sessions_fs(&target, &root).await
-        }
-        "pi" => {
-            crate::session_manager::providers::pi::scan_sessions_fs(&target, &root).await
-        }
-        _ => unreachable!(),
-    })
-}
-
-/// 列出远端所有 app 的会话（对齐本机 sessionsApi.list()）。
-/// 一次连接，并行扫描 8 个 app，合并返回。任一 app 失败不阻塞其他。
+/// 列出远端所有 app 的会话（对齐本机 sessionsApi.list()，全量返回）。
 #[tauri::command]
 pub async fn list_remote_sessions_all(
     state: State<'_, AppState>,
@@ -2085,58 +2689,134 @@ pub async fn list_remote_sessions_all(
     )?;
     let home = host.default_home();
 
-    // 6 个文件源 app，并行扫描
-    let file_apps: Vec<(&str, String)> = vec![
-        ("claude", format!("{home}/.claude/projects")),
-        ("grokbuild", format!("{home}/.grok/sessions")),
-        ("codex", format!("{home}/.codex")),
-        ("gemini", format!("{home}/.gemini/tmp")),
-        ("openclaw", format!("{home}/.openclaw/agents")),
-        ("pi", format!("{home}/.pi/agent/sessions")),
+    // 3 个 SQLite 源（hermes / opencode / mcode）+ codex 线程标题库
+    let hermes_db = format!("{home}/.hermes/state.db");
+    let opencode_db = format!("{home}/.local/share/opencode/opencode.db");
+    let mcode_db = format!("{home}/.minimax/v2/sqlite/runtime-state.sqlite");
+    let codex_state_db = format!("{home}/.codex/state_5.sqlite");
+    let hermes_sql = "SELECT * FROM sessions ORDER BY rowid DESC LIMIT 500";
+
+    // 先一次性探测哪些 SQLite 库真的存在：一个都没有就完全跳过 helper
+    // （首次上传 helper 约 2.6MB，容器上很贵，不能为不存在的库付这个成本）。
+    let db_paths = [&hermes_db, &opencode_db, &mcode_db, &codex_state_db];
+    let probe = format!(
+        "for f in {}; do [ -f \"$f\" ] && echo \"$f\"; done",
+        db_paths
+            .iter()
+            .map(|p| connection::shell_quote(p))
+            .collect::<Vec<_>>()
+            .join(" ")
+    );
+    let existing_dbs = exec_in_target(&session, container.as_deref(), &probe)
+        .await
+        .unwrap_or_default();
+
+    // hermes 可能出现 SQLite 与 JSONL 两套会话并存（本机 scan_sessions 也是合并 + SQLite 优先）
+    let mut hermes_sqlite_ids: std::collections::HashSet<String> = Default::default();
+
+    // codex 线程标题：本机会用 session_index.jsonl + state_5.sqlite 覆盖标题，
+    // 远端同样读取，否则列表标题与本地不一致。
+    let mut codex_titles: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
+    if let Ok(Some(text)) = target
+        .read_text_optional(&format!("{home}/.codex/session_index.jsonl"))
+        .await
+    {
+        codex_titles.extend(
+            crate::session_manager::providers::codex::parse_session_index_titles(&text),
+        );
+    }
+    if existing_dbs
+        .lines()
+        .any(|line| line.trim() == codex_state_db)
+    {
+        if let Ok(helper) =
+            ensure_remote_sqlite_helper(&session, container.as_deref(), &home).await
+        {
+            if let Ok(v) = run_sqlite_helper(
+                &session,
+                container.as_deref(),
+                &helper,
+                "query",
+                &codex_state_db,
+                crate::session_manager::providers::codex::THREAD_TITLES_SQL,
+                &[],
+            )
+            .await
+            {
+                if let Some(rows) = v.get("rows").and_then(Value::as_array) {
+                    for row in rows {
+                        if let (Some(id), Some(title)) = (
+                            row.get("id").and_then(Value::as_str),
+                            row.get("title").and_then(Value::as_str),
+                        ) {
+                            if !id.trim().is_empty() && !title.trim().is_empty() {
+                                codex_titles.insert(id.to_string(), title.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // 6 个文件源 app：FileOps 泛型扫描，复用本机各 provider 的纯解析。
+    // 根目录与本机 `session_roots()` 对齐——尤其 codex 不能扫整个 `~/.codex`
+    // （那里还有 .tmp/plugins、skills 等几百个无关文件，容器下每个目录都是一趟 exec）。
+    let file_apps: Vec<(&str, Vec<String>)> = vec![
+        ("claude", vec![format!("{home}/.claude/projects")]),
+        (
+            "grokbuild",
+            vec![
+                format!("{home}/.grok/sessions"),
+                format!("{home}/.grok/archived_sessions"),
+            ],
+        ),
+        (
+            "codex",
+            vec![
+                format!("{home}/.codex/sessions"),
+                format!("{home}/.codex/archived_sessions"),
+            ],
+        ),
+        ("gemini", vec![format!("{home}/.gemini/tmp")]),
+        ("openclaw", vec![format!("{home}/.openclaw/agents")]),
+        ("pi", vec![format!("{home}/.pi/agent/sessions")]),
     ];
 
     let mut all_sessions: Vec<crate::session_manager::SessionMeta> = Vec::new();
-
-    // 文件源：逐个扫描（SFTP 复用同一连接）
-    for (app, root) in &file_apps {
-        let sessions = match *app {
-            "claude" => {
-                crate::session_manager::providers::claude::scan_sessions_fs(&target, root).await
-            }
-            "grokbuild" => {
-                crate::session_manager::providers::grokbuild::scan_sessions_fs(&target, root).await
-            }
-            "codex" => {
-                crate::session_manager::providers::codex::scan_sessions_fs(&target, root).await
-            }
-            "gemini" => {
-                crate::session_manager::providers::gemini::scan_sessions_fs(&target, root).await
-            }
-            "openclaw" => {
-                crate::session_manager::providers::openclaw::scan_sessions_fs(&target, root).await
-            }
-            "pi" => {
-                crate::session_manager::providers::pi::scan_sessions_fs(&target, root).await
-            }
-            _ => unreachable!(),
-        };
-        all_sessions.extend(sessions);
+    for (app, roots) in &file_apps {
+        for root in roots {
+            let sessions = match *app {
+                "claude" => crate::remote::sessions::scan_claude_fs(&target, root).await,
+                "grokbuild" => crate::remote::sessions::scan_grokbuild_fs(&target, root).await,
+                "codex" => {
+                    crate::remote::sessions::scan_codex_fs(&target, root, &codex_titles).await
+                }
+                "gemini" => crate::remote::sessions::scan_gemini_fs(&target, root).await,
+                "openclaw" => crate::remote::sessions::scan_openclaw_fs(&target, root).await,
+                "pi" => crate::remote::sessions::scan_pi_fs(&target, root).await,
+                _ => unreachable!(),
+            };
+            all_sessions.extend(sessions);
+        }
     }
 
-    // 2 个 SQLite 源（hermes / opencode）
-    let hermes_db = format!("{home}/.hermes/state.db");
-    let opencode_db = format!("{home}/.local/share/opencode/opencode.db");
-    let hermes_sql = "SELECT * FROM sessions ORDER BY rowid DESC LIMIT 500";
-    let opencode_sql = "SELECT id, title, directory, time_created, time_updated FROM session ORDER BY time_updated DESC";
-
-    if let Ok(helper) =
-        ensure_remote_sqlite_helper(&session, container.as_deref(), &home).await
-    {
-        let sqlite_apps: Vec<(&str, &str, &str)> = vec![
+    if !existing_dbs.trim().is_empty() {
+      if let Ok(helper) = ensure_remote_sqlite_helper(&session, container.as_deref(), &home).await {
+        // hermes / mcode：单查询
+        let simple_apps: Vec<(&str, &str, &str)> = vec![
             ("hermes", &hermes_db, hermes_sql),
-            ("opencode", &opencode_db, opencode_sql),
+            (
+                "mcode",
+                &mcode_db,
+                crate::session_manager::providers::mcode::SCAN_SQL,
+            ),
         ];
-        for (app, db, sql) in &sqlite_apps {
+        for (app, db, sql) in &simple_apps {
+            if !existing_dbs.lines().any(|line| line.trim() == *db) {
+                continue;
+            }
             if let Ok(v) = run_sqlite_helper(
                 &session,
                 container.as_deref(),
@@ -2155,28 +2835,113 @@ pub async fn list_remote_sessions_all(
                     .unwrap_or_default();
                 for row in rows {
                     let meta = if *app == "hermes" {
-                        crate::session_manager::providers::hermes::sqlite_row_to_session_meta(
-                            &row,
-                            &format!("sqlite:{db}"),
-                        )
+                        let m =
+                            crate::session_manager::providers::hermes::sqlite_row_to_session_meta(
+                                &row,
+                                &format!("sqlite:{db}"),
+                            );
+                        if let Some(meta) = &m {
+                            hermes_sqlite_ids.insert(meta.session_id.clone());
+                        }
+                        m
                     } else {
-                        crate::session_manager::providers::opencode::opencode_row_to_session_meta(
-                            &row, db,
-                        )
+                        crate::session_manager::providers::mcode::row_to_session_meta(&row)
                     };
                     if let Some(m) = meta {
                         all_sessions.push(m);
                     }
                 }
             }
-            // db 不存在 → 跳过，不报错
+            // db 不存在/查询失败 → 跳过该 app，不影响文件源结果
+        }
+
+        // opencode：v1（session）与 v2（session_v2 + session_message）两套 schema，
+        // 远端必须探测后选 SQL，否则 2.x 机器上一条会话都列不出来。
+        if existing_dbs.lines().any(|line| line.trim() == opencode_db) {
+            use crate::session_manager::providers::opencode as oc;
+            let tables = run_sqlite_helper(
+                &session,
+                container.as_deref(),
+                &helper,
+                "query",
+                &opencode_db,
+                "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('session','session_v2','session_message')",
+                &[],
+            )
+            .await
+            .ok()
+            .map(|v| {
+                v.get("rows")
+                    .and_then(Value::as_array)
+                    .map(|rows| {
+                        rows.iter()
+                            .filter_map(|r| r.get("name").and_then(Value::as_str))
+                            .map(str::to_string)
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default()
+            })
+            .unwrap_or_default();
+            let has_v1 = tables.iter().any(|t| t == "session");
+            let has_v2 = tables.iter().any(|t| t == "session_v2") && tables.iter().any(|t| t == "session_message");
+
+            let mut queries: Vec<&str> = Vec::new();
+            if has_v2 {
+                queries.push(oc::LIST_SQL_V2);
+                if has_v1 {
+                    queries.push(oc::LIST_SQL_V1_EXTRA);
+                }
+            } else if has_v1 {
+                queries.push(oc::LIST_SQL_V1);
+            }
+            for sql in queries {
+                if let Ok(v) = run_sqlite_helper(
+                    &session,
+                    container.as_deref(),
+                    &helper,
+                    "query",
+                    &opencode_db,
+                    sql,
+                    &[],
+                )
+                .await
+                {
+                    let rows = v
+                        .get("rows")
+                        .and_then(Value::as_array)
+                        .cloned()
+                        .unwrap_or_default();
+                    for row in rows {
+                        if let Some(m) = oc::opencode_row_to_session_meta(&row, &opencode_db) {
+                            all_sessions.push(m);
+                        }
+                    }
+                }
+            }
+        }
+      }
+    }
+
+    // hermes 旧版 JSONL 会话：与 SQLite 结果合并，同 id 以 SQLite 为准（对齐本机）。
+    for meta in
+        crate::remote::sessions::scan_hermes_fs(&target, &format!("{home}/.hermes/sessions"))
+            .await
+    {
+        if !hermes_sqlite_ids.contains(&meta.session_id) {
+            all_sessions.push(meta);
         }
     }
+
+    // 时间倒序，与本机 scan_sessions 一致。
+    all_sessions.sort_by(|a, b| {
+        let a_ts = a.last_active_at.or(a.created_at).unwrap_or(0);
+        let b_ts = b.last_active_at.or(b.created_at).unwrap_or(0);
+        b_ts.cmp(&a_ts)
+    });
 
     Ok(all_sessions)
 }
 
-/// 读取远端会话消息（复用本机各 provider 的纯解析；`app` 决定解析器）。
 #[tauri::command]
 pub async fn get_remote_session_messages(
     state: State<'_, AppState>,
@@ -2186,6 +2951,7 @@ pub async fn get_remote_session_messages(
     container: Option<String>,
     app: String,
 ) -> Result<Vec<crate::session_manager::SessionMessage>, String> {
+    let _ = session_id;
     let host = load_host(&state, &host_id)?;
     let password = resolve_password(&host)?;
     let session = connection::connect(&host, Some(&password)).await?;
@@ -2194,15 +2960,39 @@ pub async fn get_remote_session_messages(
         &session.channel,
         container.as_deref(),
     )?;
-    let home = host.default_home();
 
-    // hermes / opencode：SQLite，经远端 sqlite-helper 查询
-    if app == "hermes" || app == "opencode" {
+    // hermes（sqlite: 源）/ opencode / mcode：SQLite 主存储，经远端 sqlite-helper 查询
+    let is_sqlite_source = source_path.starts_with("sqlite:") || app == "mcode";
+    if is_sqlite_source && (app == "hermes" || app == "opencode" || app == "mcode") {
+        let home = host.default_home();
         let helper = ensure_remote_sqlite_helper(&session, container.as_deref(), &home).await?;
+        if app == "mcode" {
+            let db = format!("{home}/.minimax/v2/sqlite/runtime-state.sqlite");
+            let v = run_sqlite_helper(
+                &session,
+                container.as_deref(),
+                &helper,
+                "query",
+                &db,
+                crate::session_manager::providers::mcode::MESSAGES_SQL,
+                &[session_id.as_str()],
+            )
+            .await?;
+            let rows = v
+                .get("rows")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            return Ok(rows
+                .iter()
+                .filter_map(crate::session_manager::providers::mcode::row_to_message)
+                .collect());
+        }
         if app == "hermes" {
             let db = format!("{home}/.hermes/state.db");
-            let sql =
-                "SELECT role, content, created_at FROM messages WHERE session_id = ?1 ORDER BY created_at ASC";
+            // 与本机 `load_messages_from_conn` 对齐：列名是 `timestamp`（REAL 秒），
+            // 顺序按 `id ASC`（插入顺序；时间戳可能回退，不能按时间排）。
+            let sql = "SELECT id, role, content, timestamp FROM messages WHERE session_id = ?1 ORDER BY id ASC";
             let v = run_sqlite_helper(
                 &session,
                 container.as_deref(),
@@ -2223,8 +3013,47 @@ pub async fn get_remote_session_messages(
                 .filter_map(crate::session_manager::providers::hermes::sqlite_row_to_message)
                 .collect());
         }
-        // opencode：message + part 两表，query-all 一次取两个结果集
+        // opencode：v2（session_v2/session_message）优先，按会话所在表选择
         let db = format!("{home}/.local/share/opencode/opencode.db");
+        let in_v2 = run_sqlite_helper(
+            &session,
+            container.as_deref(),
+            &helper,
+            "query",
+            &db,
+            "SELECT id FROM session_v2 WHERE id = ?1",
+            &[session_id.as_str()],
+        )
+        .await
+        .ok()
+        .and_then(|v| {
+            v.get("rows")
+                .and_then(Value::as_array)
+                .map(|rows| !rows.is_empty())
+        })
+        .unwrap_or(false);
+        if in_v2 {
+            let v = run_sqlite_helper(
+                &session,
+                container.as_deref(),
+                &helper,
+                "query",
+                &db,
+                crate::session_manager::providers::opencode::MESSAGES_SQL_V2,
+                &[session_id.as_str()],
+            )
+            .await?;
+            let rows = v
+                .get("rows")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            return Ok(
+                crate::session_manager::providers::opencode::assemble_opencode_v2_messages(&rows),
+            );
+        }
+
+        // v1：message + part 两表，query-all 一次取两个结果集
         let sql = "SELECT id, time_created, data FROM message WHERE session_id = ?1 ORDER BY time_created ASC; SELECT message_id, data FROM part WHERE session_id = ?1 ORDER BY time_created ASC";
         let v = run_sqlite_helper(
             &session,
@@ -2265,57 +3094,57 @@ pub async fn get_remote_session_messages(
                 .read_text_optional(&source_path)
                 .await?
                 .unwrap_or_default();
-            Ok(
-                crate::session_manager::providers::claude::parse_messages_from_lines(
-                    content.lines().map(|s| s.to_string()),
-                ),
-            )
-        }
-        "grokbuild" => {
-            // 列表里 source_path 是 summary.json，消息在同目录 chat_history.jsonl
-            let chat_path = format!(
-                "{}/chat_history.jsonl",
-                source_path.trim_end_matches("/summary.json")
-            );
-            let content = target
-                .read_text_optional(&chat_path)
-                .await?
-                .unwrap_or_default();
-            Ok(
-                crate::session_manager::providers::grokbuild::parse_messages_from_lines(
-                    content.lines().map(|s| s.to_string()),
-                ),
-            )
+            Ok(crate::session_manager::providers::claude::parse_messages_from_content(
+                content.as_bytes(),
+                std::path::PathBuf::from(&source_path).with_extension(""),
+            ))
         }
         "codex" => {
             let content = target
                 .read_text_optional(&source_path)
                 .await?
                 .unwrap_or_default();
-            Ok(
-                crate::session_manager::providers::codex::parse_messages_from_lines(
-                    content.lines().map(|s| s.to_string()),
-                ),
-            )
+            Ok(crate::session_manager::providers::codex::parse_messages_from_content(
+                content.as_bytes(),
+            ))
         }
-        "gemini" => {
-            let content = target
-                .read_text_optional(&source_path)
-                .await?
-                .unwrap_or_default();
-            crate::session_manager::providers::gemini::parse_messages_from_json_text(&content)
-        }
+        // openclaw / grokbuild：JSONL 内容直接解析
         "openclaw" => {
             let content = target
                 .read_text_optional(&source_path)
                 .await?
                 .unwrap_or_default();
             Ok(
-                crate::session_manager::providers::openclaw::parse_messages_from_lines(
-                    content.lines().map(|s| s.to_string()),
+                crate::session_manager::providers::openclaw::parse_messages_from_content(
+                    content.as_bytes(),
                 ),
             )
         }
+        "grokbuild" => {
+            // sourcePath 是 summary.json，正文在同目录 chat_history.jsonl
+            let chat_path = std::path::Path::new(&source_path)
+                .parent()
+                .map(|dir| dir.join("chat_history.jsonl"))
+                .and_then(|p| p.to_str().map(str::to_string))
+                .ok_or_else(|| format!("无效的 Grok Build 会话路径: {source_path}"))?;
+            let content = target.read_text_optional(&chat_path).await?.unwrap_or_default();
+            Ok(
+                crate::session_manager::providers::grokbuild::parse_messages_from_content(
+                    content.as_bytes(),
+                ),
+            )
+        }
+        // gemini：单个 JSON 文档（非 JSONL）
+        "gemini" => {
+            let content = target
+                .read_text_optional(&source_path)
+                .await?
+                .unwrap_or_default();
+            crate::session_manager::providers::gemini::parse_messages_from_content(
+                &content, &source_path,
+            )
+        }
+        // pi：树 + 正文都从同一份内容得出（无本机 root 解析）
         "pi" => {
             let content = target
                 .read_text_optional(&source_path)
@@ -2323,11 +3152,20 @@ pub async fn get_remote_session_messages(
                 .unwrap_or_default();
             crate::session_manager::providers::pi::parse_messages_from_content(&content)
         }
-        other => Err(format!("远程会话管理暂不支持应用 {other}")),
+        // hermes 旧版 JSONL 会话（非 sqlite: 源）
+        "hermes" => {
+            let content = target
+                .read_text_optional(&source_path)
+                .await?
+                .unwrap_or_default();
+            Ok(crate::session_manager::providers::hermes::parse_messages_from_content(
+                content.as_bytes(),
+            ))
+        }
+        other => Err(format!("远端会话管理暂不支持应用 {other}（尚未移植）")),
     }
 }
 
-/// 删除远端会话（per-app 校验 + 删除），通过 FileOps 实现。
 #[tauri::command]
 pub async fn delete_remote_session(
     state: State<'_, AppState>,
@@ -2340,210 +3178,366 @@ pub async fn delete_remote_session(
     let host = load_host(&state, &host_id)?;
     let password = resolve_password(&host)?;
     let session = connection::connect(&host, Some(&password)).await?;
-    let home = host.default_home();
     let target = crate::remote::docker::RemoteTarget::new(
         &session.sftp,
         &session.channel,
         container.as_deref(),
     )?;
 
-    match app.as_str() {
-        "claude" => {
-            // 校验 session_id 与远端文件匹配（复用本机解析）
-            let (head, tail) = target.read_head_tail_lines(&source_path, 10, 30).await?;
-            let meta = crate::session_manager::providers::claude::parse_session_meta_from_lines(
-                &source_path,
-                &head,
-                &tail,
-            )
-            .ok_or_else(|| format!("无法解析远端会话元数据: {source_path}"))?;
-            if meta.session_id != session_id {
-                return Err(format!(
-                    "会话 ID 不匹配: 期望 {session_id}, 实际 {}",
-                    meta.session_id
-                ));
-            }
-
-            // 删除主文件 + sidecar 目录（同名无 .jsonl 后缀）
-            let sidecar = source_path
-                .strip_suffix(".jsonl")
-                .unwrap_or(&source_path)
-                .to_string();
-            if target.exists(&sidecar).await {
-                if target.is_dir(&sidecar).await {
-                    target.remove_dir_all(&sidecar).await?;
-                } else {
-                    target.remove_file(&sidecar).await?;
-                }
-            }
-            target.remove_file(&source_path).await?;
-            Ok(true)
-        }
-        "grokbuild" => {
-            // source_path 是 summary.json：读文本校验 id，然后删整个会话目录
-            let text = target
-                .read_text_optional(&source_path)
-                .await?
-                .ok_or_else(|| format!("远端会话文件不存在: {source_path}"))?;
-            let meta = crate::session_manager::providers::grokbuild::parse_summary_text(
-                &text,
-                &source_path,
-            )
-            .ok_or_else(|| format!("无法解析远端 Grok Build 会话: {source_path}"))?;
-            if meta.session_id != session_id {
-                return Err(format!(
-                    "会话 ID 不匹配: 期望 {session_id}, 实际 {}",
-                    meta.session_id
-                ));
-            }
-            let session_dir = source_path.trim_end_matches("/summary.json").to_string();
-            target.remove_dir_all(&session_dir).await?;
-            Ok(true)
-        }
-        "codex" => {
-            let (head, tail) = target.read_head_tail_lines(&source_path, 10, 30).await?;
-            let meta = crate::session_manager::providers::codex::parse_session_meta_from_lines(
-                &source_path,
-                &head,
-                &tail,
-                &std::collections::HashMap::new(),
-            )
-            .ok_or_else(|| format!("无法解析远端 Codex 会话元数据: {source_path}"))?;
-            if meta.session_id != session_id {
-                return Err(format!(
-                    "会话 ID 不匹配: 期望 {session_id}, 实际 {}",
-                    meta.session_id
-                ));
-            }
-            target.remove_file(&source_path).await?;
-            Ok(true)
-        }
-        "gemini" => {
-            let text = target
-                .read_text_optional(&source_path)
-                .await?
-                .ok_or_else(|| format!("远端会话文件不存在: {source_path}"))?;
-            let meta = crate::session_manager::providers::gemini::parse_session_from_json_text(
-                &source_path,
-                &text,
-            )
-            .ok_or_else(|| format!("无法解析远端 Gemini 会话: {source_path}"))?;
-            if meta.session_id != session_id {
-                return Err(format!(
-                    "会话 ID 不匹配: 期望 {session_id}, 实际 {}",
-                    meta.session_id
-                ));
-            }
-            target.remove_file(&source_path).await?;
-            Ok(true)
-        }
-        "openclaw" => {
-            let (head, tail) = target.read_head_tail_lines(&source_path, 10, 30).await?;
-            let meta = crate::session_manager::providers::openclaw::parse_session_from_lines(
-                &source_path,
-                &head,
-                &tail,
-                None,
-            )
-            .ok_or_else(|| format!("无法解析远端 OpenClaw 会话: {source_path}"))?;
-            if meta.session_id != session_id {
-                return Err(format!(
-                    "会话 ID 不匹配: 期望 {session_id}, 实际 {}",
-                    meta.session_id
-                ));
-            }
-            // 同步清理 sessions.json 索引（对齐本机 prune_sessions_index）
-            let sessions_dir = source_path.trim_end_matches(&format!("/{}.jsonl", meta.session_id));
-            let index_path = format!("{sessions_dir}/sessions.json");
-            if let Ok(Some(index_text)) = target.read_text_optional(&index_path).await {
-                let mut index: serde_json::Map<String, Value> =
-                    serde_json::from_str(&index_text).unwrap_or_default();
-                index.retain(|_, entry| {
-                    let same_id =
-                        entry.get("sessionId").and_then(Value::as_str) == Some(session_id.as_str());
-                    let same_file = entry.get("sessionFile").and_then(Value::as_str)
-                        == Some(source_path.as_str());
-                    !(same_id || same_file)
-                });
-                if let Ok(json) = serde_json::to_string_pretty(&index) {
-                    let _ = target.write_text_atomic(&index_path, &json).await;
-                }
-            }
-            target.remove_file(&source_path).await?;
-            Ok(true)
-        }
-        "hermes" | "opencode" => {
-            let helper = ensure_remote_sqlite_helper(&session, container.as_deref(), &home).await?;
-            let (db, sql) = if app == "hermes" {
-                (
-                    format!("{home}/.hermes/state.db"),
-                    "DELETE FROM messages WHERE session_id = ?1; DELETE FROM sessions WHERE id = ?1;",
-                )
-            } else {
-                (
-                    format!("{home}/.local/share/opencode/opencode.db"),
-                    "DELETE FROM part WHERE session_id = ?1; DELETE FROM message WHERE session_id = ?1; DELETE FROM session WHERE id = ?1;",
-                )
-            };
-            // 写入前先校验会话存在（helper write 在事务内，删除 0 行也 ok；
-            // 对齐本机 delete_sqlite 的先校验语义）
-            let check_sql = if app == "hermes" {
-                "SELECT id FROM sessions WHERE id = ?1"
-            } else {
-                "SELECT id FROM session WHERE id = ?1"
-            };
-            let v = run_sqlite_helper(
-                &session,
-                container.as_deref(),
-                &helper,
-                "query",
-                &db,
-                check_sql,
-                &[session_id.as_str()],
-            )
-            .await?;
-            let exists = v
-                .get("rows")
-                .and_then(Value::as_array)
-                .map(|r| !r.is_empty())
-                .unwrap_or(false);
-            if !exists {
-                return Err(format!("远端会话不存在: {session_id}"));
-            }
-            run_sqlite_helper(
-                &session,
-                container.as_deref(),
-                &helper,
-                "write",
-                &db,
-                sql,
-                &[session_id.as_str()],
-            )
-            .await?;
-            Ok(true)
-        }
-        "pi" => {
-            // Pi 会话是单个 JSONL 文件：读内容校验 session_id，然后删除文件
-            let content = target
-                .read_text_optional(&source_path)
-                .await?
-                .unwrap_or_default();
-            let meta = crate::session_manager::providers::pi::parse_session_from_content(
-                &source_path,
-                &content,
-            )
-            .map_err(|e| format!("无法解析远端 Pi 会话: {e}"))?;
-            if meta.session_id != session_id {
-                return Err(format!(
-                    "会话 ID 不匹配: 期望 {session_id}, 实际 {}",
-                    meta.session_id
-                ));
-            }
-            target.remove_file(&source_path).await?;
-            Ok(true)
-        }
-        other => Err(format!("远程会话管理暂不支持应用 {other}")),
+    // mcode：与本机一致——会话只能在 MCode 内删（runtime state 与历史要一起移除）
+    if app == "mcode" {
+        return Err(
+            "请在 MiniMax Code 中删除该会话（其运行时状态与历史需由 MCode 一起清理）".to_string(),
+        );
     }
+
+    // hermes：SQLite 主存储（会话 + 消息两张表）；JSONL 会话走文件删除
+    if app == "hermes" && source_path.starts_with("sqlite:") {
+        let home = host.default_home();
+        let helper = ensure_remote_sqlite_helper(&session, container.as_deref(), &home).await?;
+        let db = format!("{home}/.hermes/state.db");
+        let v = run_sqlite_helper(
+            &session,
+            container.as_deref(),
+            &helper,
+            "query",
+            &db,
+            "SELECT id FROM sessions WHERE id = ?1",
+            &[session_id.as_str()],
+        )
+        .await?;
+        if !v
+            .get("rows")
+            .and_then(Value::as_array)
+            .map(|r| !r.is_empty())
+            .unwrap_or(false)
+        {
+            return Err(format!("远端会话不存在: {session_id}"));
+        }
+        run_sqlite_helper(
+            &session,
+            container.as_deref(),
+            &helper,
+            "write",
+            &db,
+            "DELETE FROM messages WHERE session_id = ?1; DELETE FROM sessions WHERE id = ?1;",
+            &[session_id.as_str()],
+        )
+        .await?;
+        return Ok(true);
+    }
+
+    // opencode：v1（session/message/part）与 v2（session_v2/session_message）两套 schema，
+    // 远端按实际表结构删除；2.x 机器上原来的 v1 SQL 会直接报「会话不存在」。
+    if app == "opencode" {
+        let home = host.default_home();
+        let helper = ensure_remote_sqlite_helper(&session, container.as_deref(), &home).await?;
+        let db = format!("{home}/.local/share/opencode/opencode.db");
+        let tables: Vec<String> = run_sqlite_helper(
+            &session,
+            container.as_deref(),
+            &helper,
+            "query",
+            &db,
+            "SELECT name FROM sqlite_master WHERE type='table'",
+            &[],
+        )
+        .await
+        .ok()
+        .and_then(|v| {
+            v.get("rows").and_then(Value::as_array).map(|rows| {
+                rows.iter()
+                    .filter_map(|r| r.get("name").and_then(Value::as_str))
+                    .map(str::to_string)
+                    .collect()
+            })
+        })
+        .unwrap_or_default();
+        let has = |t: &str| tables.iter().any(|x| x == t);
+        let has_v1 = has("session");
+        let has_v2 = has("session_v2") && has("session_message");
+        if !has_v1 && !has_v2 {
+            return Err(format!("远端会话不存在: {session_id}"));
+        }
+
+        let mut checks = Vec::new();
+        if has_v2 {
+            checks.push("SELECT id FROM session_v2 WHERE id = ?1");
+        }
+        if has_v1 {
+            checks.push("SELECT id FROM session WHERE id = ?1");
+        }
+        let v = run_sqlite_helper(
+            &session,
+            container.as_deref(),
+            &helper,
+            "query",
+            &db,
+            &checks.join(" UNION ALL "),
+            &[session_id.as_str()],
+        )
+        .await?;
+        if !v
+            .get("rows")
+            .and_then(Value::as_array)
+            .map(|r| !r.is_empty())
+            .unwrap_or(false)
+        {
+            return Err(format!("远端会话不存在: {session_id}"));
+        }
+
+        let mut stmts: Vec<String> = Vec::new();
+        if has_v2 {
+            stmts.push("DELETE FROM session_message WHERE session_id = ?1;".into());
+            for child in [
+                "session_pending",
+                "session_inbox",
+                "instruction_entry",
+                "instruction_state",
+            ] {
+                if has(child) {
+                    stmts.push(format!("DELETE FROM {child} WHERE session_id = ?1;"));
+                }
+            }
+            if has("event_sequence") {
+                stmts.push("DELETE FROM event_sequence WHERE aggregate_id = ?1;".into());
+            }
+            stmts.push("DELETE FROM session_v2 WHERE id = ?1;".into());
+        }
+        if has_v1 {
+            if has("part") {
+                stmts.push("DELETE FROM part WHERE session_id = ?1;".into());
+            }
+            if has("message") {
+                stmts.push("DELETE FROM message WHERE session_id = ?1;".into());
+            }
+            stmts.push("DELETE FROM session WHERE id = ?1;".into());
+        }
+        run_sqlite_helper(
+            &session,
+            container.as_deref(),
+            &helper,
+            "write",
+            &db,
+            &stmts.join(" "),
+            &[session_id.as_str()],
+        )
+        .await?;
+        return Ok(true);
+    }
+
+    crate::remote::sessions::delete_session_fs(&target, &app, &source_path).await
+}
+
+/// 远端会话根（File 引用的相对路径以它为基，与本机 provider_roots 一致）。
+fn remote_session_root(app: &str, home: &str) -> String {
+    match app {
+        "claude" => format!("{home}/.claude/projects"),
+        "codex" => format!("{home}/.codex"),
+        "gemini" => format!("{home}/.gemini/tmp"),
+        "grokbuild" => format!("{home}/.grok"),
+        "openclaw" => format!("{home}/.openclaw/agents"),
+        "pi" => format!("{home}/.pi/agent/sessions"),
+        "opencode" => format!("{home}/.local/share/opencode/storage"),
+        "hermes" => format!("{home}/.hermes"),
+        "mcode" => format!("{home}/.minimax"),
+        _ => home.to_string(),
+    }
+}
+
+/// 远端 SQLite 会话的数据库路径。
+fn remote_sqlite_db(app: &str, home: &str) -> Option<String> {
+    match app {
+        "hermes" => Some(format!("{home}/.hermes/state.db")),
+        "opencode" => Some(format!("{home}/.local/share/opencode/opencode.db")),
+        "mcode" => Some(format!("{home}/.minimax/v2/sqlite/runtime-state.sqlite")),
+        _ => None,
+    }
+}
+
+/// 从 sourcePath 取出 SQLite 会话 id（hermes/opencode/mcode 三种源格式）。
+fn remote_sqlite_session_id(app: &str, source_path: &str) -> Option<String> {
+    match app {
+        "hermes" => crate::session_manager::providers::hermes::parse_sqlite_source(source_path)
+            .map(|(_, id)| id),
+        "opencode" => crate::session_manager::providers::opencode::parse_sqlite_source(source_path)
+            .map(|(_, id)| id),
+        "mcode" => source_path.strip_prefix("mcode:").map(str::to_string),
+        _ => None,
+    }
+}
+
+/// 远端 SQLite 单元格 → 文本（对齐本机 `content::read_sqlite_cell`：
+/// 表/列白名单 + id 与 session_id 双绑定，只能读本会话的行）。
+#[allow(clippy::too_many_arguments)]
+async fn resolve_remote_sqlite_cell(
+    session: &connection::RemoteSession,
+    container: Option<&str>,
+    home: &str,
+    app: &str,
+    source_path: &str,
+    table: &str,
+    id: &str,
+    column: &str,
+    pointer: &str,
+) -> Result<String, String> {
+    if !crate::session_manager::content::sqlite_allowed(app, table, column) {
+        return Err("不支持的内容引用".to_string());
+    }
+    let session_id = remote_sqlite_session_id(app, source_path)
+        .ok_or_else(|| format!("Invalid SQLite source reference: {source_path}"))?;
+    let db = remote_sqlite_db(app, home).ok_or_else(|| format!("应用 {app} 没有 SQLite 会话"))?;
+    let helper = ensure_remote_sqlite_helper(session, container, home).await?;
+    // 表名/列名已过白名单，可安全拼接；id/session_id 用参数绑定
+    let sql = format!(
+        "SELECT length(CAST({column} AS BLOB)) AS __len, {column} AS __cell FROM {table} WHERE id = ?1 AND session_id = ?2"
+    );
+    let v = run_sqlite_helper(
+        session,
+        container,
+        &helper,
+        "query",
+        &db,
+        &sql,
+        &[id, session_id.as_str()],
+    )
+    .await?;
+    let rows = v
+        .get("rows")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let row = rows
+        .first()
+        .ok_or_else(|| "会话已更新，请重新读取".to_string())?;
+    let size = row.get("__len").and_then(Value::as_i64).unwrap_or(0);
+    if size as u64 > crate::remote::sessions::MAX_TEXT_BYTES {
+        return Err("内容超过 32MB，请直接打开源文件查看".to_string());
+    }
+    let raw = row
+        .get("__cell")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "引用的内容不是文本".to_string())?
+        .to_string();
+    if pointer.is_empty() {
+        return Ok(raw);
+    }
+    let value: Value =
+        serde_json::from_str(&raw).map_err(|_| "会话已更新，请重新读取".to_string())?;
+    crate::session_manager::content::extract_text(&value, pointer)
+}
+
+/// 远端会话按需取块全文（阅读页「加载更多」），使用与本机一致的字符分页。
+#[tauri::command]
+pub async fn get_remote_session_block_content(
+    state: State<'_, AppState>,
+    host_id: String,
+    source_path: String,
+    container: Option<String>,
+    app: String,
+    content_ref: crate::session_manager::model::ContentRef,
+    offset: Option<u32>,
+    limit: Option<u32>,
+) -> Result<crate::session_manager::content::BlockContent, String> {
+    let host = load_host(&state, &host_id)?;
+    let password = resolve_password(&host)?;
+    let session = connection::connect(&host, Some(&password)).await?;
+    let target = crate::remote::docker::RemoteTarget::new(
+        &session.sftp,
+        &session.channel,
+        container.as_deref(),
+    )?;
+    let home = host.default_home();
+    let full = match &content_ref {
+        // SQLite 引用（opencode 的 part / hermes 的 content 等）走 sqlite-helper
+        crate::session_manager::model::ContentRef::Sqlite {
+            table,
+            id,
+            column,
+            pointer,
+        } => {
+            resolve_remote_sqlite_cell(
+                &session,
+                container.as_deref(),
+                &home,
+                &app,
+                &source_path,
+                table,
+                id,
+                column,
+                pointer,
+            )
+            .await?
+        }
+        _ => {
+            let root = remote_session_root(&app, &home);
+            crate::remote::sessions::resolve_content_ref_fs(
+                &target,
+                &app,
+                &source_path,
+                &root,
+                &content_ref,
+            )
+            .await?
+        }
+    };
+    Ok(crate::session_manager::content::paginate(&full, offset, limit))
+}
+
+/// 远端会话图片原始字节（阅读页图片预览）。返回 `tauri::ipc::Response`（与命令层一致）。
+#[tauri::command]
+pub async fn get_remote_session_image(
+    state: State<'_, AppState>,
+    host_id: String,
+    source_path: String,
+    container: Option<String>,
+    app: String,
+    image: crate::session_manager::model::ImageRef,
+) -> Result<tauri::ipc::Response, String> {
+    let host = load_host(&state, &host_id)?;
+    let password = resolve_password(&host)?;
+    let session = connection::connect(&host, Some(&password)).await?;
+    let target = crate::remote::docker::RemoteTarget::new(
+        &session.sftp,
+        &session.channel,
+        container.as_deref(),
+    )?;
+    let home = host.default_home();
+    let bytes = match &image.source {
+        // 内联图片存在 SQLite 列里（opencode/hermes）→ helper 取回后解码
+        crate::session_manager::model::ImageSource::Inline {
+            content:
+                crate::session_manager::model::ContentRef::Sqlite {
+                    table,
+                    id,
+                    column,
+                    pointer,
+                },
+        } => {
+            let encoded = resolve_remote_sqlite_cell(
+                &session,
+                container.as_deref(),
+                &home,
+                &app,
+                &source_path,
+                table,
+                id,
+                column,
+                pointer,
+            )
+            .await?;
+            crate::session_manager::content::decode_inline_image(
+                &encoded,
+                crate::remote::sessions::MAX_IMAGE_BYTES,
+            )?
+        }
+        _ => {
+            let root = remote_session_root(&app, &home);
+            crate::remote::sessions::load_image_fs(&target, &app, &source_path, &root, &image)
+                .await?
+        }
+    };
+    Ok(tauri::ipc::Response::new(bytes))
 }
 
 /// 列出远端 MCP 服务器（完整 McpServer，读 SSOT ~/.cc-switch/mcp.json）。
@@ -2619,6 +3613,25 @@ pub async fn delete_remote_mcp_server(
         container.as_deref(),
     )?;
     crate::remote::mcp::delete_remote_mcp_server(&target, &host.default_home(), &id).await
+}
+
+/// 重投影指定 app 的远端 live 配置（对齐本机 resyncToApps 的单 app 语义）。
+#[tauri::command]
+pub async fn reproject_remote_mcp_for_app(
+    state: State<'_, AppState>,
+    host_id: String,
+    app: String,
+    container: Option<String>,
+) -> Result<(), String> {
+    let host = load_host(&state, &host_id)?;
+    let password = resolve_password(&host)?;
+    let session = connection::connect(&host, Some(&password)).await?;
+    let target = crate::remote::docker::RemoteTarget::new(
+        &session.sftp,
+        &session.channel,
+        container.as_deref(),
+    )?;
+    crate::remote::mcp::reproject_remote_mcp_for_app(&target, &host.default_home(), &app).await
 }
 
 /// 切换远端 MCP 服务器在指定 app 的启用状态（改 SSOT + 同步/移除该 app live）。
@@ -2941,6 +3954,24 @@ pub async fn list_remote_skills(
     crate::remote::skill::list_remote_skills(&target, &host.default_home()).await
 }
 
+/// 重同步：把远端 SSOT 里所有技能按各自 apps 开关重新投影到各应用目录。
+#[tauri::command]
+pub async fn resync_remote_skills(
+    state: State<'_, AppState>,
+    host_id: String,
+    container: Option<String>,
+) -> Result<(), String> {
+    let host = load_host(&state, &host_id)?;
+    let password = resolve_password(&host)?;
+    let session = connection::connect(&host, Some(&password)).await?;
+    crate::remote::skill::resync_remote_skills(
+        &session.channel,
+        container.as_deref(),
+        &host.default_home(),
+    )
+    .await
+}
+
 /// 删除远端 SSOT 中的技能（目录 + symlink + skills.json）。
 #[tauri::command]
 pub async fn delete_remote_skill(
@@ -2957,12 +3988,187 @@ pub async fn delete_remote_skill(
         &session.channel,
         container.as_deref(),
     )?;
+    let home = host.default_home();
+
+    // 卸载前备份（对齐本机：先备份再删；备份失败则中止，避免丢技能）
+    let records = crate::remote::skill::read_remote_skills_json(&target, &home).await?;
+    if let Some(record) = records.iter().find(|r| r.id == name) {
+        // 备份失败必须中止：继续删除会永久丢失这份技能（与本机
+        // `SkillService::uninstall_skill` 的语义一致）。
+        backup_remote_skill_before_delete(&session, container.as_deref(), &home, record)
+            .await
+            .map_err(|e| format!("卸载前备份失败，已中止删除以保留技能: {e}"))?;
+    }
+
     crate::remote::skill::delete_remote_skill(
         &target,
         Some(&session.channel),
         container.as_deref(),
-        &host.default_home(),
+        &home,
         &name,
+    )
+    .await
+}
+
+/// 卸载前把远端 SSOT 技能目录备份到 `~/.cc-switch/skill-backups/<ts>_<dir>/`。
+async fn backup_remote_skill_before_delete(
+    session: &connection::RemoteSession,
+    container: Option<&str>,
+    root: &str,
+    record: &crate::remote::skill::RemoteSkillRecord,
+) -> Result<(), String> {
+    let ssot = crate::remote::skill::remote_ssot_path(root);
+    let source = format!("{ssot}/{}", record.directory);
+    let probe = format!(
+        "if [ -d {p} ]; then echo yes; else echo no; fi",
+        p = connection::shell_quote(&source)
+    );
+    let exists = exec_in_target(session, container, &probe)
+        .await
+        .unwrap_or_default();
+    if exists.trim() != "yes" {
+        log::warn!("[remote-skill] 备份源不存在，跳过备份: {source}");
+        return Ok(());
+    }
+
+    let backup_root = crate::remote::skill::remote_skill_backups_root(root);
+    let stamp = chrono::Utc::now().format("%Y%m%d_%H%M%S");
+    let mut backup_id = format!("{stamp}_{}", record.directory);
+    // 同一秒内重复卸载同一技能时加后缀
+    for counter in 1..100 {
+        let probe = format!(
+            "if [ -e {p} ]; then echo yes; else echo no; fi",
+            p = connection::shell_quote(&format!("{backup_root}/{backup_id}"))
+        );
+        let taken = exec_in_target(session, container, &probe)
+            .await
+            .unwrap_or_default();
+        if taken.trim() != "yes" {
+            break;
+        }
+        backup_id = format!("{stamp}_{}_{counter}", record.directory);
+    }
+
+    let backup_dir = format!("{backup_root}/{backup_id}");
+    let script = format!(
+        "mkdir -p {dest} && cp -r {src} {dest}/skill",
+        dest = connection::shell_quote(&backup_dir),
+        src = connection::shell_quote(&source),
+    );
+    exec_in_target(session, container, &script).await?;
+
+    let meta = crate::remote::skill::RemoteSkillBackupMeta {
+        skill: installed_skill_from_record(record),
+        backup_created_at: chrono::Utc::now().timestamp(),
+        source_path: source,
+    };
+    let text = serde_json::to_string_pretty(&meta)
+        .map_err(|e| format!("序列化备份 meta.json 失败: {e}"))?;
+    let target = crate::remote::docker::RemoteTarget::new(
+        &session.sftp,
+        &session.channel,
+        container,
+    )?;
+    target
+        .write_text_atomic(&format!("{backup_dir}/meta.json"), &text)
+        .await
+}
+
+/// `RemoteSkillRecord` → `InstalledSkill`（备份 meta 用，前端复用本机类型）。
+pub(crate) fn installed_skill_from_record(
+    record: &crate::remote::skill::RemoteSkillRecord,
+) -> crate::app_config::InstalledSkill {
+    crate::app_config::InstalledSkill {
+        id: record.id.clone(),
+        name: record.name.clone(),
+        description: record.description.clone(),
+        directory: record.directory.clone(),
+        repo_owner: record.repo_owner.clone(),
+        repo_name: record.repo_name.clone(),
+        repo_branch: record.repo_branch.clone(),
+        readme_url: record.readme_url.clone(),
+        apps: crate::app_config::SkillApps {
+            mcode: record.apps.mcode,
+            claude: record.apps.claude,
+            codex: record.apps.codex,
+            gemini: record.apps.gemini,
+            grokbuild: record.apps.grokbuild,
+            opencode: record.apps.opencode,
+            hermes: record.apps.hermes,
+            pi: record.apps.pi,
+        },
+        installed_at: record.installed_at,
+        content_hash: record.content_hash.clone(),
+        updated_at: record.updated_at,
+    }
+}
+
+/// 列出远端技能备份。
+#[tauri::command]
+pub async fn list_remote_skill_backups(
+    state: State<'_, AppState>,
+    host_id: String,
+    container: Option<String>,
+) -> Result<Vec<crate::services::skill::SkillBackupEntry>, String> {
+    let host = load_host(&state, &host_id)?;
+    let password = resolve_password(&host)?;
+    let session = connection::connect(&host, Some(&password)).await?;
+    let target = crate::remote::docker::RemoteTarget::new(
+        &session.sftp,
+        &session.channel,
+        container.as_deref(),
+    )?;
+    crate::remote::skill::list_remote_skill_backups(&target, &host.default_home()).await
+}
+
+/// 删除远端技能备份。
+#[tauri::command]
+pub async fn delete_remote_skill_backup(
+    state: State<'_, AppState>,
+    host_id: String,
+    backup_id: String,
+    container: Option<String>,
+) -> Result<(), String> {
+    let host = load_host(&state, &host_id)?;
+    let password = resolve_password(&host)?;
+    let session = connection::connect(&host, Some(&password)).await?;
+    let target = crate::remote::docker::RemoteTarget::new(
+        &session.sftp,
+        &session.channel,
+        container.as_deref(),
+    )?;
+    crate::remote::skill::delete_remote_skill_backup(
+        &target,
+        &host.default_home(),
+        &backup_id,
+    )
+    .await
+}
+
+/// 从远端备份恢复技能。
+#[tauri::command]
+pub async fn restore_remote_skill_backup(
+    state: State<'_, AppState>,
+    host_id: String,
+    backup_id: String,
+    current_app: String,
+    container: Option<String>,
+) -> Result<crate::app_config::InstalledSkill, String> {
+    let host = load_host(&state, &host_id)?;
+    let password = resolve_password(&host)?;
+    let session = connection::connect(&host, Some(&password)).await?;
+    let target = crate::remote::docker::RemoteTarget::new(
+        &session.sftp,
+        &session.channel,
+        container.as_deref(),
+    )?;
+    crate::remote::skill::restore_remote_skill_backup(
+        &target,
+        &session.channel,
+        container.as_deref(),
+        &host.default_home(),
+        &backup_id,
+        &current_app,
     )
     .await
 }
@@ -3306,13 +4512,13 @@ pub async fn update_remote_skill(
 }
 
 /// 检查远端某个目标上各 Skill 是否有更新（对齐本机 `check_updates`）。
-/// 返回与本机一致的 `SkillUpdateInfo` 列表，供前端显示「可更新」标记。
+/// 返回与本机一致的结果：可更新列表 + 没读到的仓库（不再静默吞掉失败）。
 #[tauri::command]
 pub async fn check_remote_skill_updates(
     state: State<'_, AppState>,
     host_id: String,
     container: Option<String>,
-) -> Result<Vec<crate::services::skill::SkillUpdateInfo>, String> {
+) -> Result<crate::services::skill::SkillUpdateCheckResult, String> {
     let host = load_host(&state, &host_id)?;
     let password = resolve_password(&host)?;
     let session = connection::connect(&host, Some(&password)).await?;
@@ -3923,6 +5129,10 @@ fn resolve_password(host: &RemoteHost) -> Result<String, String> {
             log::info!("[remote] 钥匙串命中 id={}", host.id);
             Ok(p)
         }
+        None if host.auth_method == AuthMethod::Key => {
+            // 密钥认证：无口令（未加密私钥）时合法，返回空串；有口令时存的就是口令
+            Ok(String::new())
+        }
         None => {
             log::error!("[remote] 钥匙串未命中 id={}", host.id);
             Err("未找到该主机的密码，请在编辑界面重新填写".to_string())
@@ -3969,7 +5179,7 @@ pub async fn query_remote_provider_usage(
 
     let app_type = crate::app_config::AppType::from_str(&app)
         .map_err(|e| format!("未知应用类型: {e}"))?;
-    crate::query_usage_for_provider(
+    crate::commands::provider::query_usage_for_provider(
         Some(provider),
         &copilot_state,
         &xai_state,
@@ -4009,16 +5219,311 @@ pub async fn stream_check_remote_provider(
 
     let app_type = crate::app_config::AppType::from_str(&app)
         .map_err(|e| format!("未知应用类型: {e}"))?;
-    let config = state
-        .db
-        .get_stream_check_config()
-        .map_err(|e| format!("读取连通性检查配置失败: {e}"))?;
-    crate::commands::stream_check::check_provider_connectivity(
+    // v4.0.4：连通性检查统一走 StreamCheckService::check_with_retry（配置用默认值；
+    // Copilot 的 base_url 动态解析在本机场景才需要，远端场景传 None）。
+    crate::services::stream_check::StreamCheckService::check_with_retry(
         &app_type,
         provider,
-        &config,
-        copilot_state.inner(),
+        &crate::services::stream_check::StreamCheckConfig::default(),
+        None,
     )
     .await
     .map_err(|e| e.to_string())
+}
+
+// ============================================================================
+// 远端 Hermes 记忆（A2）：~/.hermes/memories/{MEMORY,USER}.md + config.yaml 开关
+// ============================================================================
+
+fn remote_hermes_memory_path(home: &str, kind: crate::hermes_config::MemoryKind) -> String {
+    format!("{home}/.hermes/memories/{}", kind.filename())
+}
+
+fn remote_hermes_config_path(home: &str) -> String {
+    format!("{home}/.hermes/config.yaml")
+}
+
+#[tauri::command]
+pub async fn get_remote_hermes_memory(
+    state: State<'_, AppState>,
+    host_id: String,
+    kind: crate::hermes_config::MemoryKind,
+    container: Option<String>,
+) -> Result<String, String> {
+    let host = load_host(&state, &host_id)?;
+    let password = resolve_password(&host)?;
+    let session = connection::connect(&host, Some(&password)).await?;
+    let target = crate::remote::docker::RemoteTarget::new(
+        &session.sftp,
+        &session.channel,
+        container.as_deref(),
+    )?;
+    let path = remote_hermes_memory_path(&host.default_home(), kind);
+    Ok(target.read_text_optional(&path).await?.unwrap_or_default())
+}
+
+#[tauri::command]
+pub async fn set_remote_hermes_memory(
+    state: State<'_, AppState>,
+    host_id: String,
+    kind: crate::hermes_config::MemoryKind,
+    content: String,
+    container: Option<String>,
+) -> Result<(), String> {
+    let host = load_host(&state, &host_id)?;
+    let password = resolve_password(&host)?;
+    let session = connection::connect(&host, Some(&password)).await?;
+    let target = crate::remote::docker::RemoteTarget::new(
+        &session.sftp,
+        &session.channel,
+        container.as_deref(),
+    )?;
+    let path = remote_hermes_memory_path(&host.default_home(), kind);
+    target.write_text_atomic(&path, &content).await
+}
+
+#[tauri::command]
+pub async fn get_remote_hermes_memory_limits(
+    state: State<'_, AppState>,
+    host_id: String,
+    container: Option<String>,
+) -> Result<crate::hermes_config::HermesMemoryLimits, String> {
+    let host = load_host(&state, &host_id)?;
+    let password = resolve_password(&host)?;
+    let session = connection::connect(&host, Some(&password)).await?;
+    let target = crate::remote::docker::RemoteTarget::new(
+        &session.sftp,
+        &session.channel,
+        container.as_deref(),
+    )?;
+    let raw = target
+        .read_text_optional(&remote_hermes_config_path(&host.default_home()))
+        .await?
+        .unwrap_or_default();
+    Ok(crate::hermes_config::memory_limits_from_yaml(&raw))
+}
+
+#[tauri::command]
+pub async fn set_remote_hermes_memory_enabled(
+    state: State<'_, AppState>,
+    host_id: String,
+    kind: crate::hermes_config::MemoryKind,
+    enabled: bool,
+    container: Option<String>,
+) -> Result<(), String> {
+    let host = load_host(&state, &host_id)?;
+    let password = resolve_password(&host)?;
+    let session = connection::connect(&host, Some(&password)).await?;
+    let target = crate::remote::docker::RemoteTarget::new(
+        &session.sftp,
+        &session.channel,
+        container.as_deref(),
+    )?;
+    let path = remote_hermes_config_path(&host.default_home());
+    let raw = target.read_text_optional(&path).await?.unwrap_or_default();
+    let updated = crate::hermes_config::set_memory_enabled_in_yaml(&raw, kind, enabled)?;
+    target.write_text_atomic(&path, &updated).await
+}
+
+// ============================================================================
+// 远端 OpenClaw 工作区（A1）：~/.openclaw/workspace/
+// ============================================================================
+
+fn remote_workspace_dir(home: &str) -> String {
+    format!("{home}/.openclaw/workspace")
+}
+
+#[tauri::command]
+pub async fn read_remote_workspace_file(
+    state: State<'_, AppState>,
+    host_id: String,
+    filename: String,
+    container: Option<String>,
+) -> Result<Option<String>, String> {
+    crate::commands::validate_filename(&filename)?;
+    let host = load_host(&state, &host_id)?;
+    let password = resolve_password(&host)?;
+    let session = connection::connect(&host, Some(&password)).await?;
+    let target = crate::remote::docker::RemoteTarget::new(
+        &session.sftp,
+        &session.channel,
+        container.as_deref(),
+    )?;
+    let path = format!("{}/{filename}", remote_workspace_dir(&host.default_home()));
+    target.read_text_optional(&path).await
+}
+
+#[tauri::command]
+pub async fn write_remote_workspace_file(
+    state: State<'_, AppState>,
+    host_id: String,
+    filename: String,
+    content: String,
+    container: Option<String>,
+) -> Result<(), String> {
+    crate::commands::validate_filename(&filename)?;
+    let host = load_host(&state, &host_id)?;
+    let password = resolve_password(&host)?;
+    let session = connection::connect(&host, Some(&password)).await?;
+    let target = crate::remote::docker::RemoteTarget::new(
+        &session.sftp,
+        &session.channel,
+        container.as_deref(),
+    )?;
+    let path = format!("{}/{filename}", remote_workspace_dir(&host.default_home()));
+    target.write_text_atomic(&path, &content).await
+}
+
+#[tauri::command]
+pub async fn list_remote_daily_memory_files(
+    state: State<'_, AppState>,
+    host_id: String,
+    container: Option<String>,
+) -> Result<Vec<crate::commands::DailyMemoryFileInfo>, String> {
+    let host = load_host(&state, &host_id)?;
+    let password = resolve_password(&host)?;
+    let session = connection::connect(&host, Some(&password)).await?;
+    let target = crate::remote::docker::RemoteTarget::new(
+        &session.sftp,
+        &session.channel,
+        container.as_deref(),
+    )?;
+    let dir = format!("{}/memory", remote_workspace_dir(&host.default_home()));
+    let mut files = Vec::new();
+    let entries = match target.read_dir(&dir).await {
+        Ok(entries) => entries,
+        Err(_) => return Ok(Vec::new()),
+    };
+    for entry in entries {
+        if entry.is_dir || !entry.name.ends_with(".md") {
+            continue;
+        }
+        let content = target
+            .read_text_optional(&entry.path)
+            .await?
+            .unwrap_or_default();
+        let size = target.file_size(&entry.path).await.unwrap_or(0);
+        files.push(crate::commands::daily_memory_info(
+            entry.name, size, 0, &content,
+        ));
+    }
+    files.sort_by(|a, b| b.filename.cmp(&a.filename));
+    Ok(files)
+}
+
+#[tauri::command]
+pub async fn read_remote_daily_memory_file(
+    state: State<'_, AppState>,
+    host_id: String,
+    filename: String,
+    container: Option<String>,
+) -> Result<Option<String>, String> {
+    crate::commands::validate_daily_memory_filename(&filename)?;
+    let host = load_host(&state, &host_id)?;
+    let password = resolve_password(&host)?;
+    let session = connection::connect(&host, Some(&password)).await?;
+    let target = crate::remote::docker::RemoteTarget::new(
+        &session.sftp,
+        &session.channel,
+        container.as_deref(),
+    )?;
+    let path = format!(
+        "{}/memory/{filename}",
+        remote_workspace_dir(&host.default_home())
+    );
+    target.read_text_optional(&path).await
+}
+
+#[tauri::command]
+pub async fn write_remote_daily_memory_file(
+    state: State<'_, AppState>,
+    host_id: String,
+    filename: String,
+    content: String,
+    container: Option<String>,
+) -> Result<(), String> {
+    crate::commands::validate_daily_memory_filename(&filename)?;
+    let host = load_host(&state, &host_id)?;
+    let password = resolve_password(&host)?;
+    let session = connection::connect(&host, Some(&password)).await?;
+    let target = crate::remote::docker::RemoteTarget::new(
+        &session.sftp,
+        &session.channel,
+        container.as_deref(),
+    )?;
+    let path = format!(
+        "{}/memory/{filename}",
+        remote_workspace_dir(&host.default_home())
+    );
+    target.write_text_atomic(&path, &content).await
+}
+
+#[tauri::command]
+pub async fn delete_remote_daily_memory_file(
+    state: State<'_, AppState>,
+    host_id: String,
+    filename: String,
+    container: Option<String>,
+) -> Result<(), String> {
+    crate::commands::validate_daily_memory_filename(&filename)?;
+    let host = load_host(&state, &host_id)?;
+    let password = resolve_password(&host)?;
+    let session = connection::connect(&host, Some(&password)).await?;
+    let target = crate::remote::docker::RemoteTarget::new(
+        &session.sftp,
+        &session.channel,
+        container.as_deref(),
+    )?;
+    let path = format!(
+        "{}/memory/{filename}",
+        remote_workspace_dir(&host.default_home())
+    );
+    if target.exists(&path).await {
+        target.remove_file(&path).await?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn search_remote_daily_memory_files(
+    state: State<'_, AppState>,
+    host_id: String,
+    query: String,
+    container: Option<String>,
+) -> Result<Vec<crate::commands::DailyMemorySearchResult>, String> {
+    if query.is_empty() {
+        return Ok(Vec::new());
+    }
+    let host = load_host(&state, &host_id)?;
+    let password = resolve_password(&host)?;
+    let session = connection::connect(&host, Some(&password)).await?;
+    let target = crate::remote::docker::RemoteTarget::new(
+        &session.sftp,
+        &session.channel,
+        container.as_deref(),
+    )?;
+    let dir = format!("{}/memory", remote_workspace_dir(&host.default_home()));
+    let query_lower = query.to_lowercase();
+    let mut results = Vec::new();
+    let entries = match target.read_dir(&dir).await {
+        Ok(entries) => entries,
+        Err(_) => return Ok(Vec::new()),
+    };
+    for entry in entries {
+        if entry.is_dir || !entry.name.ends_with(".md") {
+            continue;
+        }
+        let content = target
+            .read_text_optional(&entry.path)
+            .await?
+            .unwrap_or_default();
+        let size = target.file_size(&entry.path).await.unwrap_or(0);
+        if let Some(result) =
+            crate::commands::daily_memory_search_result(entry.name, size, 0, &content, &query_lower)
+        {
+            results.push(result);
+        }
+    }
+    results.sort_by(|a, b| b.filename.cmp(&a.filename));
+    Ok(results)
 }

@@ -14,7 +14,7 @@ impl Database {
         let conn = lock_conn!(self.conn);
         let mut stmt = conn
             .prepare(
-                "SELECT id, name, host, port, username, auth_method, save_password, route_through_local_proxy, route_proxy_apps, route_proxy_container_apps, disabled, created_at, updated_at
+                "SELECT id, name, host, port, username, auth_method, save_password, route_through_local_proxy, route_proxy_apps, route_proxy_container_apps, disabled, created_at, updated_at, private_key_path
                  FROM remote_hosts
                  ORDER BY created_at IS NULL, created_at, id",
             )
@@ -36,7 +36,7 @@ impl Database {
         let conn = lock_conn!(self.conn);
         let mut stmt = conn
             .prepare(
-                "SELECT id, name, host, port, username, auth_method, save_password, route_through_local_proxy, route_proxy_apps, route_proxy_container_apps, disabled, created_at, updated_at
+                "SELECT id, name, host, port, username, auth_method, save_password, route_through_local_proxy, route_proxy_apps, route_proxy_container_apps, disabled, created_at, updated_at, private_key_path
                  FROM remote_hosts WHERE id = ?1",
             )
             .map_err(|e| AppError::Database(e.to_string()))?;
@@ -57,8 +57,8 @@ impl Database {
         };
         conn.execute(
             "INSERT OR REPLACE INTO remote_hosts
-             (id, name, host, port, username, auth_method, save_password, route_through_local_proxy, route_proxy_apps, route_proxy_container_apps, disabled, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+             (id, name, host, port, username, auth_method, save_password, route_through_local_proxy, route_proxy_apps, route_proxy_container_apps, disabled, created_at, updated_at, private_key_path)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
             params![
                 host.id,
                 host.name,
@@ -75,6 +75,7 @@ impl Database {
                 host.disabled,
                 host.created_at,
                 host.updated_at,
+                host.private_key_path,
             ],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
@@ -117,6 +118,7 @@ impl Database {
             disabled: row.get(10)?,
             created_at: row.get(11)?,
             updated_at: row.get(12)?,
+            private_key_path: row.get(13)?,
         })
     }
 }
@@ -133,6 +135,7 @@ mod tests {
             port: 22,
             username: "root".to_string(),
             auth_method: AuthMethod::Password,
+            private_key_path: None,
             save_password: true,
             route_through_local_proxy: false,
             route_proxy_apps: std::collections::HashMap::new(),

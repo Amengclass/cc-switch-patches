@@ -1,56 +1,8 @@
 {
-  "$comment": "加性改动的『锚点重放』规则。查找串必须在官方文件里唯一（用 expect 断言）；官方随便重构，只要锚点（函数名/字段名/固定语句）还在，改动就能贴上去。找不到 = 大声报错，绝不静默跳过。",
+  "$comment": "悬浮窗：复用托盘函数 + 托盘菜单项 + 最近活跃 app 记录。已按 v4.0.4 实际差异重建：官方已删除 emoji_for_utilization 等函数，不再为其保留锚点。",
   "file": "src-tauri/src/tray.rs",
   "topic": "悬浮窗：复用托盘格式化函数 + 托盘菜单项 + 最近活跃 app 记录",
   "edits": [
-    {
-      "why": "悬浮窗要复用托盘的格式化/统计函数，必须能跨模块访问",
-      "find": "fn emoji_for_utilization(",
-      "replace": "pub(crate) fn emoji_for_utilization(",
-      "expect": 1
-    },
-    {
-      "why": "同上",
-      "find": "fn format_subscription_summary(",
-      "replace": "pub(crate) fn format_subscription_summary(",
-      "expect": 1
-    },
-    {
-      "why": "同上",
-      "find": "fn labeled_tier_parts(",
-      "replace": "pub(crate) fn labeled_tier_parts(",
-      "expect": 1
-    },
-    {
-      "why": "同上",
-      "find": "fn tier_pct(",
-      "replace": "pub(crate) fn tier_pct(",
-      "expect": 1
-    },
-    {
-      "why": "同上",
-      "find": "fn format_script_summary(",
-      "replace": "pub(crate) fn format_script_summary(",
-      "expect": 1
-    },
-    {
-      "why": "同上",
-      "find": "fn provider_uses_official_subscription(",
-      "replace": "pub(crate) fn provider_uses_official_subscription(",
-      "expect": 1
-    },
-    {
-      "why": "同上",
-      "find": "fn format_usage_suffix(",
-      "replace": "pub(crate) fn format_usage_suffix(",
-      "expect": 1
-    },
-    {
-      "why": "托盘里要显示官方订阅模板类型，悬浮窗也要用",
-      "find": "const TEMPLATE_TYPE_OFFICIAL_SUBSCRIPTION: &str",
-      "replace": "pub(crate) const TEMPLATE_TYPE_OFFICIAL_SUBSCRIPTION: &str",
-      "expect": 1
-    },
     {
       "why": "托盘菜单要加『悬浮窗』一项，文案跟随托盘语言",
       "find": "    pub lightweight_mode: &'static str,\n",
@@ -59,8 +11,8 @@
     },
     {
       "why": "英文文案",
-      "find": "lightweight_mode: \"Lightweight Mode\",",
-      "replace": "lightweight_mode: \"Lightweight Mode\",\n                floating_window: \"Floating Widget\",",
+      "find": "lightweight_mode: \"Lightweight mode\",",
+      "replace": "lightweight_mode: \"Lightweight mode\",\n                floating_window: \"Floating Widget\",",
       "expect": 1
     },
     {
@@ -82,21 +34,51 @@
       "expect": 1
     },
     {
-      "why": "切换供应商/自动切换成功后，后端记录最近活跃 app（悬浮球跟随靠它）",
-      "find": "        if let Err(e) = app.emit(\"proxy-flags-changed\", event_data.clone()) {\n            log::error!(\"发射 proxy-flags-changed 事件失败: {e}\");\n        }\n",
-      "replace": "        if let Err(e) = app.emit(\"proxy-flags-changed\", event_data.clone()) {\n            log::error!(\"发射 proxy-flags-changed 事件失败: {e}\");\n        }\n        // 后端同步记录最近活跃 app（悬浮球跟随靠它）\n        crate::floating::record_active_app_sync(app, app_type_str);\n",
-      "expect": 2
+      "why": "悬浮窗面板复用同一套托盘文案（单一数据源）",
+      "find": "    fn current() -> Self {",
+      "replace": "    /// `pub(crate)`：悬浮窗面板复用同一套文案（单一数据源，两边不会各说各的）。\n    pub(crate) fn current() -> Self {",
+      "expect": 1
     },
     {
-      "why": "托盘菜单里插入『悬浮窗』开关项",
-      "find": "    menu_builder = menu_builder.item(&lightweight_item).separator();\n",
-      "replace": "    let floating_window_item = crate::floating::tray_menu_item(\n        app,\n        tray_texts.floating_window,\n        app_settings.enable_floating_window,\n    )?;\n\n    menu_builder = menu_builder\n        .item(&lightweight_item)\n        .item(&floating_window_item)\n        .separator();\n",
+      "why": "悬浮窗复用托盘的分档百分比函数",
+      "find": "fn tier_pct(data: &crate::provider::UsageData) -> Option<f64> {",
+      "replace": "/// 用量数据的已用百分比（悬浮窗复用；与托盘同一口径）。\npub(crate) fn tier_pct(data: &crate::provider::UsageData) -> Option<f64> {",
+      "expect": 1
+    },
+    {
+      "why": "悬浮球上色需要：按 TIER_GROUPS 分组后各组利用率的最大值",
+      "find": "/// 脚本结果里 `extra` 带的重置时间：Token Plan 是 JSON 的 `resetsAt`，官方订阅是原样的时间串。",
+      "replace": "/// 已知档位按组归并后，各组利用率的最大值（悬浮球上色用）。\n///\n/// 与 `grouped_tier_lines` 同一套 `TIER_GROUPS` 分组与「每组取最高」规则，\n/// 但不产文案 —— 悬浮窗只要一个数，不需要 `TrayTexts`。\n/// 没有已知档位时返回 `None`（调用方可回退到任意一条的利用率）。\npub(crate) fn worst_utilization(entries: &[(&str, f64)]) -> Option<f64> {\n    let mut worst: Option<f64> = None;\n    for &(_, names) in TIER_GROUPS {\n        let group_max = entries\n            .iter()\n            .filter(|(name, utilization)| names.contains(name) && utilization.is_finite())\n            .map(|(_, utilization)| *utilization)\n            .max_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));\n        if let Some(utilization) = group_max {\n            worst = Some(worst.map_or(utilization, |w| w.max(utilization)));\n        }\n    }\n    worst\n}\n\n/// 脚本结果里 `extra` 带的重置时间：Token Plan 是 JSON 的 `resetsAt`，官方订阅是原样的时间串。",
+      "expect": 1
+    },
+    {
+      "why": "悬浮窗要判断官方订阅",
+      "find": "fn provider_uses_official_subscription(provider: &Provider) -> bool {",
+      "replace": "pub(crate) fn provider_uses_official_subscription(provider: &Provider) -> bool {",
+      "expect": 1
+    },
+    {
+      "why": "悬浮球/面板需要与托盘同源的用量后缀文案",
+      "find": "// ─── 「需要路由」判定（镜像前端 `providerNeedsRouting`）──────────────────────────────",
+      "replace": "/// 悬浮窗用：当前 provider 的用量后缀（复用托盘同一套格式化 —— 单一数据源）。\n///\n/// 与托盘悬停/标题同源：`usage_view` 产出结构化额度视图，`quota_title` 取首行文案，\n/// 这里拼成 `\" · <文案>\"` 交给悬浮球 / 面板。没有可用数据时返回 `None`。\npub(crate) fn floating_usage_suffix(\n    usage_cache: &UsageCache,\n    app_type: &AppType,\n    provider: &Provider,\n    provider_id: &str,\n) -> Option<String> {\n    let texts = TrayTexts::current();\n    let view = usage_view(usage_cache, &texts, app_type, provider, provider_id)?;\n    let (title, _) = quota_title(&view)?;\n    if title.is_empty() {\n        return None;\n    }\n    Some(format!(\" · {title}\"))\n}\n\n// ─── 「需要路由」判定（镜像前端 `providerNeedsRouting`）──────────────────────────────",
+      "expect": 1
+    },
+    {
+      "why": "切换供应商/自动切换成功后，后端记录最近活跃 app（悬浮球跟随靠它）",
+      "find": "    if let Err(e) = app.emit(\"proxy-flags-changed\", event_data.clone()) {\n        log::error!(\"发射 proxy-flags-changed 事件失败: {e}\");\n    }\n    if let Err(e) = app.emit(\"provider-switched\", event_data) {",
+      "replace": "    if let Err(e) = app.emit(\"proxy-flags-changed\", event_data.clone()) {\n        log::error!(\"发射 proxy-flags-changed 事件失败: {e}\");\n    }\n    // 后端同步记录最近活跃 app（悬浮球跟随靠它）\n    crate::floating::record_active_app_sync(app, app_type.as_str());\n    if let Err(e) = app.emit(\"provider-switched\", event_data) {",
+      "expect": 1
+    },
+    {
+      "why": "托盘菜单里插入『悬浮窗』开关项（在消费端 entries 插入，保持官方 build_menu_model 及其测试不变）",
+      "find": "    let entries = build_menu_model(\n        texts,\n        &status,\n        &snapshots,\n        crate::lightweight::is_lightweight_mode(),\n        chrono::Local::now(),\n    );\n    Ok(TrayModel { entries, status })",
+      "replace": "    let mut entries = build_menu_model(\n        texts,\n        &status,\n        &snapshots,\n        crate::lightweight::is_lightweight_mode(),\n        chrono::Local::now(),\n    );\n    // 悬浮窗（加速球）开关：紧跟「轻量模式」一项。\n    //\n    // 在这里补而不是改 `build_menu_model` 的签名：那个函数被官方 7 个菜单顺序/\n    // 文案测试直接调用，加参数会牵动官方测试断言（等于改动官方被测行为）。\n    // 在消费端插入，官方菜单模型与测试都保持原样，我们只多一项。\n    let insert_at = entries\n        .iter()\n        .position(|entry| matches!(entry, TrayEntry::Check { id, .. } if id == \"lightweight_mode\"))\n        .map(|index| index + 1)\n        .unwrap_or(entries.len());\n    entries.insert(\n        insert_at,\n        TrayEntry::check(\n            \"floating_window\",\n            texts.floating_window,\n            true,\n            crate::settings::get_settings().enable_floating_window,\n        ),\n    );\n    Ok(TrayModel { entries, status })",
       "expect": 1
     },
     {
       "why": "托盘菜单事件：处理『悬浮窗』点击",
-      "find": "        \"quit\" => {\n",
-      "replace": "        \"floating_window\" => {\n            crate::floating::toggle_from_tray(app);\n            refresh_tray_menu(app);\n        }\n        \"quit\" => {\n",
+      "find": "        \"lightweight_mode\" => {\n",
+      "replace": "        \"floating_window\" => {\n            crate::floating::toggle_from_tray(app);\n            refresh_tray_menu(app);\n        }\n        \"lightweight_mode\" => {\n",
       "expect": 1
     }
   ]

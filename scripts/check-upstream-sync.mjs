@@ -170,7 +170,7 @@ for (const rel of ours) {
     console.log(`\n${rel}`);
     for (const l of leaked) {
       failed++;
-      console.log(`  ✗ 官方新增被丢掉: ${JSON.stringify(l.slice(0, 100))}`);
+      console.log(`  ✗ 官方新增被丢掉: ${JSON.stringify(l)}`);
     }
     if (missingOurs.length) {
       console.log(`  ⚠ 我方新增行未原样落到结果（可能被官方重构掉了，人工确认）: ${missingOurs.length}`);

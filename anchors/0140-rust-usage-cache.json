@@ -18,7 +18,7 @@
     {
       "why": "新增查询接口 script_queried_at（悬浮窗显示「刚刚 / x分钟前」）",
       "find": "    pub fn invalidate_script(&self, app_type: &AppType, provider_id: &str) {\n",
-      "replace": "    /// 脚本型用量结果的查询时间戳（毫秒）。配合 SubscriptionQuota.queried_at，\n    /// 供悬浮窗显示「刚刚 / x分钟前」。\n    pub fn script_queried_at(&self, app_type: &AppType, provider_id: &str) -> Option<i64> {\n        self.script_ts\n            .read()\n            .ok()\n            .and_then(|r| r.get(&(app_type.clone(), provider_id.to_string())).copied())\n    }\n\n    pub fn invalidate_script(&self, app_type: &AppType, provider_id: &str) {\n",
+      "replace": "    /// 脚本型用量结果的查询时间戳（毫秒）。配合 `SubscriptionQuota.queried_at`，\n    /// 供悬浮窗显示「刚刚 / x分钟前」。\n    pub fn script_queried_at(&self, app_type: &AppType, provider_id: &str) -> Option<i64> {\n        self.script_ts\n            .read()\n            .ok()\n            .and_then(|r| r.get(&(app_type.clone(), provider_id.to_string())).copied())\n    }\n\n    pub fn invalidate_script(&self, app_type: &AppType, provider_id: &str) {\n",
       "expect": 1
     },
     {

@@ -1,9 +1,9 @@
 {
   "upstream": "https://github.com/farion1231/cc-switch.git",
-  "base_tag": "v3.20.4",
-  "base_commit": "43e1d99084ed9b2f5dc252fd35c5adaf29d6876e",
-  "overlay_count": 61,
-  "patch_count": 11,
+  "base_tag": "v4.0.4",
+  "base_commit": "a29a4f3868e9c6ffc2212957cfa66a718642e344",
+  "overlay_count": 56,
+  "patch_count": 10,
   "structured": {
     "i18n_locales": [
       "zh",
@@ -16,5 +16,5 @@
   "deleted_files": [
     "session-manager.md"
   ],
-  "last_verified": "2026-09-12"
+  "last_verified": "2026-11-06"
 }

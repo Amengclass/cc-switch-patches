@@ -1,4 +1,11 @@
 {
+  "common": {
+    "localScope": "本机",
+    "remoteScope": "远端"
+  },
+  "provider": {
+    "importDisabledRemote": "远端目标下暂不支持从 live 导入"
+  },
   "settings": {
     "advanced": {
       "proxy": {
@@ -54,6 +61,10 @@
     "modifiedAppTitle": "CC Switch Magic",
     "modifiedVersionSuffix": "magic"
   },
+  "sessionManager": {
+    "whereLeadRemote": "CC Switch 从远端目标（所选主机/容器）的这些位置读取会话，~ 指远端用户的 home。",
+    "resumeCopiedRemote": "已复制恢复命令。请在远端主机/容器对应目录下运行（本机终端无法直接恢复远端会话）"
+  },
   "usage": {
     "multiplePlans": "{{count}} 个plan套餐"
   },
@@ -72,6 +83,26 @@
   },
   "proxyConfig": {
     "appTakeover": "本机应用接管启用"
+  },
+  "nav": {
+    "remote": "远程主机"
+  },
+  "routingSettings": {
+    "remoteRoute": "远端路由",
+    "remoteRouteDetail": "「{{target}}」经本机代理",
+    "remoteRouteContainerDetail": "「{{target}} 容器 {{container}}」经本机代理",
+    "exitingAll": "正在让所有应用回到直连，请稍候…"
+  },
+  "skillsPage": {
+    "addMenu": {
+      "import": "导入{{scope}}已有"
+    },
+    "emptyBody": "从发现里安装，或者导入{{scope}}已有的 Skill。",
+    "importCount": "导入{{scope}}已有（{{count}}）",
+    "import": {
+      "title": "导入{{scope}}已有的 Skill",
+      "helpTitle": "哪些算{{scope}}已有"
+    }
   },
   "remote": {
     "readingConfigPrefix": "正在读取 ",
@@ -93,13 +124,17 @@
     "editTitle": "编辑远程主机",
     "description": "通过 SSH 直连 Linux 服务器，统一管理远端各应用（Claude Code / Codex / Gemini / Grok Build / OpenCode 等）的配置与供应商切换，实现「一处配置、多机生效」。",
     "empty": "还没有远程主机",
-    "emptyHint": "点击「添加远程主机」，连接你的 GPU 服务器 / 云主机",
+    "emptyHint": "点击「添加远程主机」，连接你的服务器 / 云主机",
     "searchPlaceholder": "搜索主机名称 / 地址 / 用户名…",
     "searchAriaLabel": "搜索远程主机",
     "searchEmpty": "没有匹配的主机",
     "filterAll": "全部",
     "filterEnabled": "仅启用",
     "filterDisabled": "仅禁用",
+    "filterAriaLabel": "按状态筛选",
+    "count": "{{count}} 台主机",
+    "loading": "加载中…",
+    "listLabel": "远程主机",
     "loadError": "无法连接远端",
     "hostRequired": "主机地址不能为空",
     "usernameRequired": "用户名不能为空",
@@ -129,6 +164,15 @@
     "statusDisabled": "已禁用",
     "test": "测试连接",
     "testing": "测试中…",
+    "moreActions": "更多操作",
+    "testAll": "测试全部连接",
+    "testAllOk": "{{count}} 台主机全部连通正常",
+    "testAllPartial": "{{ok}}/{{total}} 台连通正常",
+    "testOkShort": "连通",
+    "testFailShort": "失败",
+    "loadingContainers": "加载容器…",
+    "groupServers": "服务器",
+    "groupContainers": "容器",
     "testingShort": "测试中…",
     "env": "环境变量",
     "envTitle": "冲突环境变量",
@@ -140,7 +184,7 @@
     "basicInfo": "基础信息",
     "nameLabel": "名称",
     "optional": "选填",
-    "namePlaceholder": "GPU 训练机 / 生产服务器…",
+    "namePlaceholder": "生产服务器 / 开发机…",
     "nameHint": "不填时将使用主机地址作为显示名",
     "connectionInfo": "连接信息",
     "hostLabel": "主机地址",
@@ -159,7 +203,24 @@
     "showPassword": "显示密码",
     "savePassword": "加密保存密码",
     "savePasswordHint": "密码经 Windows DPAPI 加密，绑定当前账户，用于一键连接 / 切换",
-    "formHint": "M1 阶段仅支持密码认证；密钥认证将在后续版本加入。",
+    "passwordStoredHint": "密码会以 Windows DPAPI 加密保存在本机（仅当前 Windows 账户可解密），用于一键连接 / 切换；配置密钥成功后会删除。",
+    "passphraseStoredHint": "口令会用 Windows DPAPI 加密保存在本机（仅当前 Windows 账户可解密），用于自动连接。",
+    "authMethodLabel": "认证方式",
+    "authPassword": "密码",
+    "authKey": "私钥",
+    "privateKeyPathLabel": "私钥文件路径",
+    "privateKeyPathPlaceholder": "例如 ~/.ssh/id_ed25519",
+    "privateKeyPathHint": "未检测到本机私钥，请手动填写路径；有口令时填在下方密码框",
+    "privateKeyPathDetected": "已自动填入本机私钥；可改成其他路径。有口令时填在下方，会加密保存",
+    "privateKeyRequired": "私钥认证需要填写私钥文件路径",
+    "passphraseLabel": "私钥口令（可选）",
+    "passphrasePlaceholder": "私钥无口令可留空",
+    "savePassphrase": "加密保存口令",
+    "formHint": "支持密码与私钥认证；私钥需位于本机，口令会加密保存。",
+    "bootstrapKey": "首次登录后自动配置密钥（推荐）",
+    "bootstrapKeyHint": "用刚填的密码登录一次：在本机生成密钥、把公钥装到远端，之后连接不再需要密码（对齐 VS Code 的首次体验）",
+    "keyConfigured": "已自动配置密钥登录，以后无需输入密码",
+    "keyConfigureFailed": "自动配置密钥失败，已保留密码登录",
     "routeThroughLocalProxy": "远端接管（宿主机）",
     "routeThroughLocalProxyHint": "作用于该宿主机：开启后，对应应用的供应商会经 SSH 反向隧道使用你本机正在运行的代理；未运行时会自动启动本机代理。容器目标请到容器下单独配置",
     "addDone": "已添加到远端 {{target}}",
@@ -192,6 +253,8 @@
   "batchApply": {
     "title": "批量应用",
     "noProvider": "（无可用 Provider）",
+    "source": "Provider 来源",
+    "sourceLocal": "本机",
     "host": "宿主机",
     "container": "容器",
     "searchPlaceholder": "搜索主机名称 / 地址 / 容器名…",

@@ -54,7 +54,7 @@ pub async fn apply_gemini_provider_settings(
         );
         env_map.insert(
             "GEMINI_API_KEY".to_string(),
-            crate::proxy::remote_route::remote_token_for(host_id),
+            crate::proxy::remote_route::remote_token_for(host_id, container),
         );
     }
     let env_text = crate::gemini_config::serialize_env_file(&env_map);

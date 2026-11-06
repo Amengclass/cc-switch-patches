@@ -2,10 +2,12 @@
 // compare-trees.mjs — 比对「参考树(我们的仓库)」与「组装树(apply 产物)」
 //   字节比对为主；对 JSON / Cargo.toml 这类结构化文件做「语义比对」，
 //   以区分「真差异」与「仅格式/顺序差异」。
+//   行尾 CRLF/LF 差异不算内容差异；base.json 的 deleted_files 视为有意删除。
 // 用法: node compare-trees.mjs <参考目录> <目标目录> [--quiet]
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
+import { fileURLToPath } from "node:url";
 
 const [, , refDir, tgtDir, ...flags] = process.argv;
 if (!refDir || !tgtDir) {
@@ -28,7 +30,12 @@ function walk(root, base = "") {
   return out;
 }
 
-const sha = (p) => crypto.createHash("md5").update(fs.readFileSync(p)).digest("hex");
+// 行尾（CRLF/LF）差异不算内容差异：Windows 检出与参考树经常不同
+const sha = (p) =>
+  crypto
+    .createHash("md5")
+    .update(fs.readFileSync(p, "utf8").replace(/\r\n/g, "\n"))
+    .digest("hex");
 const deepEq = (x, y) => {
   if (x === y) return true;
   if (typeof x !== typeof y) return false;
@@ -73,7 +80,14 @@ function semanticallyEqual(rel, a, b) {
 const refFiles = new Set(walk(refDir));
 const tgtFiles = new Set(walk(tgtDir));
 
-const onlyRef = [...refFiles].filter((f) => !tgtFiles.has(f)).sort();
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+let intentionalDeletes = new Set();
+try {
+  const base = JSON.parse(fs.readFileSync(path.resolve(__dirname, "..", "base.json"), "utf8"));
+  intentionalDeletes = new Set(base.deleted_files || []);
+} catch {}
+
+const onlyRef = [...refFiles].filter((f) => !tgtFiles.has(f) && !intentionalDeletes.has(f)).sort();
 const onlyTgt = [...tgtFiles].filter((f) => !refFiles.has(f)).sort();
 
 const byteDiff = [];

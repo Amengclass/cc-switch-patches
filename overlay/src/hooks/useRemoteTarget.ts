@@ -41,6 +41,8 @@ export interface RemoteTargetBundle {
   setBatchApplyApp: (app: string) => void;
   servers: RemoteHost[];
   setServers: React.Dispatch<React.SetStateAction<RemoteHost[]>>;
+  /** 重新拉取主机列表（过滤禁用）；目标选择器下拉打开时调用，保证列表最新 */
+  refreshServers: () => Promise<void>;
   remoteTargetId: string;
   setRemoteTargetId: React.Dispatch<React.SetStateAction<string>>;
   remoteCurrentProviderId: string | null;
@@ -228,6 +230,24 @@ export function useRemoteTarget({
       .catch(() => setLocalInstalled(null));
   }, [sharedFeatureApp]);
 
+  // 拉取主机列表（过滤掉禁用的）。抽成回调，供两处调用：
+  // 1) 切视图时自动刷新；2) 目标选择器下拉打开时刷新 —— 这样在远程主机页
+  //    禁用/删除某台后，即使没离开当前视图，下拉里也立刻看不到它。
+  const refreshServers = useCallback(async () => {
+    try {
+      const list = await listRemoteHosts();
+      // 禁用的主机从目标选择/操作中排除（不显示、不可选、探活跳过）；
+      // 恢复需到远程主机管理页「启用」。
+      const enabled = list.filter((s) => !s.disabled);
+      setServers(enabled);
+      setRemoteTargetId((prev) =>
+        prev && !enabled.some((s) => s.id === prev) ? "" : prev,
+      );
+    } catch {
+      // 拉取失败保持原列表
+    }
+  }, []);
+
   useEffect(() => {
     // 远端功能关闭：不加载远端主机列表（还原原生，不与任何主机建连）
     if (!remoteFeatureEnabled) {
@@ -238,21 +258,11 @@ export function useRemoteTarget({
       setHostsOnline({});
       return;
     }
-    listRemoteHosts()
-      .then((list) => {
-        // 禁用的主机从目标选择/操作中排除（不显示、不可选、探活跳过）；
-        // 恢复需到远程主机管理页「启用」。
-        const enabled = list.filter((s) => !s.disabled);
-        setServers(enabled);
-        setRemoteTargetId((prev) =>
-          prev && !enabled.some((s) => s.id === prev) ? "" : prev,
-        );
-      })
-      .catch(() => {});
+    void refreshServers();
     // 注：切回主界面时刷新远端当前供应商 + 安装状态的工作，由下方依赖
     // `[remoteTargetId, remoteContainerId]` 的 effect 统一负责（它拿到最新容器）。
     // 这里不重复刷新，避免两个 effect 用不同 container 并行覆盖 setRemoteInstalled。
-  }, [currentView, remoteFeatureEnabled]);
+  }, [currentView, remoteFeatureEnabled, refreshServers]);
 
   // 选中服务器时：读取远端当前生效的供应商（按 base_url 匹配本地供应商）
   // 并检测远端 Claude Code 安装状态（用于主面板横幅徽标）。
@@ -274,13 +284,10 @@ export function useRemoteTarget({
     }
     let active = true;
     const container = remoteContainerId || undefined;
-    getRemoteCurrentProvider(remoteTargetId, sharedFeatureApp, container)
-      .then((id) => {
-        if (active) setRemoteCurrentProviderId(id);
-      })
-      .catch(() => {
-        if (active) setRemoteCurrentProviderId(null);
-      });
+    // 注：这里**不再**单独调 getRemoteCurrentProvider —— 供应商页的
+    // useRemoteProvidersQuery 已经带回 currentProviderId（同一份数据），
+    // 额外一次 SSH 往返纯属浪费（切目标时的延迟来源之一）。remoteCurrentProviderId
+    // 状态保留（下方 refreshInstallStatus 仍写），但切目标的这条快路径省掉一次连接。
     checkRemoteCliInstalled(remoteTargetId, sharedFeatureApp, container)
       .then((s) => {
         if (active) setRemoteInstalled(s);
@@ -387,6 +394,7 @@ export function useRemoteTarget({
     setBatchApplyApp,
     servers,
     setServers,
+    refreshServers,
     remoteTargetId,
     setRemoteTargetId,
     remoteCurrentProviderId,

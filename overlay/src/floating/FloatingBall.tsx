@@ -167,23 +167,36 @@ async function loadSummary(
   let usageUnit = "";
   let usageLines: string[] | null = null;
   let usageLineLevels: UsageLevel[] | null = null;
+  // 口径与主窗口用量面板 / 托盘一致：**一律写「剩余」**。
+  // 官方 v4.0.4 前端 `components/quota/quotaRules.ts` 的约定原文是
+  // 「额度的文字和颜色一律写剩余」；订阅型档位的 used 是利用率，剩余 = 100 - used；
+  // 余额型（CNY/GB）的 remaining 本身就是剩余金额。
+  const leftPct = (used: number | null | undefined) =>
+    Math.max(0, Math.round(100 - (used ?? 0)));
   if (entry.usage && entry.usage.length > 1) {
     usageLines = entry.usage.map((u) => {
-      const r = u.used ?? 0;
-      return `${planAbbr(u.planName)}${Math.round(r)}%`;
+      return `${planAbbr(u.planName)}${leftPct(u.used)}%`;
     });
     usageLineLevels = entry.usage.map((u) => usageLevel(u));
     usageValue = "";
   } else {
     const d = entry.usage?.[0];
-    // 余额型套餐（CNY/GB）只填 remaining，订阅型只填 used；
-    // 取有值者，避免「剩余 -2.97 CNY」被显示成未设置
-    const val = d ? (d.used ?? d.remaining) : null;
-    if (val != null && isFinite(val)) {
-      usageValue = val.toFixed(2);
-      usageUnit = d?.unit ?? "";
+    // 「档位型」的判定靠档名（planName）：只有订阅/Token Plan 的档位才带档名，
+    // 且这种的 used 是利用率百分比。脚本型（Copilot / coding plan / 自定义脚本）
+    // 与余额型的 used/remaining 是**带单位的量值**（tokens / CNY），不能按 100-used 换算。
+    const isTier = d?.planName != null && d.used != null && isFinite(d.used);
+    if (isTier) {
+      usageValue = String(leftPct(d.used));
+      usageUnit = "%";
     } else {
-      usageValue = entry.usageSummary ?? t("floating.notSet");
+      // 脚本型 / 余额型：沿用原口径（取有值者，带自己的单位）
+      const val = d ? (d.used ?? d.remaining) : null;
+      if (val != null && isFinite(val)) {
+        usageValue = val.toFixed(2);
+        usageUnit = d?.unit ?? "";
+      } else {
+        usageValue = entry.usageSummary ?? t("floating.notSet");
+      }
     }
   }
 

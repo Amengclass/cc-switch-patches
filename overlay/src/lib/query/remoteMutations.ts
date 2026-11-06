@@ -1,13 +1,22 @@
 import {
-  keepPreviousData,
   useMutation,
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
-import { getRemoteProviders, switchRemoteProvider } from "@/lib/api/remote";
+import {
+  addRemoteProvider,
+  deleteRemoteProvider,
+  getRemoteProviders,
+  switchRemoteProvider,
+  updateRemoteProvider,
+  updateRemoteProviderSortOrder,
+} from "@/lib/api/remote";
+import type { RemoteProvidersView } from "@/lib/api/remote";
 import { extractErrorMessage } from "@/utils/errorUtils";
+import type { Provider } from "@/types";
+import type { ProviderEditorSave, ProviderSortUpdate } from "@/lib/api/providers";
 
 export interface SwitchRemoteProviderVars {
   hostId: string;
@@ -15,6 +24,35 @@ export interface SwitchRemoteProviderVars {
   app: string;
   container?: string;
 }
+
+/** 远端供应商写操作的公共变量：目标 + app + container */
+interface RemoteProviderBaseVars {
+  hostId: string;
+  app: string;
+  container?: string;
+}
+
+/** 远端 providers 视图缓存 key（与 useRemoteProvidersQuery 逐字一致） */
+const remoteProvidersKey = (
+  hostId: string,
+  container: string | undefined,
+  app: string,
+) => ["remoteProviders", hostId, container || "__host__", app] as const;
+
+/**
+ * 把写操作返回的最新视图直接写入缓存（免第二次 SSH 往返）。
+ * 与 useRemoteProvidersQuery 的 keepPreviousData 配合，UI 立即刷新不闪骨架屏。
+ */
+const setRemoteProvidersData = (
+  queryClient: ReturnType<typeof useQueryClient>,
+  vars: RemoteProviderBaseVars,
+  view: RemoteProvidersView,
+) => {
+  queryClient.setQueryData(
+    remoteProvidersKey(vars.hostId, vars.container, vars.app),
+    view,
+  );
+};
 
 /**
  * 远端供应商面板数据源 query（per-target 独立）：
@@ -31,9 +69,21 @@ export const useRemoteProvidersQuery = (
 ) => {
   return useQuery({
     queryKey: ["remoteProviders", hostId, container || "__host__", app],
-    // 与本机 useProvidersQuery 一致：refetch 时保留旧数据（keepPreviousData），
-    // 避免切换供应商 / 刷新时闪「正在读取」骨架屏，只显示轻量刷新指示。
-    placeholderData: keepPreviousData,
+    // 与本机 useProvidersQuery 一致：refetch 时保留旧数据，避免切换供应商 / 刷新时
+    // 闪「正在读取」骨架屏。**但只保留「同一目标」的旧数据**：切目标（host/container
+    // 变化）时新 key 无数据，若照搬旧数据会把 A 目标器的列表显示在 B 目标器上，
+    // 直到 B 的 SSH 请求回来才替换 —— 这正是「切目标后先显示旧目标内容、过一会才刷新」
+    // 的根因。这里比对 previousQuery 的 key，目标不同就返回 undefined（走 loading）。
+    placeholderData: (previousData, previousQuery) => {
+      const prevKey = previousQuery?.queryKey;
+      const sameTarget =
+        Array.isArray(prevKey) &&
+        prevKey[0] === "remoteProviders" &&
+        prevKey[1] === hostId &&
+        prevKey[2] === (container || "__host__") &&
+        prevKey[3] === app;
+      return sameTarget ? previousData : undefined;
+    },
     queryFn: () =>
       getRemoteProviders(hostId!, app!, container, autoImportDefault ?? true),
     enabled: Boolean(hostId && app && !knownOffline),
@@ -140,6 +190,166 @@ export const useSwitchRemoteProviderMutation = (
       toast.error(t("remote.switchError", { defaultValue: "远程切换失败" }), {
         description: detail,
         closeButton: true,
+      });
+    },
+  });
+};
+
+/**
+ * 在远端目标添加供应商 —— 与本机 `useAddProviderMutation` 同构：
+ * 写该目标 SSOT（addToLive=true 时同时写 live），成功 toast + 直接回写视图缓存。
+ * 后端返回最新视图，省一次 SSH 往返。
+ */
+export const useAddRemoteProviderMutation = () => {
+  const queryClient = useQueryClient();
+  const { t } = useTranslation();
+
+  return useMutation({
+    mutationFn: async ({
+      hostId,
+      app,
+      provider,
+      addToLive,
+      container,
+    }: RemoteProviderBaseVars & {
+      provider: Provider;
+      addToLive?: boolean;
+    }) => {
+      const view = await addRemoteProvider(
+        hostId,
+        app,
+        provider,
+        addToLive,
+        container,
+      );
+      return { view, vars: { hostId, app, container } };
+    },
+    onSuccess: ({ view, vars }) => {
+      setRemoteProvidersData(queryClient, vars, view);
+      toast.success(
+        t("notifications.providerAdded", { defaultValue: "供应商已添加" }),
+        { closeButton: true },
+      );
+    },
+    onError: (error: Error) => {
+      const detail = extractErrorMessage(error) || t("common.unknown");
+      toast.error(
+        t("notifications.addFailed", {
+          defaultValue: "添加供应商失败: {{error}}",
+          error: detail,
+        }),
+      );
+    },
+  });
+};
+
+/**
+ * 编辑远端目标的供应商 —— 更新 SSOT（在生效位置时后端重写远端 live）。
+ * 成功 toast + 直接回写视图缓存。
+ */
+export const useUpdateRemoteProviderMutation = () => {
+  const queryClient = useQueryClient();
+  const { t } = useTranslation();
+
+  return useMutation({
+    mutationFn: async ({
+      hostId,
+      app,
+      provider,
+      originalId,
+      container,
+      editorSave,
+    }: RemoteProviderBaseVars & {
+      provider: Provider;
+      originalId?: string;
+      editorSave?: ProviderEditorSave;
+    }) => {
+      const view = await updateRemoteProvider(
+        hostId,
+        app,
+        provider,
+        originalId,
+        container,
+        editorSave,
+      );
+      return { view, vars: { hostId, app, container } };
+    },
+    onSuccess: ({ view, vars }) => {
+      setRemoteProvidersData(queryClient, vars, view);
+      toast.success(
+        t("notifications.updateSuccess", { defaultValue: "供应商更新成功" }),
+        { closeButton: true },
+      );
+    },
+    onError: (error: Error) => {
+      const detail = extractErrorMessage(error) || t("common.unknown");
+      toast.error(
+        t("notifications.updateFailed", {
+          defaultValue: "更新供应商失败: {{error}}",
+          error: detail,
+        }),
+      );
+    },
+  });
+};
+
+/**
+ * 删除远端目标的供应商 —— SSOT 移除（additive 且已写 live 时后端同时移除 live）。
+ * 成功 toast + 直接回写视图缓存。
+ */
+export const useDeleteRemoteProviderMutation = () => {
+  const queryClient = useQueryClient();
+  const { t } = useTranslation();
+
+  return useMutation({
+    mutationFn: async ({
+      hostId,
+      app,
+      providerId,
+      container,
+    }: RemoteProviderBaseVars & { providerId: string }) => {
+      const view = await deleteRemoteProvider(hostId, app, providerId, container);
+      return { view, vars: { hostId, app, container } };
+    },
+    onSuccess: ({ view, vars }) => {
+      setRemoteProvidersData(queryClient, vars, view);
+      toast.success(
+        t("notifications.deleteSuccess", { defaultValue: "供应商已删除" }),
+        { closeButton: true },
+      );
+    },
+    onError: (error: Error) => {
+      const detail = extractErrorMessage(error) || t("common.unknown");
+      toast.error(
+        t("notifications.deleteFailed", {
+          defaultValue: "删除供应商失败: {{error}}",
+          error: detail,
+        }),
+      );
+    },
+  });
+};
+
+/**
+ * 更新远端目标供应商的排序索引（拖拽 / 复制时重排）。
+ * 后端返回 boolean，成功后 invalidate 视图缓存重新拉取。
+ */
+export const useUpdateRemoteProviderSortOrder = () => {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({
+      hostId,
+      app,
+      updates,
+      container,
+    }: RemoteProviderBaseVars & { updates: ProviderSortUpdate[] }) => {
+      await updateRemoteProviderSortOrder(hostId, app, updates, container);
+      return { hostId, app, container };
+    },
+    onSuccess: ({ hostId, app, container }) => {
+      void queryClient.invalidateQueries({
+        queryKey: remoteProvidersKey(hostId, container, app),
       });
     },
   });

@@ -4,7 +4,6 @@ import {
   AlertTriangle,
   CheckCircle2,
   ChevronRight,
-  Container,
   Loader2,
   Send,
   Server,
@@ -15,6 +14,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { FullScreenPanel } from "@/components/common/FullScreenPanel";
 import { ManagementListSearch } from "@/components/common/ManagementListSearch";
 import { ProviderIcon } from "@/components/ProviderIcon";
+import { DockerIcon } from "@/components/icons/DockerIcon";
 import { cn } from "@/lib/utils";
 import type { RemoteHost } from "@/types/remote";
 import type { Provider } from "@/types";
@@ -23,13 +23,22 @@ import {
   listDockerContainers,
   type BroadcastSwitchResult,
 } from "@/lib/api/remote";
+import { useRemoteProvidersQuery } from "@/lib/query/remoteMutations";
 import { listen } from "@tauri-apps/api/event";
+// 官方 v4.0.4 的 popover 只导出 Popover / PopoverTrigger / PopoverContent /
+// PopoverAnchor 四个（没有 PopoverArrow），箭头是纯装饰，去掉。
 import {
   Popover,
   PopoverContent,
   PopoverTrigger,
-  PopoverArrow,
 } from "@/components/ui/popover";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 interface Target {
   hostId: string;
@@ -123,12 +132,37 @@ export function BatchApplyPanel({
   const [providerId, setProviderId] = useState<string>("");
   const [results, setResults] = useState<ResultRow[]>([]);
   const [running, setRunning] = useState(false);
+  // Provider 池来源：本机（默认）/ 某台宿主机 / 某台宿主机的容器。
+  const [sourceKey, setSourceKey] = useState<string>("local");
 
-  const providerList = useMemo(() => Object.values(providers), [providers]);
+  const source = useMemo(() => {
+    if (sourceKey === "local") return null;
+    const [hostId, container] = splitKey(sourceKey);
+    return { hostId, container: container || undefined };
+  }, [sourceKey]);
+  const remoteSourceQuery = useRemoteProvidersQuery(
+    source?.hostId,
+    source?.container,
+    app,
+  );
+
+  // 有效供应商池：本机 DB 或所选来源的 SSOT
+  const effectiveProviders = source
+    ? (remoteSourceQuery.data?.providers ?? {})
+    : providers;
+  const effectiveDefaultProviderId = source
+    ? (remoteSourceQuery.data?.currentProviderId ?? undefined)
+    : defaultProviderId;
+
+  const providerList = useMemo(
+    () => Object.values(effectiveProviders),
+    [effectiveProviders],
+  );
 
   useEffect(() => {
     if (open) {
       setProviderId(defaultProviderId ?? providerList[0]?.id ?? "");
+      setSourceKey("local");
       setSelected(new Set());
       setExpanded(new Set());
       setContainersMap({});
@@ -138,6 +172,14 @@ export function BatchApplyPanel({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
+
+  // 面板内切 app / 切 Provider 池来源后 providers 变了：原选中的供应商不在新列表里 →
+  // 回退到该来源的默认 / 首个（否则新的 Select 会显示占位、批量应用按钮置灰）。
+  useEffect(() => {
+    if (!open) return;
+    if (providerId && providerList.some((p) => p.id === providerId)) return;
+    setProviderId(effectiveDefaultProviderId ?? providerList[0]?.id ?? "");
+  }, [open, providerId, providerList, effectiveDefaultProviderId]);
 
   // 打开面板即批量拉取所有主机的容器列表：每台行尾常驻显示「N 容器」，无需逐个展开。
   // 拉取失败记录到 hostErrors（区分 SSH 挂 / docker 挂），供展开区与主行提示。
@@ -300,6 +342,8 @@ export function BatchApplyPanel({
         })),
         providerId,
         app,
+        source?.hostId,
+        source?.container,
       );
       // 权威结果兜底：以 invoke 返回为准（即使事件漏了也能对齐最终态）
       setResults(results.map(fromResult));
@@ -320,6 +364,8 @@ export function BatchApplyPanel({
   return (
     <FullScreenPanel
       isOpen={open}
+      // 大面积全屏页淡入会让底层内容透出来（像「页面抖一下」），这里直接切换
+      motionPreset="none"
       title={t("batchApply.title")}
       onClose={() => onOpenChange(false)}
       contentClassName="px-6 py-6 w-full flex flex-col gap-4"
@@ -334,7 +380,7 @@ export function BatchApplyPanel({
                 <PopoverTrigger asChild>
                   <button
                     type="button"
-                    className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-primary/20 bg-primary/5 px-2 py-1 text-sm font-medium text-foreground hover:bg-primary/10 transition-colors"
+                    className="inline-flex shrink-0 items-center gap-1.5 rounded-control border border-border bg-subtle px-2 py-1 text-body font-medium text-fg-1 transition-colors hover:bg-selected"
                   >
                     {appIconName ? (
                       <ProviderIcon
@@ -347,7 +393,6 @@ export function BatchApplyPanel({
                   </button>
                 </PopoverTrigger>
                 <PopoverContent align="start" className="w-auto min-w-0 p-1.5" sideOffset={6}>
-                  <PopoverArrow className="fill-popover" />
                   <div className="flex flex-wrap gap-1">
                     {availableApps.map((a) => (
                       <button
@@ -360,10 +405,10 @@ export function BatchApplyPanel({
                           onAppChange?.(a);
                         }}
                         className={cn(
-                          "rounded-md px-2 py-1.5 text-left text-sm transition-colors whitespace-nowrap",
+                          "rounded-control px-2 py-1.5 text-left text-body transition-colors whitespace-nowrap",
                           a === app
-                            ? "bg-primary/10 text-primary font-medium"
-                            : "text-foreground hover:bg-muted",
+                            ? "bg-selected text-fg-1 font-medium"
+                            : "text-fg-1 hover:bg-subtle",
                         )}
                       >
                         {t(`apps.${a}`, { defaultValue: a })}
@@ -373,7 +418,7 @@ export function BatchApplyPanel({
                 </PopoverContent>
               </Popover>
             ) : (
-              <span className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-primary/20 bg-primary/5 px-2 py-1 text-sm font-medium text-foreground">
+              <span className="inline-flex shrink-0 items-center gap-1.5 rounded-control border border-border bg-subtle px-2 py-1 text-body font-medium text-fg-1">
                 {appIconName ? (
                   <ProviderIcon
                     icon={appIconName}
@@ -384,23 +429,50 @@ export function BatchApplyPanel({
                 <span className="whitespace-nowrap">{appDisplayName}</span>
               </span>
             )}
-            <span className="whitespace-nowrap text-sm text-muted-foreground">
+            <span className="whitespace-nowrap text-body text-fg-2">
+              {t("batchApply.source")}
+            </span>
+            <Select value={sourceKey} onValueChange={setSourceKey}>
+              <SelectTrigger className="h-9 max-w-[200px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="local">
+                  {t("batchApply.sourceLocal")}
+                </SelectItem>
+                {hosts.flatMap((h) => [
+                  <SelectItem key={h.id} value={h.id}>
+                    {h.name}
+                  </SelectItem>,
+                  ...(containersMap[h.id] ?? []).map((c) => (
+                    <SelectItem key={contKey(h.id, c)} value={contKey(h.id, c)}>
+                      {h.name} / {c}
+                    </SelectItem>
+                  )),
+                ])}
+              </SelectContent>
+            </Select>
+            <span className="whitespace-nowrap text-body text-fg-2">
               {t("batchApply.forApp")}
             </span>
-            <select
-              value={providerId}
-              onChange={(e) => setProviderId(e.target.value)}
-              className="h-9 max-w-[200px] rounded-lg border border-border bg-background px-2.5 text-sm font-medium text-foreground outline-none focus:ring-1 focus:ring-primary/40"
+            <Select
+              value={providerId || undefined}
+              onValueChange={setProviderId}
+              disabled={providerList.length === 0}
             >
-              {providerList.length === 0 && (
-                <option value="">{t("batchApply.noProvider")}</option>
-              )}
-              {providerList.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))}
-            </select>
+              <SelectTrigger className="h-9 max-w-[220px]">
+                <SelectValue
+                  placeholder={t("batchApply.noProvider")}
+                />
+              </SelectTrigger>
+              <SelectContent>
+                {providerList.map((p) => (
+                  <SelectItem key={p.id} value={p.id}>
+                    {p.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
           {/* 底部固定条·右侧：取消 / 批量应用 */}
           <div className="ml-auto flex items-center gap-2">
@@ -432,9 +504,9 @@ export function BatchApplyPanel({
       }
     >
       {/* ① 选落点（占满剩余空间，内部列表滚动，底部固定条始终可见） */}
-      <div className="glass flex min-h-0 flex-1 flex-col rounded-xl p-6 border border-white/10 space-y-6">
+      <div className="flex min-h-0 flex-1 flex-col rounded-panel border border-border bg-surface p-5 space-y-5">
         <div className="flex items-center justify-between gap-2">
-          <h4 className="text-xs font-semibold uppercase tracking-wider text-foreground/60">
+          <h4 className="text-caption font-semibold uppercase tracking-wider text-fg-3">
             {t("batchApply.selectTargetsHint")}
           </h4>
           {/* 已选浮层：点开悬浮列表查看所选落点，不占布局空间 */}
@@ -443,18 +515,18 @@ export function BatchApplyPanel({
               <PopoverTrigger asChild>
                 <button
                   type="button"
-                  className="inline-flex shrink-0 items-center gap-1 text-xs font-medium text-foreground/70 hover:text-foreground"
+                  className="inline-flex shrink-0 items-center gap-1 text-caption font-medium text-fg-2 hover:text-fg-1"
                 >
                   {t("batchApply.selected")}{" "}
-                  <span className="font-semibold text-primary">
+                  <span className="font-semibold text-action-text">
                     {selectedTargets.length}
                   </span>
-                  <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
+                  <ChevronRight className="h-3.5 w-3.5 text-fg-3" />
                 </button>
               </PopoverTrigger>
               <PopoverContent align="end" className="w-80 p-0">
-                <div className="flex items-center justify-between border-b border-border/60 px-3 py-2">
-                  <span className="text-xs font-semibold text-foreground/80">
+                <div className="flex items-center justify-between border-b border-border px-3 py-2">
+                  <span className="text-caption font-semibold text-fg-1">
                     {t("batchApply.selectedCount", {
                       count: selectedTargets.length,
                     })}
@@ -462,7 +534,7 @@ export function BatchApplyPanel({
                   <button
                     type="button"
                     onClick={clearSelected}
-                    className="text-xs text-muted-foreground hover:text-foreground"
+                    className="text-caption text-fg-3 hover:text-fg-1"
                   >
                     {t("batchApply.clear")}
                   </button>
@@ -478,24 +550,24 @@ export function BatchApplyPanel({
                               ? contKey(target.hostId, target.container)
                               : target.hostId
                           }
-                          className="flex items-center gap-2 rounded-md border border-border/40 px-2 py-1.5 text-sm"
+                          className="flex items-center gap-2 rounded-control border border-border px-2 py-1.5 text-body"
                         >
                           {isContainer ? (
-                            <Container className="h-4 w-4 shrink-0 text-muted-foreground" />
+                            <DockerIcon className="h-4 w-4 text-fg-3" />
                           ) : (
-                            <Server className="h-4 w-4 shrink-0 text-primary" />
+                            <Server className="h-4 w-4 shrink-0 text-action-text" />
                           )}
-                          <span className="min-w-0 flex-1 truncate">
+                          <span className="min-w-0 flex-1 truncate text-fg-1">
                             {target.container
                               ? target.container
                               : target.hostName}
                           </span>
                           <span
                             className={cn(
-                              "shrink-0 rounded px-1.5 py-0.5 text-xs font-medium",
+                              "shrink-0 rounded-control px-1.5 py-0.5 text-badge font-medium",
                               isContainer
-                                ? "bg-muted/50 text-muted-foreground"
-                                : "bg-primary/15 text-primary",
+                                ? "bg-subtle text-fg-2"
+                                : "bg-action-soft text-action-text",
                             )}
                           >
                             {isContainer
@@ -524,7 +596,7 @@ export function BatchApplyPanel({
 
         <div className="min-h-0 flex-1 space-y-1 overflow-y-auto pr-1 [scrollbar-width:thin] [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar]:block [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-border">
           {filteredHosts.length === 0 && (
-            <div className="py-8 text-center text-sm text-muted-foreground">
+            <div className="py-8 text-center text-body text-fg-3">
               {hosts.length === 0
                 ? t("batchApply.emptyHosts")
                 : t("batchApply.noMatch")}
@@ -541,10 +613,10 @@ export function BatchApplyPanel({
               <div
                 key={host.id}
                 className={cn(
-                  "rounded-md border transition-colors",
+                  "rounded-control border transition-colors",
                   fullyChecked
-                    ? "border-primary/50 bg-primary/5"
-                    : "border-border/40",
+                    ? "border-border-strong bg-subtle"
+                    : "border-border",
                 )}
               >
                 <div className="flex items-center gap-2 px-2 py-2">
@@ -559,7 +631,7 @@ export function BatchApplyPanel({
                   <Server
                     className={cn(
                       "h-4 w-4 shrink-0",
-                      sshDown ? "text-red-500/70" : "text-muted-foreground",
+                      sshDown ? "text-danger" : "text-fg-3",
                     )}
                   />
                   <button
@@ -567,74 +639,74 @@ export function BatchApplyPanel({
                     disabled={hostLoading}
                     onClick={() => void toggleExpand(host)}
                     className={cn(
-                      "flex min-w-0 flex-1 items-center gap-1 text-left text-sm font-medium",
+                      "flex min-w-0 flex-1 items-center gap-1 text-left",
                       hostLoading && "cursor-not-allowed",
                     )}
                   >
                     <ChevronRight
                       className={cn(
-                        "h-3.5 w-3.5 shrink-0 text-muted-foreground/60 transition-transform ml-0.5",
+                        "h-3.5 w-3.5 shrink-0 text-fg-3 transition-transform ml-0.5",
                         expanded.has(host.id) && "rotate-90",
                       )}
                     />
                     <div className="flex flex-col min-w-0">
-                      <span className="truncate text-sm">{host.name}</span>
-                      <span className="text-[11px] text-muted-foreground/60 truncate">{host.host}</span>
+                      <span className="truncate text-strong text-fg-1">{host.name}</span>
+                      <span className="text-badge text-fg-3 truncate">{host.host}</span>
                     </div>
                   </button>
                   {cs != null && cs.length > 0 && (
-                    <span className="shrink-0 rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary">
+                    <span className="shrink-0 rounded-control bg-subtle px-2 py-0.5 text-badge font-medium text-fg-2">
                       {t("batchApply.containerCount", { count: cs.length })}
                     </span>
                   )}
                   {cs == null && (
-                    <span className="ml-auto inline-flex shrink-0 items-center gap-1 text-xs text-muted-foreground/70">
+                    <span className="ml-auto inline-flex shrink-0 items-center gap-1 text-caption text-fg-3">
                       <Loader2 className="h-3.5 w-3.5 animate-spin" />
                       {t("batchApply.probing")}
                     </span>
                   )}
                   {sshDown && (
-                    <span className="ml-auto inline-flex shrink-0 items-center gap-1 text-xs text-red-500">
+                    <span className="ml-auto inline-flex shrink-0 items-center gap-1 text-caption text-danger">
                       <XCircle className="h-3.5 w-3.5" />
                       {t("batchApply.cannotConnect")}
                     </span>
                   )}
                   {!sshDown && hostErrors[host.id] === "docker" && (
-                    <span className="ml-auto inline-flex shrink-0 items-center gap-1 text-xs text-amber-500">
+                    <span className="ml-auto inline-flex shrink-0 items-center gap-1 text-caption text-warning">
                       <AlertTriangle className="h-3.5 w-3.5" />
                       {t("batchApply.containerUnavailable")}
                     </span>
                   )}
                 </div>
                 {expanded.has(host.id) && (
-                  <div className="space-y-1 border-l border-border/60 pl-4 pb-2">
+                  <div className="space-y-1 border-l border-border pl-4 pb-2">
                     {hostLoading ? (
                       /* 检测中：明确告知正在尝试连接/拉容器，配合主行转圈 */
-                      <div className="flex items-center gap-1.5 px-2 py-1 text-xs text-muted-foreground">
+                      <div className="flex items-center gap-1.5 px-2 py-1 text-caption text-fg-3">
                         <Loader2 className="h-3 w-3 animate-spin" />
                         {t("batchApply.probing")}
                       </div>
                     ) : sshDown ? (
                       /* SSH 层失败：宿主机本体与容器都不可用，不可选 */
-                      <div className="px-2 py-1 text-xs text-red-500">
+                      <div className="px-2 py-1 text-caption text-danger">
                         {t("batchApply.cannotConnectHost")}
                       </div>
                     ) : (
                       <>
                         {/* 宿主机账号：与容器并列，代表该宿主机本身（仅账号，不含容器），主色标识 */}
-                        <label className="flex cursor-pointer items-center gap-2 px-2 py-1 text-sm">
+                        <label className="flex cursor-pointer items-center gap-2 px-2 py-1 text-body">
                           <Checkbox
                             checked={selected.has(host.id)}
                             onCheckedChange={() => toggleHostOnly(host.id)}
                           />
-                          <Server className="h-3.5 w-3.5 shrink-0 text-primary" />
-                          <span className="truncate font-medium text-primary">
+                          <Server className="h-3.5 w-3.5 shrink-0 text-action-text" />
+                          <span className="truncate font-medium text-action-text">
                             {t("batchApply.host")}
                           </span>
                         </label>
-                        <div className="border-t border-border/50" />
+                        <div className="border-t border-border" />
                         {cs != null && cs.length === 0 && (
-                          <div className="px-2 py-1 text-xs text-muted-foreground">
+                          <div className="px-2 py-1 text-caption text-fg-3">
                             {t("batchApply.noContainer")}
                           </div>
                         )}
@@ -647,7 +719,7 @@ export function BatchApplyPanel({
                           .map((c) => (
                           <label
                             key={c}
-                            className="flex cursor-pointer items-center gap-2 px-2 py-1 text-sm text-muted-foreground"
+                            className="flex cursor-pointer items-center gap-2 px-2 py-1 text-body text-fg-2"
                           >
                             <Checkbox
                               checked={selected.has(contKey(host.id, c))}
@@ -655,7 +727,7 @@ export function BatchApplyPanel({
                                 toggleContainer(host.id, c)
                               }
                             />
-                            <Container className="h-3.5 w-3.5 shrink-0" />
+                            <DockerIcon className="h-3.5 w-3.5 text-fg-3" />
                             <span className="truncate">{c}</span>
                           </label>
                         ))}
@@ -671,15 +743,15 @@ export function BatchApplyPanel({
 
       {/* 执行结果（独立展示在落点下方、底部固定条上方） */}
       {results.length > 0 && (
-        <div className="glass rounded-xl p-4 border border-white/10 space-y-1 flex-shrink-0">
-          <div className="mb-3 flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-foreground/60">
+        <div className="flex-shrink-0 space-y-1 rounded-panel border border-border bg-surface p-4">
+          <div className="mb-3 flex items-center gap-2 text-caption font-semibold uppercase tracking-wider text-fg-3">
             {t("batchApply.resultTitle")}
-            <span className="font-medium normal-case text-emerald-500">
+            <span className="font-medium normal-case text-success">
               {t("batchApply.succeeded", {
                 count: results.filter((r) => r.status === "ok").length,
               })}
             </span>
-            <span className="font-medium normal-case text-red-500">
+            <span className="font-medium normal-case text-danger">
               {t("batchApply.failedCount", {
                 count: results.filter((r) => r.status === "fail").length,
               })}
@@ -689,27 +761,27 @@ export function BatchApplyPanel({
             {results.map((r) => (
               <div
                 key={r.key}
-                className="flex items-center gap-2 rounded-md border border-border/40 px-2 py-1.5 text-sm"
+                className="flex items-center gap-2 rounded-control border border-border px-2 py-1.5 text-body"
               >
                 {r.status === "pending" && (
-                  <span className="h-3.5 w-3.5 shrink-0 rounded-full bg-muted-foreground/30" />
+                  <span className="h-3.5 w-3.5 shrink-0 rounded-full bg-border" />
                 )}
                 {r.status === "running" && (
-                  <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground" />
+                  <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-fg-3" />
                 )}
                 {r.status === "ok" && (
-                  <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-500" />
+                  <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-success" />
                 )}
                 {r.status === "fail" && (
-                  <XCircle className="h-3.5 w-3.5 shrink-0 text-red-500" />
+                  <XCircle className="h-3.5 w-3.5 shrink-0 text-danger" />
                 )}
-                <span className="min-w-0 flex-1 truncate">{r.label}</span>
+                <span className="min-w-0 flex-1 truncate text-fg-1">{r.label}</span>
                 <span
                   className={cn(
-                    "shrink-0 rounded px-1.5 py-0.5 text-xs font-medium",
+                    "shrink-0 rounded-control px-1.5 py-0.5 text-badge font-medium",
                     r.container
-                      ? "bg-muted/50 text-muted-foreground"
-                      : "bg-primary/15 text-primary",
+                      ? "bg-subtle text-fg-2"
+                      : "bg-action-soft text-action-text",
                   )}
                 >
                   {r.container
@@ -717,12 +789,12 @@ export function BatchApplyPanel({
                     : t("batchApply.host")}
                 </span>
                 {r.status === "ok" && (
-                  <span className="text-xs text-muted-foreground">
+                  <span className="text-caption text-fg-3">
                     {t("batchApply.switched")}
                   </span>
                 )}
                 {r.status === "fail" && (
-                  <span className="max-w-[40%] truncate text-xs text-red-500">
+                  <span className="max-w-[40%] truncate text-caption text-danger">
                     {r.message}
                   </span>
                 )}

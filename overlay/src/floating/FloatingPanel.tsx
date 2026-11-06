@@ -78,9 +78,27 @@ function UsageDetail({
       </span>,
     );
   }
-  // 与供应商面板 UsageFooter 同款：tier 风格（有 used）只显示已用；
-  // 纯余额风格（无 used 有 remaining，如 DeepSeek CNY）才显示剩余。二选一，不叠加。
-  if (hasUsed) {
+  // 口径分两类，按**有无档名（planName）**区分：
+  // - 档位型（订阅 / Token Plan）：used 是利用率百分比 → 一律写「剩余」= 100 - used，
+  //   与主窗口用量面板同口径（官方 v4.0.4 `components/quota/quotaRules.ts`：
+  //   「额度的文字和颜色（v7 QuotaSpec）：一律写剩余」）。
+  // - 脚本型（Copilot / coding plan / 自定义脚本）：used 是**带单位的量值**
+  //   （tokens 等），不能按 100-used 换算，原样显示。
+  // 颜色仍按 used 判定（used 高 = 剩余低 = 该警示），与官方 toneForLeft 同向。
+  const isTier = d.planName != null && hasUsed;
+  if (isTier) {
+    const left = Math.max(0, Math.round(100 - d.used!));
+    nodes.push(
+      <span key="remaining" className="usage-item">
+        <span className="usage-label">{t("floating.remaining")}</span>
+        <span className={`usage-value ${usageValueClass(d)}`}>
+          {dimPrefix ? `${dimPrefix} ` : ""}
+          {left}
+        </span>
+        <span className="usage-unit">%</span>
+      </span>,
+    );
+  } else if (hasUsed) {
     nodes.push(
       <span key="used" className="usage-item">
         <span className="usage-label">{t("floating.used")}</span>
@@ -304,8 +322,11 @@ export function FloatingPanel() {
                       {extraItems.length > 0 && (
                         <span className="usage-chips">
                           {extraItems.map((d, i) => {
-                            const r = d.used;
-                            const hasVal = r != null && isFinite(r);
+                            const used = d.used;
+                            const hasVal = used != null && isFinite(used);
+                            // 同 UsageDetail：档位型（有档名）写剩余百分比，
+                            // 其余（脚本型/余额型，量值带单位）原样显示
+                            const isTier = d.planName != null && hasVal;
                             return (
                               <span className="usage-chip" key={i}>
                                 {d.planName ? (
@@ -315,7 +336,10 @@ export function FloatingPanel() {
                                 ) : null}
                                 {hasVal ? (
                                   <span className={usageValueClass(d)}>
-                                    {Math.round(r!)}%
+                                    {isTier
+                                      ? Math.max(0, Math.round(100 - used!))
+                                      : Math.round(used!)}
+                                    {isTier ? "%" : (d.unit ?? "")}
                                   </span>
                                 ) : (
                                   <span>—</span>

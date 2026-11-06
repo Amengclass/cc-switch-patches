@@ -1476,12 +1476,9 @@ fn worst_utilization_pct(
                         .iter()
                         .filter_map(|d| Some((d.plan_name.as_deref()?, crate::tray::tier_pct(d)?)))
                         .collect();
-                    let parts = crate::tray::labeled_tier_parts(&entries);
-                    if !parts.is_empty() {
-                        return parts
-                            .into_iter()
-                            .map(|(_, u)| u)
-                            .fold(None, |acc, u| Some(acc.map_or(u, |a: f64| a.max(u))));
+                    // 已知档位按组取各组最高（与托盘同一套分组规则，见 tray::worst_utilization）
+                    if let Some(worst) = crate::tray::worst_utilization(&entries) {
+                        return Some(worst);
                     }
                     entries.first().map(|(_, u)| *u)
                 })
@@ -1498,11 +1495,8 @@ fn worst_utilization_pct(
                             .iter()
                             .map(|tier| (tier.name.as_str(), tier.utilization))
                             .collect();
-                        let parts = crate::tray::labeled_tier_parts(&entries);
-                        parts
-                            .into_iter()
-                            .map(|(_, u)| u)
-                            .fold(None, |acc, u| Some(acc.map_or(u, |a: f64| a.max(u))))
+                        // 订阅档位同样按组分取最高
+                        crate::tray::worst_utilization(&entries)
                     })
             {
                 return Some(quota);
@@ -1635,10 +1629,25 @@ async fn build_floating_entry(state: &AppState, app_type: &AppType) -> FloatingE
             if !pid.is_empty() {
                 Some(pid.clone())
             } else {
-                crate::settings::get_effective_current_provider(&state.db, app_type).unwrap_or(None)
+                // 与官方托盘 / 用量面板同口径：`Purpose::InUse`（代理模式下是代理路由
+                // 那家，直连模式下是直连指针）。官方 mode::current 的文档写明：
+                // 「界面上的『当前』、用量、测速、项目快照都按它」。
+                // 若用 Direct 指针，路由态会取到「不在用的那家」，其用量脚本状态不对，
+                // 悬浮球就不显示余量。
+                crate::mode::current::provider_for(
+                    &state.db,
+                    app_type,
+                    crate::mode::current::Purpose::InUse,
+                )
+                .unwrap_or(None)
             }
         } else {
-            crate::settings::get_effective_current_provider(&state.db, app_type).unwrap_or(None)
+            crate::mode::current::provider_for(
+                &state.db,
+                app_type,
+                crate::mode::current::Purpose::InUse,
+            )
+            .unwrap_or(None)
         }
     };
 
@@ -1653,7 +1662,7 @@ async fn build_floating_entry(state: &AppState, app_type: &AppType) -> FloatingE
                 match provider {
                     Some(provider) => {
                         let model = resolve_model(app_type, &provider);
-                        let usage_summary = crate::tray::format_usage_suffix(
+                        let usage_summary = crate::tray::floating_usage_suffix(
                             &state.usage_cache,
                             app_type,
                             &provider,
@@ -2310,9 +2319,13 @@ pub async fn floating_refresh_usage(
     if !visible_apps.is_visible(&parsed) {
         return Ok(());
     }
-    let Ok(Some(provider_id)) =
-        crate::settings::get_effective_current_provider(&state.db, &parsed)
-    else {
+    // 同悬浮球/面板：用 InUse 口径（路由态取代理路由那家）。
+    // 用 Direct 指针会在路由态刷到「不在用的那家」，余量对不上界面显示的供应商。
+    let Ok(Some(provider_id)) = crate::mode::current::provider_for(
+        &state.db,
+        &parsed,
+        crate::mode::current::Purpose::InUse,
+    ) else {
         return Ok(());
     };
     match crate::commands::queryProviderUsage(
@@ -2336,6 +2349,12 @@ pub async fn floating_refresh_usage(
 // 托盘逻辑收敛到这里，官方文件里只留一行调用，减少升级官方时的冲突面。
 
 /// 托盘菜单「悬浮窗」勾选项。
+///
+/// 官方 v4.0.4 起托盘菜单改为**数据模型**（`tray::build_menu_model` 产出
+/// `Vec<TrayEntry>` 再渲染），不再有 `CheckMenuItem` 命令式构建，因此这里
+/// 已无调用方；菜单项改由 `tray.rs` 的 `collect_model` 直接插入
+/// `TrayEntry::check("floating_window", ...)`。保留本函数以便官方架构回退时复用。
+#[allow(dead_code)]
 pub fn tray_menu_item(
     app: &tauri::AppHandle,
     label: &str,

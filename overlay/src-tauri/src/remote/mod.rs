@@ -5,6 +5,13 @@
 //!
 //! 里程碑:M1 骨架(类型 + 模块声明)→ M2 连接/读配置 → M3 切换写回 → M4 env 清理 → M5 远程会话。
 
+// ===== 方案 A 临时态：仅保留 claude 供应商切换链路所需的模块 =====
+//
+// 下面这些模块的「面板命令」已在 commands.rs 里桩掉（TODO(方案②移植)），
+// 它们本身又依赖官方 v4.0.4 里没暴露的纯函数 / 私有实现，故先不参与编译。
+// 正经移植时逐个恢复：把 unimplemented 的调用换成官方新抽象（live::project /
+// live::patch / mode::controller）或我们自带的转换器。
+//
 pub mod codex;
 pub mod commands;
 pub mod connection;
@@ -70,6 +77,9 @@ pub struct RemoteHost {
     pub port: u16,
     pub username: String,
     pub auth_method: AuthMethod,
+    /// 密钥认证的私钥文件路径（`auth_method = key` 时使用）。
+    #[serde(default)]
+    pub private_key_path: Option<String>,
     /// 是否把密码保存进系统钥匙串(用于下次一键连接)。
     pub save_password: bool,
     /// 走本机路由：切换时把远端 base_url 指向本机代理（经 SSH 反向隧道）。
@@ -192,6 +202,7 @@ mod tests {
             port: 22,
             username: username.to_string(),
             auth_method: AuthMethod::Password,
+            private_key_path: None,
             save_password: false,
             route_through_local_proxy: false,
             route_proxy_apps: HashMap::new(),

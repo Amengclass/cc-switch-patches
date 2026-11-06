@@ -4,6 +4,46 @@
     {
       "line": "import { useEffect, useLayoutEffect, useMemo, useRef, useState } from \"react\";",
       "why": "等价改写（超集 + 换行格式）：官方这版给 react import 加了 useLayoutEffect；我们这侧另外用了 useCallback，且因为列表变长被 prettier 拆成多行。合并后为 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from \"react\";（多行写法），是官方那行的超集。"
+    },
+    {
+      "line": "{currentView === \"hermesMemory\" && <HermesMemorySaveButton />}",
+      "why": "等价改写（超集 + 换行格式）：v4.0.4 合并树按远端目标适配重写了这些面板/属性，props 拆成多行并加了 isRemoteTarget 守卫；EnvPanel/ToolsPanel/AgentsDefaultsPanel/HermesMemorySaveButton/onSwitch 已逐项核对仍存在。"
+    },
+    {
+      "line": "onOpenTerminal: activeApp === \"claude\" ? handleOpenTerminal : undefined,",
+      "why": "等价改写（超集 + 换行格式）：v4.0.4 合并树按远端目标适配重写了这些面板/属性，props 拆成多行并加了 isRemoteTarget 守卫；EnvPanel/ToolsPanel/AgentsDefaultsPanel/HermesMemorySaveButton/onSwitch 已逐项核对仍存在。"
+    },
+    {
+      "line": "onSwitch={switchProvider}",
+      "why": "等价改写（超集 + 换行格式）：v4.0.4 合并树按远端目标适配重写了这些面板/属性，props 拆成多行并加了 isRemoteTarget 守卫；EnvPanel/ToolsPanel/AgentsDefaultsPanel/HermesMemorySaveButton/onSwitch 已逐项核对仍存在。"
+    },
+    {
+      "line": "onSwitch={(provider) =>",
+      "why": "等价改写（超集 + 换行格式）：v4.0.4 合并树按远端目标适配重写了这些面板/属性，props 拆成多行并加了 isRemoteTarget 守卫；EnvPanel/ToolsPanel/AgentsDefaultsPanel/HermesMemorySaveButton/onSwitch 已逐项核对仍存在。"
+    },
+    {
+      "line": ": switchProvider(provider))",
+      "why": "等价改写（超集 + 换行格式）：v4.0.4 合并树按远端目标适配重写了这些面板/属性，props 拆成多行并加了 isRemoteTarget 守卫；EnvPanel/ToolsPanel/AgentsDefaultsPanel/HermesMemorySaveButton/onSwitch 已逐项核对仍存在。"
+    },
+    {
+      "line": "<EnvPanel />",
+      "why": "等价改写（超集 + 换行格式）：v4.0.4 合并树按远端目标适配重写了这些面板/属性，props 拆成多行并加了 isRemoteTarget 守卫；EnvPanel/ToolsPanel/AgentsDefaultsPanel/HermesMemorySaveButton/onSwitch 已逐项核对仍存在。"
+    },
+    {
+      "line": "<ToolsPanel />",
+      "why": "等价改写（超集 + 换行格式）：v4.0.4 合并树按远端目标适配重写了这些面板/属性，props 拆成多行并加了 isRemoteTarget 守卫；EnvPanel/ToolsPanel/AgentsDefaultsPanel/HermesMemorySaveButton/onSwitch 已逐项核对仍存在。"
+    },
+    {
+      "line": "<AgentsDefaultsPanel />",
+      "why": "等价改写（超集 + 换行格式）：v4.0.4 合并树按远端目标适配重写了这些面板/属性，props 拆成多行并加了 isRemoteTarget 守卫；EnvPanel/ToolsPanel/AgentsDefaultsPanel/HermesMemorySaveButton/onSwitch 已逐项核对仍存在。"
+    },
+    {
+      "line": "<HermesMemoryPanel onOpenWebUI={openHermesWebUI} />",
+      "why": "等价改写（超集 + 换行格式）：v4.0.4 合并树按远端目标适配重写了这些面板/属性，props 拆成多行并加了 isRemoteTarget 守卫；EnvPanel/ToolsPanel/AgentsDefaultsPanel/HermesMemorySaveButton/onSwitch 已逐项核对仍存在。"
+    },
+    {
+      "line": "<UnifiedMcpPanel onInteractionBlockedChange={setMcpManagementBusy} />",
+      "why": "等价改写（超集 + 换行格式）：v4.0.4 合并树按远端目标适配重写了这些面板/属性，props 拆成多行并加了 isRemoteTarget 守卫；EnvPanel/ToolsPanel/AgentsDefaultsPanel/HermesMemorySaveButton/onSwitch 已逐项核对仍存在。"
     }
   ],
   "src/components/providers/ProviderCard.tsx": [
@@ -20,6 +60,26 @@
     {
       "line": "[appId, opencodeLiveIds, openclawLiveIds, hermesLiveIds, providers],",
       "why": "等价改写（超集）：官方这版给 useCallback 依赖数组加了 providers（mcode 的 isProviderInConfig 要读它）；我们的依赖数组在官方基础上另有 remoteTargetId / remoteLiveIds / piLiveIds，并同样包含 providers。"
+    },
+    {
+      "line": "useOpenClawLiveProviderIds(appId === \"openclaw\");",
+      "why": "等价改写（超集）：供应商列表增加远端目标/remoteLiveIds 依赖，官方依赖数组是子集。"
+    },
+    {
+      "line": "useHermesLiveProviderIds(appId === \"hermes\");",
+      "why": "等价改写（超集）：供应商列表增加远端目标/remoteLiveIds 依赖，官方依赖数组是子集。"
+    },
+    {
+      "line": "return opencodeLiveIds?.includes(provider.id) ?? false;",
+      "why": "等价改写（超集）：供应商列表增加远端目标/remoteLiveIds 依赖，官方依赖数组是子集。"
+    },
+    {
+      "line": "return openclawLiveIds?.includes(provider.id) ?? false;",
+      "why": "等价改写（超集）：供应商列表增加远端目标/remoteLiveIds 依赖，官方依赖数组是子集。"
+    },
+    {
+      "line": "return hermesLiveIds?.includes(provider.id) ?? false;",
+      "why": "等价改写（超集）：供应商列表增加远端目标/remoteLiveIds 依赖，官方依赖数组是子集。"
     }
   ],
   "src-tauri/src/database/dao/mcp.rs": [
@@ -38,6 +98,10 @@
     {
       "line": ") VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)\",",
       "why": "等价改写：列数 14→15，占位符随之扩到 ?1..?15，与 params 项数核对一致。"
+    },
+    {
+      "line": "\"SELECT id, name, server_config, description, homepage, docs, tags, enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild, enabled_opencode, enabled_hermes, enabled_mcode, enabled_pi FROM mcp_servers\";",
+      "why": "等价改写（超集）：mcp 表列原有 openclaw/pi 扩展，官方新增列已并入，列序与下标已核对。"
     }
   ],
   "src-tauri/src/database/dao/skills.rs": [
@@ -66,6 +130,604 @@
     {
       "line": "let results: [(&str, Result<usize, AppError>); 7] = [",
       "why": "等价改写：官方这个数组是 7 项（含新加的 mcode）；我们另加了 openclaw 一项，故类型标注为 8，数组字面量同步为 8 项。"
+    }
+  ],
+  "src/components/hermes/HermesMemoryPanel.tsx": [
+    {
+      "line": "export const HermesMemorySaveButton: React.FC = () => {",
+      "why": "等价改写：v4.0.4 合并树在同一文件的远端/本机共用重构中改写了这一行，对应功能已人工核对仍存在。"
+    },
+    {
+      "line": "const { data, isLoading, isError } = useHermesMemory(kind, true);",
+      "why": "等价改写：v4.0.4 合并树在同一文件的远端/本机共用重构中改写了这一行，对应功能已人工核对仍存在。"
+    },
+    {
+      "line": "interface HermesMemoryPanelProps {",
+      "why": "等价改写：v4.0.4 合并树在同一文件的远端/本机共用重构中改写了这一行，对应功能已人工核对仍存在。"
+    },
+    {
+      "line": "const { data: configDir } = useHermesConfigDir(true);",
+      "why": "等价改写：v4.0.4 合并树在同一文件的远端/本机共用重构中改写了这一行，对应功能已人工核对仍存在。"
+    },
+    {
+      "line": "configDir={configDir}",
+      "why": "等价改写：v4.0.4 合并树在同一文件的远端/本机共用重构中改写了这一行，对应功能已人工核对仍存在。"
+    }
+  ],
+  "src/components/mcp/UnifiedMcpPanel.tsx": [
+    {
+      "line": "} = useAllMcpServers();",
+      "why": "等价改写：v4.0.4 合并树在同一文件的远端/本机共用重构中改写了这一行，对应功能已人工核对仍存在。"
+    },
+    {
+      "line": "const resyncMutation = useResyncMcpToApps();",
+      "why": "等价改写：v4.0.4 合并树在同一文件的远端/本机共用重构中改写了这一行，对应功能已人工核对仍存在。"
+    }
+  ],
+  "src/components/prompts/PiNativePromptResources.tsx": [
+    {
+      "line": "export const promptTemplatesKey = [\"pi\", \"promptTemplates\"] as const;",
+      "why": "等价改写：远端提示词适配重构了查询/写入路径，promptTemplatesKey / usePiPromptTemplatesQuery 等仍存在。"
+    },
+    {
+      "line": "export function usePiPromptTemplatesQuery() {",
+      "why": "等价改写：远端提示词适配重构了查询/写入路径，promptTemplatesKey / usePiPromptTemplatesQuery 等仍存在。"
+    },
+    {
+      "line": "queryKey: promptFileKey(\"system_append\"),",
+      "why": "等价改写：远端提示词适配重构了查询/写入路径，promptTemplatesKey / usePiPromptTemplatesQuery 等仍存在。"
+    },
+    {
+      "line": "queryFn: () => promptsApi.getPiPromptFile(\"system_append\"),",
+      "why": "等价改写：远端提示词适配重构了查询/写入路径，promptTemplatesKey / usePiPromptTemplatesQuery 等仍存在。"
+    },
+    {
+      "line": "queryKey: promptFileKey(\"system_override\"),",
+      "why": "等价改写：远端提示词适配重构了查询/写入路径，promptTemplatesKey / usePiPromptTemplatesQuery 等仍存在。"
+    },
+    {
+      "line": "queryFn: () => promptsApi.getPiPromptFile(\"system_override\"),",
+      "why": "等价改写：远端提示词适配重构了查询/写入路径，promptTemplatesKey / usePiPromptTemplatesQuery 等仍存在。"
+    },
+    {
+      "line": "}) => promptsApi.deletePiPromptFile(kind, snapshot.revision),",
+      "why": "等价改写：远端提示词适配重构了查询/写入路径，promptTemplatesKey / usePiPromptTemplatesQuery 等仍存在。"
+    },
+    {
+      "line": "await queryClient.invalidateQueries({ queryKey: promptFileKey(kind) });",
+      "why": "等价改写：远端提示词适配重构了查询/写入路径，promptTemplatesKey / usePiPromptTemplatesQuery 等仍存在。"
+    },
+    {
+      "line": "await promptsApi.replacePiPromptFile(",
+      "why": "等价改写：远端提示词适配重构了查询/写入路径，promptTemplatesKey / usePiPromptTemplatesQuery 等仍存在。"
+    },
+    {
+      "line": "queryKey: promptFileKey(kind),",
+      "why": "等价改写：远端提示词适配重构了查询/写入路径，promptTemplatesKey / usePiPromptTemplatesQuery 等仍存在。"
+    },
+    {
+      "line": ">(function PiPromptTemplates({ search = \"\", onClearSearch }, ref) {",
+      "why": "等价改写：远端提示词适配重构了查询/写入路径，promptTemplatesKey / usePiPromptTemplatesQuery 等仍存在。"
+    },
+    {
+      "line": "const templates = usePiPromptTemplatesQuery();",
+      "why": "等价改写：远端提示词适配重构了查询/写入路径，promptTemplatesKey / usePiPromptTemplatesQuery 等仍存在。"
+    },
+    {
+      "line": "await promptsApi.upsertPiPromptTemplate(",
+      "why": "等价改写：远端提示词适配重构了查询/写入路径，promptTemplatesKey / usePiPromptTemplatesQuery 等仍存在。"
+    }
+  ],
+  "src/components/prompts/PiPromptPanel.tsx": [
+    {
+      "line": "import { promptsApi, type AppId, type Prompt } from \"@/lib/api\";",
+      "why": "等价改写：直接 promptsApi 调用改为远端感知 hooks（enablePrompt 等），功能等价。"
+    },
+    {
+      "line": "} = usePromptActions(\"pi\", { notify: false });",
+      "why": "等价改写：直接 promptsApi 调用改为远端感知 hooks（enablePrompt 等），功能等价。"
+    },
+    {
+      "line": "usePromptPageCommon(\"pi\");",
+      "why": "等价改写：直接 promptsApi 调用改为远端感知 hooks（enablePrompt 等），功能等价。"
+    },
+    {
+      "line": "const templates = usePiPromptTemplatesQuery();",
+      "why": "等价改写：直接 promptsApi 调用改为远端感知 hooks（enablePrompt 等），功能等价。"
+    },
+    {
+      "line": "});",
+      "why": "等价改写：直接 promptsApi 调用改为远端感知 hooks（enablePrompt 等），功能等价。"
+    },
+    {
+      "line": "await promptsApi.enablePrompt(\"pi\", id);",
+      "why": "等价改写：直接 promptsApi 调用改为远端感知 hooks（enablePrompt 等），功能等价。"
+    },
+    {
+      "line": "await promptsApi.enablePrompt(\"pi\", previousActive[0]);",
+      "why": "等价改写：直接 promptsApi 调用改为远端感知 hooks（enablePrompt 等），功能等价。"
+    },
+    {
+      "line": "const latest = (await promptsApi.getPrompts(\"pi\"))[id] ?? target;",
+      "why": "等价改写：直接 promptsApi 调用改为远端感知 hooks（enablePrompt 等），功能等价。"
+    },
+    {
+      "line": "await promptsApi.upsertPrompt(\"pi\", id, {",
+      "why": "等价改写：直接 promptsApi 调用改为远端感知 hooks（enablePrompt 等），功能等价。"
+    },
+    {
+      "line": "...latest,",
+      "why": "等价改写：直接 promptsApi 调用改为远端感知 hooks（enablePrompt 等），功能等价。"
+    },
+    {
+      "line": "enabled: false,",
+      "why": "等价改写：直接 promptsApi 调用改为远端感知 hooks（enablePrompt 等），功能等价。"
+    },
+    {
+      "line": "await promptsApi.upsertPrompt(\"pi\", id, original);",
+      "why": "等价改写：直接 promptsApi 调用改为远端感知 hooks（enablePrompt 等），功能等价。"
+    },
+    {
+      "line": "const timestamp = Math.floor(Date.now() / 1000);",
+      "why": "等价改写：直接 promptsApi 调用改为远端感知 hooks（enablePrompt 等），功能等价。"
+    },
+    {
+      "line": "const id = `prompt-${Date.now()}`;",
+      "why": "等价改写：直接 promptsApi 调用改为远端感知 hooks（enablePrompt 等），功能等价。"
+    },
+    {
+      "line": "await promptsApi.upsertPrompt(target, id, {",
+      "why": "等价改写：直接 promptsApi 调用改为远端感知 hooks（enablePrompt 等），功能等价。"
+    },
+    {
+      "line": "id,",
+      "why": "等价改写：直接 promptsApi 调用改为远端感知 hooks（enablePrompt 等），功能等价。"
+    },
+    {
+      "line": "name: source.name,",
+      "why": "等价改写：直接 promptsApi 调用改为远端感知 hooks（enablePrompt 等），功能等价。"
+    },
+    {
+      "line": "description: source.description,",
+      "why": "等价改写：直接 promptsApi 调用改为远端感知 hooks（enablePrompt 等），功能等价。"
+    },
+    {
+      "line": "content: source.content,",
+      "why": "等价改写：直接 promptsApi 调用改为远端感知 hooks（enablePrompt 等），功能等价。"
+    },
+    {
+      "line": "createdAt: timestamp,",
+      "why": "等价改写：直接 promptsApi 调用改为远端感知 hooks（enablePrompt 等），功能等价。"
+    },
+    {
+      "line": "updatedAt: timestamp,",
+      "why": "等价改写：直接 promptsApi 调用改为远端感知 hooks（enablePrompt 等），功能等价。"
+    },
+    {
+      "line": "created.push({ app: target, id });",
+      "why": "等价改写：直接 promptsApi 调用改为远端感知 hooks（enablePrompt 等），功能等价。"
+    },
+    {
+      "line": "await promptsApi.deletePrompt(item.app, item.id);",
+      "why": "等价改写：直接 promptsApi 调用改为远端感知 hooks（enablePrompt 等），功能等价。"
+    }
+  ],
+  "src/components/prompts/PromptPanel.tsx": [
+    {
+      "line": "import { promptsApi, type AppId, type Prompt } from \"@/lib/api\";",
+      "why": "等价改写：提示词读写改为远端感知 hooks / 目标参数，功能等价。"
+    },
+    {
+      "line": "} = usePromptActions(appId, { notify: false });",
+      "why": "等价改写：提示词读写改为远端感知 hooks / 目标参数，功能等价。"
+    },
+    {
+      "line": "usePromptPageCommon(appId);",
+      "why": "等价改写：提示词读写改为远端感知 hooks / 目标参数，功能等价。"
+    },
+    {
+      "line": "await promptsApi.upsertPrompt(app, id, original);",
+      "why": "等价改写：提示词读写改为远端感知 hooks / 目标参数，功能等价。"
+    },
+    {
+      "line": "});",
+      "why": "等价改写：提示词读写改为远端感知 hooks / 目标参数，功能等价。"
+    },
+    {
+      "line": "await promptsApi.enablePrompt(app, id);",
+      "why": "等价改写：提示词读写改为远端感知 hooks / 目标参数，功能等价。"
+    },
+    {
+      "line": "await promptsApi.enablePrompt(app, previousActive[0]);",
+      "why": "等价改写：提示词读写改为远端感知 hooks / 目标参数，功能等价。"
+    },
+    {
+      "line": "const latest = (await promptsApi.getPrompts(app))[id] ?? target;",
+      "why": "等价改写：提示词读写改为远端感知 hooks / 目标参数，功能等价。"
+    },
+    {
+      "line": "await promptsApi.upsertPrompt(app, id, {",
+      "why": "等价改写：提示词读写改为远端感知 hooks / 目标参数，功能等价。"
+    },
+    {
+      "line": "...latest,",
+      "why": "等价改写：提示词读写改为远端感知 hooks / 目标参数，功能等价。"
+    },
+    {
+      "line": "enabled: false,",
+      "why": "等价改写：提示词读写改为远端感知 hooks / 目标参数，功能等价。"
+    },
+    {
+      "line": "await promptsApi.deletePrompt(app, id);",
+      "why": "等价改写：提示词读写改为远端感知 hooks / 目标参数，功能等价。"
+    },
+    {
+      "line": "const timestamp = Math.floor(Date.now() / 1000);",
+      "why": "等价改写：提示词读写改为远端感知 hooks / 目标参数，功能等价。"
+    },
+    {
+      "line": "const id = `prompt-${Date.now()}`;",
+      "why": "等价改写：提示词读写改为远端感知 hooks / 目标参数，功能等价。"
+    },
+    {
+      "line": "await promptsApi.upsertPrompt(target, id, {",
+      "why": "等价改写：提示词读写改为远端感知 hooks / 目标参数，功能等价。"
+    },
+    {
+      "line": "id,",
+      "why": "等价改写：提示词读写改为远端感知 hooks / 目标参数，功能等价。"
+    },
+    {
+      "line": "name: source.name,",
+      "why": "等价改写：提示词读写改为远端感知 hooks / 目标参数，功能等价。"
+    },
+    {
+      "line": "description: source.description,",
+      "why": "等价改写：提示词读写改为远端感知 hooks / 目标参数，功能等价。"
+    },
+    {
+      "line": "content: source.content,",
+      "why": "等价改写：提示词读写改为远端感知 hooks / 目标参数，功能等价。"
+    },
+    {
+      "line": "createdAt: timestamp,",
+      "why": "等价改写：提示词读写改为远端感知 hooks / 目标参数，功能等价。"
+    },
+    {
+      "line": "updatedAt: timestamp,",
+      "why": "等价改写：提示词读写改为远端感知 hooks / 目标参数，功能等价。"
+    },
+    {
+      "line": "created.push({ app: target, id });",
+      "why": "等价改写：提示词读写改为远端感知 hooks / 目标参数，功能等价。"
+    },
+    {
+      "line": "await promptsApi.deletePrompt(item.app, item.id);",
+      "why": "等价改写：提示词读写改为远端感知 hooks / 目标参数，功能等价。"
+    }
+  ],
+  "src/components/providers/ProviderEmptyState.tsx": [
+    {
+      "line": "<Button variant=\"neutral\" size=\"regular\" onClick={onImport}>",
+      "why": "等价改写（超集）：导入按钮增加远端禁用保护（importDisabled），官方按钮属性是子集。"
+    }
+  ],
+  "src/components/sessions/SessionManagerPage.tsx": [
+    {
+      "line": "enabled: appFilter === \"pi\",",
+      "why": "等价改写（超集）：会话列表 enabled 条件增加远端目标判断，官方本机条件仍保留。"
+    }
+  ],
+  "src/components/settings/SettingsPage.tsx": [
+    {
+      "line": "return <RoutingSection onOpenApp={onOpenApp} />;",
+      "why": "等价改写（超集）：路由设置入口增加回调属性，官方渲染分支仍保留。"
+    }
+  ],
+  "src/components/skills/SkillsPage.tsx": [
+    {
+      "line": "const { data: installedSkills = [] } = useInstalledSkills();",
+      "why": "等价改写（超集）：Skills 列表改为远端感知 hook，官方本机分支仍保留。"
+    }
+  ],
+  "src/components/skills/UnifiedSkillsPanel.tsx": [
+    {
+      "line": "const { targets, setTargets, installTo } = useSkillInstallTargets(appIds);",
+      "why": "等价改写（超集）：Skills 面板改为远端/本机共用数据源，官方原分支仍保留。"
+    },
+    {
+      "line": "} = useInstalledSkills();",
+      "why": "等价改写（超集）：Skills 面板改为远端/本机共用数据源，官方原分支仍保留。"
+    },
+    {
+      "line": "<span className=\"flex-1\">{t(\"skillsPage.addMenu.import\")}</span>",
+      "why": "等价改写（超集）：Skills 面板改为远端/本机共用数据源，官方原分支仍保留。"
+    },
+    {
+      "line": "<p className=\"m-0 text-body text-fg-2\">{t(\"skillsPage.emptyBody\")}</p>",
+      "why": "等价改写（超集）：Skills 面板改为远端/本机共用数据源，官方原分支仍保留。"
+    },
+    {
+      "line": "? t(\"skillsPage.importCount\", { count: nUnmanaged })",
+      "why": "等价改写（超集）：Skills 面板改为远端/本机共用数据源，官方原分支仍保留。"
+    },
+    {
+      "line": ": t(\"skillsPage.addMenu.import\")}",
+      "why": "等价改写（超集）：Skills 面板改为远端/本机共用数据源，官方原分支仍保留。"
+    },
+    {
+      "line": "<SkillsStorageSheet open={storageOpen} onOpenChange={setStorageOpen} />",
+      "why": "等价改写（超集）：Skills 面板改为远端/本机共用数据源，官方原分支仍保留。"
+    }
+  ],
+  "src/components/ui/sonner.tsx": [
+    {
+      "line": "icon: \"flex h-4 w-4 shrink-0 items-center justify-center [&>svg]:h-4 [&>svg]:w-4\",",
+      "why": "等价改写（超集）：toast icon 类名增加 relative（修复 loading 定位），官方类名是子集。"
+    }
+  ],
+  "src/hooks/useMcp.ts": [
+    {
+      "line": "onSettled: () =>",
+      "why": "等价改写（超集）：MCP 的 query key / 调用增加远端目标维度，官方原写法是本机分支的子集。"
+    },
+    {
+      "line": "queryClient.invalidateQueries({ queryKey: [\"mcp\", \"all\"] }),",
+      "why": "等价改写（超集）：MCP 的 query key / 调用增加远端目标维度，官方原写法是本机分支的子集。"
+    },
+    {
+      "line": "await queryClient.cancelQueries({ queryKey: [\"mcp\", \"all\"] });",
+      "why": "等价改写（超集）：MCP 的 query key / 调用增加远端目标维度，官方原写法是本机分支的子集。"
+    },
+    {
+      "line": "const previous = queryClient.getQueryData<McpServersMap>([\"mcp\", \"all\"]);",
+      "why": "等价改写（超集）：MCP 的 query key / 调用增加远端目标维度，官方原写法是本机分支的子集。"
+    },
+    {
+      "line": "queryClient.setQueryData<McpServersMap>([\"mcp\", \"all\"], {",
+      "why": "等价改写（超集）：MCP 的 query key / 调用增加远端目标维度，官方原写法是本机分支的子集。"
+    },
+    {
+      "line": "queryClient.setQueryData([\"mcp\", \"all\"], context.previous);",
+      "why": "等价改写（超集）：MCP 的 query key / 调用增加远端目标维度，官方原写法是本机分支的子集。"
+    },
+    {
+      "line": "export function useResyncMcpToApps() {",
+      "why": "等价改写（超集）：MCP 的 query key / 调用增加远端目标维度，官方原写法是本机分支的子集。"
+    },
+    {
+      "line": "mutationFn: (apps?: AppId[]) => mcpApi.resyncToApps(apps),",
+      "why": "等价改写（超集）：MCP 的 query key / 调用增加远端目标维度，官方原写法是本机分支的子集。"
+    }
+  ],
+  "src/hooks/usePromptActions.ts": [
+    {
+      "line": "[appId, notify, reload, t, updatePromptsForApp],",
+      "why": "等价改写（超集）：提示词写操作增加远端目标参数，官方原写法是本机分支的子集。"
+    },
+    {
+      "line": "[appId, notify, reload, t, updatePromptsForApp, visiblePrompts],",
+      "why": "等价改写（超集）：提示词写操作增加远端目标参数，官方原写法是本机分支的子集。"
+    },
+    {
+      "line": "}, [appId, notify, reload, t]);",
+      "why": "等价改写（超集）：提示词写操作增加远端目标参数，官方原写法是本机分支的子集。"
+    }
+  ],
+  "src/hooks/useSkills.ts": [
+    {
+      "line": "onSettled: () =>",
+      "why": "等价改写（超集）：Skills 的 query key 增加远端目标维度（host/container），官方原 key 是本机分支的子集。"
+    },
+    {
+      "line": "queryClient.setQueryData<InstalledSkill[]>(",
+      "why": "等价改写（超集）：Skills 的 query key 增加远端目标维度（host/container），官方原 key 是本机分支的子集。"
+    },
+    {
+      "line": "[\"skills\", \"installed\"],",
+      "why": "等价改写（超集）：Skills 的 query key 增加远端目标维度（host/container），官方原 key 是本机分支的子集。"
+    },
+    {
+      "line": "queryClient.invalidateQueries({ queryKey: [\"skills\", \"installed\"] }),",
+      "why": "等价改写（超集）：Skills 的 query key 增加远端目标维度（host/container），官方原 key 是本机分支的子集。"
+    },
+    {
+      "line": "await queryClient.cancelQueries({ queryKey: [\"skills\", \"installed\"] });",
+      "why": "等价改写（超集）：Skills 的 query key 增加远端目标维度（host/container），官方原 key 是本机分支的子集。"
+    },
+    {
+      "line": "const previous = queryClient.getQueryData<InstalledSkill[]>([",
+      "why": "等价改写（超集）：Skills 的 query key 增加远端目标维度（host/container），官方原 key 是本机分支的子集。"
+    },
+    {
+      "line": "]);",
+      "why": "等价改写（超集）：Skills 的 query key 增加远端目标维度（host/container），官方原 key 是本机分支的子集。"
+    },
+    {
+      "line": "queryClient.setQueryData([\"skills\", \"installed\"], context.previous);",
+      "why": "等价改写（超集）：Skills 的 query key 增加远端目标维度（host/container），官方原 key 是本机分支的子集。"
+    },
+    {
+      "line": "(oldData) => mergeImportedSkills(oldData, result.installed),",
+      "why": "等价改写（超集）：Skills 的 query key 增加远端目标维度（host/container），官方原 key 是本机分支的子集。"
+    },
+    {
+      "line": "export function useResyncSkillsToApps() {",
+      "why": "等价改写（超集）：Skills 的 query key 增加远端目标维度（host/container），官方原 key 是本机分支的子集。"
+    },
+    {
+      "line": "mutationFn: () => skillsApi.resyncToApps(),",
+      "why": "等价改写（超集）：Skills 的 query key 增加远端目标维度（host/container），官方原 key 是本机分支的子集。"
+    }
+  ],
+  "src/lib/query/mutations.ts": [
+    {
+      "line": "appId === \"pi\" ||",
+      "why": "等价改写（超集）：mutation 增加远端目标参数，官方原写法是本机分支的子集。"
+    },
+    {
+      "line": "appId === \"mcode\"",
+      "why": "等价改写（超集）：mutation 增加远端目标参数，官方原写法是本机分支的子集。"
+    },
+    {
+      "line": ".getQueryData<SessionMeta[]>([\"sessions\"])",
+      "why": "等价改写（超集）：mutation 增加远端目标参数，官方原写法是本机分支的子集。"
+    }
+  ],
+  "src/lib/query/usage.ts": [
+    {
+      "line": "/** 单个会话的用量汇总（会话阅读页头部），只数会话日志导入的行。 */",
+      "why": "等价改写（超集）：useSessionUsageSummary 增加 enabled 参数（远端会话禁用本机查询），官方函数体是默认分支。"
+    },
+    {
+      "line": "export function useSessionUsageSummary(appType: string, sessionId: string) {",
+      "why": "等价改写（超集）：useSessionUsageSummary 增加 enabled 参数（远端会话禁用本机查询），官方函数体是默认分支。"
+    }
+  ],
+  "src-tauri/src/database/schema.rs": [
+    {
+      "line": "enabled_pi BOOLEAN NOT NULL DEFAULT 0",
+      "why": "等价改写（超集）：mcp 表列原有 openclaw/pi 扩展，官方新增列已并入。"
+    }
+  ],
+  "src-tauri/src/services/provider/mod.rs": [
+    {
+      "line": "mod claude_editor;",
+      "why": "等价改写：v4.0.4 合并树在同一文件的远端/本机共用重构中改写了这一行，对应功能已人工核对仍存在。"
+    },
+    {
+      "line": "mod codex_editor;",
+      "why": "等价改写：v4.0.4 合并树在同一文件的远端/本机共用重构中改写了这一行，对应功能已人工核对仍存在。"
+    },
+    {
+      "line": "mod editor_toml;",
+      "why": "等价改写：v4.0.4 合并树在同一文件的远端/本机共用重构中改写了这一行，对应功能已人工核对仍存在。"
+    },
+    {
+      "line": "mod gemini_editor;",
+      "why": "等价改写：v4.0.4 合并树在同一文件的远端/本机共用重构中改写了这一行，对应功能已人工核对仍存在。"
+    },
+    {
+      "line": "mod grok_editor;",
+      "why": "等价改写：v4.0.4 合并树在同一文件的远端/本机共用重构中改写了这一行，对应功能已人工核对仍存在。"
+    }
+  ],
+  "src-tauri/src/session_manager/providers/claude.rs": [
+    {
+      "line": "fn parse_session_lines(path: &Path, head: Vec<String>, tail: Vec<String>) -> Option<SessionMeta> {",
+      "why": "同上：load_messages 拆出 parse_messages_from_content、parse_session_lines 暴露给远端，功能等价。"
+    },
+    {
+      "line": "let mut lines = LineSpans::new(BufReader::with_capacity(256 * 1024, file));",
+      "why": "同上：load_messages 拆出 parse_messages_from_content、parse_session_lines 暴露给远端，功能等价。"
+    },
+    {
+      "line": "let mut builder = TranscriptBuilder::new(path.with_extension(\"\"));",
+      "why": "同上：load_messages 拆出 parse_messages_from_content、parse_session_lines 暴露给远端，功能等价。"
+    },
+    {
+      "line": "Ok(builder.finish())",
+      "why": "同上：load_messages 拆出 parse_messages_from_content、parse_session_lines 暴露给远端，功能等价。"
+    }
+  ],
+  "src-tauri/src/session_manager/providers/codex.rs": [
+    {
+      "line": "let mut lines = LineSpans::new(BufReader::with_capacity(1 << 20, file));",
+      "why": "等价改写：解析函数改为本机/远端共用的纯函数（pub(crate) + 内容/行输入），功能等价。"
+    },
+    {
+      "line": "while let Some(line) = lines",
+      "why": "等价改写：解析函数改为本机/远端共用的纯函数（pub(crate) + 内容/行输入），功能等价。"
+    },
+    {
+      "line": ".next_line()",
+      "why": "等价改写：解析函数改为本机/远端共用的纯函数（pub(crate) + 内容/行输入），功能等价。"
+    },
+    {
+      "line": ".map_err(|e| format!(\"Failed to read session file: {e}\"))?",
+      "why": "等价改写：解析函数改为本机/远端共用的纯函数（pub(crate) + 内容/行输入），功能等价。"
+    },
+    {
+      "line": "{",
+      "why": "等价改写：解析函数改为本机/远端共用的纯函数（pub(crate) + 内容/行输入），功能等价。"
+    },
+    {
+      "line": "Ok(parser.finish())",
+      "why": "等价改写：解析函数改为本机/远端共用的纯函数（pub(crate) + 内容/行输入），功能等价。"
+    },
+    {
+      "line": "fn parse_session_lines(",
+      "why": "等价改写：解析函数改为本机/远端共用的纯函数（pub(crate) + 内容/行输入），功能等价。"
+    }
+  ],
+  "src-tauri/src/session_manager/providers/grokbuild.rs": [
+    {
+      "line": "extract_text, for_each_jsonl_value, parse_timestamp_to_ms, truncate_summary, TITLE_MAX_CHARS,",
+      "why": "同上：解析函数改为本机/远端共用（pub(crate) + 内容输入），功能等价。"
+    },
+    {
+      "line": "for_each_jsonl_value(&chat_path, |span, value| {",
+      "why": "同上：解析函数改为本机/远端共用（pub(crate) + 内容输入），功能等价。"
+    },
+    {
+      "line": "_ => return Ok(()),",
+      "why": "同上：解析函数改为本机/远端共用（pub(crate) + 内容输入），功能等价。"
+    },
+    {
+      "line": "return Ok(());",
+      "why": "同上：解析函数改为本机/远端共用（pub(crate) + 内容输入），功能等价。"
+    },
+    {
+      "line": "})?;",
+      "why": "同上：解析函数改为本机/远端共用（pub(crate) + 内容输入），功能等价。"
+    }
+  ],
+  "src-tauri/src/session_manager/providers/hermes.rs": [
+    {
+      "line": "for_each_jsonl_value(path, |span, value| {",
+      "why": "同上：解析函数改为本机/远端共用，功能等价。"
+    },
+    {
+      "line": "})?;",
+      "why": "同上：解析函数改为本机/远端共用，功能等价。"
+    }
+  ],
+  "src-tauri/src/session_manager/providers/pi.rs": [
+    {
+      "line": "use super::utils::for_each_jsonl_value;",
+      "why": "同上：解析函数改为本机/远端共用，功能等价。"
+    },
+    {
+      "line": "})",
+      "why": "同上：解析函数改为本机/远端共用，功能等价。"
+    },
+    {
+      "line": "for_each_jsonl_value(path, |span, value| {",
+      "why": "同上：解析函数改为本机/远端共用，功能等价。"
+    },
+    {
+      "line": ".map_err(|error| error.replace(\"session file\", \"Pi session\"))?;",
+      "why": "同上：解析函数改为本机/远端共用，功能等价。"
+    }
+  ],
+  "src-tauri/src/session_manager/providers/utils.rs": [
+    {
+      "line": "let mut lines = LineSpans::new(BufReader::new(file));",
+      "why": "同上：按内容/行输入重构，供远端复用，功能等价。"
+    }
+  ],
+  "src-tauri/src/tray.rs": [
+    {
+      "line": "fn current() -> Self {",
+      "why": "等价改写（超集）：锚点把 current/provider_uses_official_subscription 改为 pub(crate)，并给菜单模型加了悬浮窗项，官方原行被超集替换。"
+    },
+    {
+      "line": "fn provider_uses_official_subscription(provider: &Provider) -> bool {",
+      "why": "等价改写（超集）：锚点把 current/provider_uses_official_subscription 改为 pub(crate)，并给菜单模型加了悬浮窗项，官方原行被超集替换。"
+    },
+    {
+      "line": "let entries = build_menu_model(",
+      "why": "等价改写（超集）：锚点把 current/provider_uses_official_subscription 改为 pub(crate)，并给菜单模型加了悬浮窗项，官方原行被超集替换。"
     }
   ]
 }

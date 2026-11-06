@@ -1,4 +1,4 @@
-/** 远程主机认证方式（M1 仅支持密码，密钥二期实现） */
+/** 远程主机认证方式（密码 / 私钥） */
 export type RemoteAuthMethod = "password" | "key";
 
 /** 远程主机（对应后端 remote::RemoteHost，camelCase 序列化） */
@@ -9,6 +9,8 @@ export interface RemoteHost {
   port: number;
   username: string;
   authMethod: RemoteAuthMethod;
+  /** 密钥认证的私钥文件路径（authMethod=key 时使用） */
+  privateKeyPath?: string;
   savePassword: boolean;
   routeThroughLocalProxy: boolean;
   /** per-app 远端接管开关（claude/codex/gemini/grokbuild）——宿主机目标 */
@@ -38,6 +40,7 @@ export interface RemoteHostDraft {
   port: number;
   username: string;
   authMethod: RemoteAuthMethod;
+  privateKeyPath?: string;
   savePassword: boolean;
   routeThroughLocalProxy: boolean;
   password?: string;

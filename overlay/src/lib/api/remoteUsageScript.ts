@@ -13,7 +13,6 @@ import { toast } from "sonner";
 
 import type { AppId } from "@/lib/api";
 import { updateRemoteProviderMeta } from "@/lib/api/remote";
-import { usageKeys } from "@/lib/query/usage";
 import type { Provider, UsageScript } from "@/types";
 import { extractErrorMessage } from "@/utils/errorUtils";
 
@@ -65,14 +64,18 @@ export async function saveRemoteUsageScript(
         activeApp,
       ],
     });
-    // 保存用量脚本后，失效该 provider 的用量查询缓存
+    // 保存用量脚本后，失效该 provider 的远端用量查询缓存。
+    // 注意：官方 v4.0.4 的 usageKeys 只有本机的 script(providerId, appType)，
+    // 没有远端变体；远端用量查询用的是自己的键前缀（见 remoteMutations 里的
+    // remoteUsage 查询），这里按同一前缀写死，保持一致。
     await queryClient.invalidateQueries({
-      queryKey: usageKeys.scriptRemote(
+      queryKey: [
+        "remoteUsage",
         remoteTargetId,
+        remoteContainerId || "__host__",
         activeApp,
         provider.id,
-        remoteContainerId,
-      ),
+      ],
     });
     await queryClient.invalidateQueries({
       queryKey: ["subscription", "quota", activeApp],

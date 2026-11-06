@@ -1,4 +1,11 @@
 {
+  "common": {
+    "localScope": "このコンピューター",
+    "remoteScope": "リモートホスト"
+  },
+  "provider": {
+    "importDisabledRemote": "リモートターゲットでは live からのインポートは未対応です"
+  },
   "settings": {
     "advanced": {
       "proxy": {
@@ -54,6 +61,10 @@
     "modifiedAppTitle": "CC Switch Magic",
     "modifiedVersionSuffix": "magic"
   },
+  "sessionManager": {
+    "whereLeadRemote": "CC Switch はリモートターゲット（選択中のホスト/コンテナ）の次の場所からセッションを読み取ります。~ はリモートユーザーの home を指します。",
+    "resumeCopiedRemote": "再開コマンドをコピーしました。リモートホスト/コンテナの対応するディレクトリで実行してください（ローカル端末ではリモートセッションを直接再開できません）"
+  },
   "proxy": {
     "takeover": {
       "hint": "本機アプリのみに影響します。ルーティングする本機アプリを選択すると、そのアプリのリクエストはローカルルーティング経由で転送されます。リモート接管は対象ホストの目標選択またはホストフォームで設定します",
@@ -69,6 +80,25 @@
   },
   "proxyConfig": {
     "appTakeover": "ローカルアプリ接管有効"
+  },
+  "nav": {
+    "remote": "リモートホスト"
+  },
+  "routingSettings": {
+    "remoteRoute": "リモートルート",
+    "remoteRouteDetail": "「{{target}}」はローカルプロキシ経由",
+    "remoteRouteContainerDetail": "「{{target}} コンテナ {{container}}」はローカルプロキシ経由",
+    "exitingAll": "すべてのアプリを直接接続に戻しています。しばらくお待ちください…"
+  },
+  "skillsPage": {
+    "addMenu": {
+      "import": "この{{scope}}から取り込む"
+    },
+    "emptyBody": "「見つける」からインストールするか、この{{scope}}にある Skill を取り込みましょう。",
+    "importCount": "この{{scope}}から取り込む（{{count}}）",
+    "import": {
+      "title": "この{{scope}}の Skill を取り込む"
+    }
   },
   "remote": {
     "readingConfigPrefix": "読み込み中 ",
@@ -90,13 +120,17 @@
     "editTitle": "リモートホストを編集",
     "description": "SSH で Linux サーバーに接続し、リモートアプリ（Claude Code / Codex / Gemini / Grok Build / OpenCode など）の設定とプロバイダー切り替えを一元管理します。一度設定すれば複数マシンに適用できます。",
     "empty": "リモートホストがまだありません",
-    "emptyHint": "「リモートホストを追加」をクリックして、GPU サーバー/クラウドホストに接続します",
+    "emptyHint": "「リモートホストを追加」をクリックして、サーバー/クラウドホストに接続します",
     "searchPlaceholder": "ホスト名/アドレス/ユーザー名を検索…",
     "searchAriaLabel": "リモートホストを検索",
     "searchEmpty": "一致するホストがありません",
     "filterAll": "すべて",
     "filterEnabled": "有効のみ",
     "filterDisabled": "無効のみ",
+    "filterAriaLabel": "状態で絞り込み",
+    "count": "ホスト {{count}} 台",
+    "loading": "読み込み中…",
+    "listLabel": "リモートホスト",
     "loadError": "リモートに接続できません",
     "hostRequired": "ホストアドレスを入力してください",
     "usernameRequired": "ユーザー名を入力してください",
@@ -126,6 +160,15 @@
     "statusDisabled": "無効",
     "test": "接続テスト",
     "testing": "テスト中…",
+    "moreActions": "その他の操作",
+    "testAll": "すべての接続をテスト",
+    "testAllOk": "{{count}} 台すべて接続正常",
+    "testAllPartial": "{{ok}}/{{total}} 台が接続正常",
+    "testOkShort": "接続OK",
+    "testFailShort": "失敗",
+    "loadingContainers": "コンテナを読み込み中…",
+    "groupServers": "サーバー",
+    "groupContainers": "コンテナ",
     "testingShort": "テスト中…",
     "env": "環境変数",
     "envTitle": "競合する環境変数",
@@ -137,7 +180,7 @@
     "basicInfo": "基本情報",
     "nameLabel": "名前",
     "optional": "任意",
-    "namePlaceholder": "GPU 学習機 / 本番サーバー…",
+    "namePlaceholder": "本番サーバー / 開発機…",
     "nameHint": "空の場合はホストアドレスが表示名として使われます",
     "connectionInfo": "接続情報",
     "hostLabel": "ホストアドレス",
@@ -156,7 +199,24 @@
     "showPassword": "パスワードを表示",
     "savePassword": "パスワードを暗号化して保存",
     "savePasswordHint": "パスワードは Windows DPAPI で暗号化され、現在のアカウントに紐づきます。ワンクリック接続/切り替えに使用します",
-    "formHint": "M1 フェーズではパスワード認証のみ対応。鍵認証は今後のバージョンで追加予定です。",
+    "passwordStoredHint": "パスワードは Windows DPAPI でローカルに暗号化保存され（現在の Windows アカウントのみ復号可能）、ワンクリック接続/切り替えに使用します。鍵の設定に成功すると削除されます。",
+    "passphraseStoredHint": "パスフレーズは Windows DPAPI でローカルに暗号化保存され（現在の Windows アカウントのみ復号可能）、自動接続に使用します。",
+    "authMethodLabel": "認証方式",
+    "authPassword": "パスワード",
+    "authKey": "秘密鍵",
+    "privateKeyPathLabel": "秘密鍵ファイルのパス",
+    "privateKeyPathPlaceholder": "例: ~/.ssh/id_ed25519",
+    "privateKeyPathHint": "ローカルの鍵が見つかりません。パスを手動で入力してください。",
+    "privateKeyPathDetected": "ローカルの鍵を自動入力しました。変更も可能です。パスフレーズは暗号化保存されます。",
+    "privateKeyRequired": "鍵認証には秘密鍵ファイルのパスが必要です",
+    "passphraseLabel": "鍵のパスフレーズ（任意）",
+    "passphrasePlaceholder": "パスフレーズなしの場合は空欄",
+    "savePassphrase": "パスフレーズを暗号化保存",
+    "formHint": "パスワード認証と鍵認証に対応。秘密鍵はこの端末に置き、パスフレーズは暗号化保存されます。",
+    "bootstrapKey": "初回ログイン後に鍵を自動設定（推奨）",
+    "bootstrapKeyHint": "入力したパスワードで一度ログインし、ローカルで鍵を生成して公開鍵をリモートに設置します。以降はパスワード不要です（VS Code と同じ初回体験）。",
+    "keyConfigured": "鍵ログインを設定しました。以後パスワードは不要です",
+    "keyConfigureFailed": "鍵の自動設定に失敗しました。パスワードログインは維持されます",
     "routeThroughLocalProxy": "リモートテイクオーバー（ホスト）",
     "routeThroughLocalProxyHint": "このホストに適用：有効にすると、対応アプリのプロバイダーが SSH リバーストンネル経由でローカルプロキシを使用します。未実行の場合はローカルプロキシを自動起動します。コンテナターゲットはコンテナ側で設定してください",
     "addDone": "リモート {{target}} に追加しました",
@@ -189,6 +249,8 @@
   "batchApply": {
     "title": "一括適用",
     "noProvider": "（利用可能なプロバイダーなし）",
+    "source": "Provider ソース",
+    "sourceLocal": "このマシン",
     "host": "ホスト",
     "container": "コンテナ",
     "searchPlaceholder": "ホスト名 / アドレス / コンテナを検索…",

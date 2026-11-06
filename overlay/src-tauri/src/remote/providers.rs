@@ -16,7 +16,13 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::fsops::FileOps;
+// apply_file 是 LivePatch trait 的方法，必须把 trait 引入作用域才能调用
+// （官方 engine 也是这么用的：trait 方法 + JsonPatch 具体实现）。
+use crate::live::patch::LivePatch;
+use crate::live::project::claude::{direct_patch, ClaudeProjection};
 use crate::provider::{Provider, ProviderMeta};
+
+use super::effect::EffectReport;
 
 /// 是否 additive 模式 app（live 即完整供应商集合）。
 pub fn is_additive_app(app: &str) -> bool {
@@ -717,28 +723,30 @@ pub async fn apply_remote_provider_to_live(
     let route_proxy = route_base.is_some();
     let report = match app {
         "claude" => {
-            let effective =
-                crate::services::provider::live::build_effective_settings_with_common_config(
-                    db,
-                    &crate::app_config::AppType::Claude,
-                    provider,
-                )
-                .map_err(|e| e.to_string())?;
-            let mut sanitized =
-                crate::services::provider::live::sanitize_claude_settings_for_live(&effective);
+            // 官方 v4.0.4 的 claude 写入是「纯投影 + 纯补丁」：
+            //   供应商行 → ClaudeProjection::of → direct_patch → 改写 settings.json
+            // 远端复用同一条：读远端原文 → 官方纯函数算出新内容 → 写回。
+            // 于是「写什么」与本机逐字节同源（同一个投影器 + 同一个补丁器），
+            // 且官方文件零改动。
+            //
+            // 注意：官方已废弃「回填 / 合并通用配置片段 / 注入上下文默认值」
+            // （见 services/provider/claude_direct.rs 的模块文档：「用户的设置本来
+            // 就留在 live 里」），所以本机怎么写，远端就怎么写。
+            let mut target_config = provider.settings_config.clone();
             if route_proxy {
-                // 走本机路由：远端 claude 的 live 与本机路由模式逐字节一致——
-                // base_url 指向远端隧道（宿主机=127.0.0.1；容器=网关 IP），
-                // token 用 PROXY_MANAGED:<host_id> 占位（本机代理识别 host_id 按该远端
-                // 自己的当前供应商路由，并注入真实密钥）。
-                let obj = sanitized
+                // 走本机路由：远端 claude 的 live 指向远端隧道（宿主机=127.0.0.1；
+                // 容器=网关 IP），token 用 PROXY_MANAGED:<host_id> 占位（本机代理识别
+                // host_id 后按该远端自己的当前供应商路由，并注入真实密钥）。
+                // 这是本补丁层的功能（官方没有远端概念），但表达方式仍是官方那套
+                // 投影——只是 env 里多两个键，写入路径不变。
+                let base = route_base
+                    .as_deref()
+                    .unwrap_or(crate::remote::connection::REMOTE_TUNNEL_LISTEN_ADDR);
+                let obj = target_config
                     .as_object_mut()
-                    .ok_or_else(|| "sanitized settings 不是对象".to_string())?;
+                    .ok_or_else(|| "claude settings_config 不是对象".to_string())?;
                 let env = obj.entry("env").or_insert_with(|| serde_json::json!({}));
                 if let Some(e) = env.as_object_mut() {
-                    let base = route_base
-                        .as_deref()
-                        .unwrap_or(crate::remote::connection::REMOTE_TUNNEL_LISTEN_ADDR);
                     e.insert(
                         "ANTHROPIC_BASE_URL".to_string(),
                         serde_json::json!(format!("http://{base}:{port}")),
@@ -746,82 +754,84 @@ pub async fn apply_remote_provider_to_live(
                     e.insert(
                         "ANTHROPIC_AUTH_TOKEN".to_string(),
                         serde_json::json!(crate::proxy::remote_route::remote_token_for(
-                            session.host_id()
+                            session.host_id(),
+                            container
                         )),
                     );
                 }
             }
-            crate::remote::settings::apply_provider_settings(
-                session,
+
+            // prev = 该**目标器**上「上一次写进去的那家」：direct_patch 据此删掉它带进来的
+            // 独有键（与本机 switch_to 的 prev 语义一致）。取不到（首次写入）按无 prev。
+            let prev_provider = crate::remote::current::get_current_provider_config(
+                db,
+                session.host_id(),
                 container,
-                home,
-                host_name,
-                &provider.name,
-                &sanitized,
+                "claude",
             )
-            .await
+            .ok()
+            .flatten()
+            .and_then(|raw| serde_json::from_str::<Provider>(&raw).ok());
+            let prev = prev_provider
+                .as_ref()
+                .map(|p| ClaudeProjection::of(&p.settings_config));
+
+            // 官方纯补丁：只碰投影拥有的键，其余字节保持原样。
+            let patch = direct_patch(prev.as_ref(), &ClaudeProjection::of(&target_config));
+
+            let path = crate::remote::settings::remote_settings_path(home);
+            let pre = session.read_remote_text(&path, container).await?;
+            let updated = patch
+                .apply_file(
+                    std::path::Path::new(&path),
+                    pre.as_deref().map(str::as_bytes),
+                )
+                .map_err(|e| format!("claude settings 改写失败: {e}"))?;
+            let text = match updated {
+                Some(bytes) => {
+                    String::from_utf8(bytes).map_err(|e| format!("改写结果不是 UTF-8: {e}"))?
+                }
+                // claude 的 settings.json 不会整份删掉；真出现时按空文件处理。
+                None => String::new(),
+            };
+            session
+                .write_settings_with_backup(&path, &text, container, None)
+                .await?;
+
+            Ok(EffectReport {
+                target: host_name.to_string(),
+                provider_name: provider.name.clone(),
+                current_provider_id: Some(provider.id.clone()),
+                conflicts_cleaned: 0,
+                notes: vec![
+                    format!("已改写远端 {path}（只替换关键字段，其余字节不动）"),
+                    "新建的 Claude Code 会话立即生效".to_string(),
+                    "已在运行的会话按热重载生效".to_string(),
+                ],
+                warnings: Vec::new(),
+            })
         }
         "codex" => {
-            let settings = if route_proxy {
-                // 走本机路由：base_url 指向远端隧道（宿主机=127.0.0.1；容器=网关 IP），
-                // 复用本机同一变换 apply_codex_official_proxy_route，保持与本机一致。
-                let mut s = provider.settings_config.clone();
-                if let Some(config) = s.get("config").and_then(|v| v.as_str()) {
-                    let base = route_base
-                        .as_deref()
-                        .unwrap_or(crate::remote::connection::REMOTE_TUNNEL_LISTEN_ADDR);
-                    let routed = crate::codex_config::apply_codex_official_proxy_route(
-                        config,
-                        &format!("http://{base}:{port}/v1"),
-                    )
-                    .map_err(|e| e.to_string())?;
-                    s["config"] = serde_json::json!(routed);
-                }
-                s
-            } else {
-                provider.settings_config.clone()
-            };
             crate::remote::codex::apply_codex_provider_settings(
                 session,
                 container,
                 home,
                 host_name,
                 &provider.name,
-                &settings,
+                &provider.settings_config,
                 provider.category.as_deref(),
                 crate::proxy::providers::resolve_codex_catalog_tool_profile(provider),
             )
             .await
         }
         "grokbuild" => {
-            let settings = if route_proxy {
-                // 走本机路由：直接复用本机代理接管的同一变换
-                // （base_url 指向远端隧道：宿主机=127.0.0.1；容器=网关 IP +
-                // api_key 占位 + api_backend=responses），与本机产物逐字段一致。
-                let mut s = provider.settings_config.clone();
-                if let Some(config) = s.get("config").and_then(|v| v.as_str()) {
-                    let base = route_base
-                        .as_deref()
-                        .unwrap_or(crate::remote::connection::REMOTE_TUNNEL_LISTEN_ADDR);
-                    let routed = crate::grok_config::apply_proxy_takeover(
-                        config,
-                        &format!("http://{base}:{port}/grokbuild/v1"),
-                        &crate::proxy::remote_route::remote_token_for(session.host_id()),
-                    )
-                    .map_err(|e| e.to_string())?;
-                    s["config"] = serde_json::json!(routed);
-                }
-                s
-            } else {
-                provider.settings_config.clone()
-            };
             crate::remote::grok::apply_grok_provider_settings(
                 session,
                 container,
                 home,
                 host_name,
                 &provider.name,
-                &settings,
+                &provider.settings_config,
                 provider.category.as_deref(),
             )
             .await

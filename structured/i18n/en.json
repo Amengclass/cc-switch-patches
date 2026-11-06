@@ -1,4 +1,11 @@
 {
+  "common": {
+    "localScope": "this computer",
+    "remoteScope": "the remote host"
+  },
+  "provider": {
+    "importDisabledRemote": "Import from live is not supported for remote targets"
+  },
   "settings": {
     "advanced": {
       "proxy": {
@@ -54,6 +61,10 @@
     "modifiedAppTitle": "CC Switch Modified",
     "modifiedVersionSuffix": "Modified"
   },
+  "sessionManager": {
+    "whereLeadRemote": "CC Switch reads sessions from these locations on the remote target (selected host/container). ~ means the remote user's home.",
+    "resumeCopiedRemote": "Resume command copied. Run it in the matching folder on the remote host/container (a local terminal can’t resume a remote session)."
+  },
   "proxy": {
     "takeover": {
       "hint": "Affects local apps only. Select local apps to route; once enabled, requests from that app will go through local routing. Remote takeover is configured per-host in the target selector or host form.",
@@ -69,6 +80,26 @@
   },
   "proxyConfig": {
     "appTakeover": "Local App Takeover Enabled"
+  },
+  "nav": {
+    "remote": "Remote Hosts"
+  },
+  "routingSettings": {
+    "remoteRoute": "Remote route",
+    "remoteRouteDetail": "{{target}} via local proxy",
+    "remoteRouteContainerDetail": "{{target}} container {{container}} via local proxy",
+    "exitingAll": "Switching all apps back to direct, please wait…"
+  },
+  "skillsPage": {
+    "addMenu": {
+      "import": "Import from this {{scope}}"
+    },
+    "emptyBody": "Install one from Discover, or import Skills already on this {{scope}}.",
+    "importCount": "Import from this {{scope}} ({{count}})",
+    "import": {
+      "title": "Import Skills from this {{scope}}",
+      "helpTitle": "What counts as already on this {{scope}}"
+    }
   },
   "remote": {
     "readingConfigPrefix": "Reading ",
@@ -90,13 +121,17 @@
     "editTitle": "Edit Remote Host",
     "description": "Connect to Linux servers via SSH and centrally manage the configuration and provider switching for remote apps (Claude Code / Codex / Gemini / Grok Build / OpenCode, etc.) — configure once, apply to many machines.",
     "empty": "No remote hosts yet",
-    "emptyHint": "Click \"Add Remote Host\" to connect your GPU server / cloud host",
+    "emptyHint": "Click \"Add Remote Host\" to connect your server / cloud host",
     "searchPlaceholder": "Search host name / address / username…",
     "searchAriaLabel": "Search remote hosts",
     "searchEmpty": "No matching hosts",
     "filterAll": "All",
     "filterEnabled": "Enabled only",
     "filterDisabled": "Disabled only",
+    "filterAriaLabel": "Filter by status",
+    "count": "{{count}} hosts",
+    "loading": "Loading...",
+    "listLabel": "Remote hosts",
     "loadError": "Failed to connect to remote",
     "hostRequired": "Host address is required",
     "usernameRequired": "Username is required",
@@ -126,6 +161,15 @@
     "statusDisabled": "Disabled",
     "test": "Test Connection",
     "testing": "Testing…",
+    "moreActions": "More actions",
+    "testAll": "Test all connections",
+    "testAllOk": "All {{count}} hosts are reachable",
+    "testAllPartial": "{{ok}}/{{total}} hosts reachable",
+    "testOkShort": "Reachable",
+    "testFailShort": "Failed",
+    "loadingContainers": "Loading containers…",
+    "groupServers": "Servers",
+    "groupContainers": "Containers",
     "testingShort": "Testing…",
     "env": "Environment Variables",
     "envTitle": "Conflicting Environment Variables",
@@ -137,7 +181,7 @@
     "basicInfo": "Basic Info",
     "nameLabel": "Name",
     "optional": "Optional",
-    "namePlaceholder": "GPU training box / production server…",
+    "namePlaceholder": "Production server / dev box…",
     "nameHint": "When empty, the host address is used as the display name",
     "connectionInfo": "Connection Info",
     "hostLabel": "Host Address",
@@ -156,7 +200,24 @@
     "showPassword": "Show password",
     "savePassword": "Encrypt and save password",
     "savePasswordHint": "The password is encrypted with Windows DPAPI, bound to the current account, and used for one-click connection / switching",
-    "formHint": "Phase M1 only supports password authentication; key authentication will come in a later version.",
+    "passwordStoredHint": "The password is stored locally with Windows DPAPI (only your Windows account can decrypt it) and used for one-click connection / switching; it is deleted once key login is configured.",
+    "passphraseStoredHint": "The passphrase is stored locally with Windows DPAPI (only your Windows account can decrypt it) and used for automatic connections.",
+    "authMethodLabel": "Authentication",
+    "authPassword": "Password",
+    "authKey": "Private key",
+    "privateKeyPathLabel": "Private key file",
+    "privateKeyPathPlaceholder": "e.g. ~/.ssh/id_ed25519",
+    "privateKeyPathHint": "No local key detected — enter the path manually. If it has a passphrase, enter it below.",
+    "privateKeyPathDetected": "Local key detected and filled in; you can change it. Passphrases are stored encrypted.",
+    "privateKeyRequired": "Private key authentication requires a key file path",
+    "passphraseLabel": "Key passphrase (optional)",
+    "passphrasePlaceholder": "Leave empty if the key has no passphrase",
+    "savePassphrase": "Save passphrase encrypted",
+    "formHint": "Password and private key authentication are supported; the key must be on this machine and its passphrase is stored encrypted.",
+    "bootstrapKey": "Set up a key on first login (recommended)",
+    "bootstrapKeyHint": "Log in once with the password you entered: a local key is generated and its public key installed on the remote, so later connections need no password (same first-run experience as VS Code).",
+    "keyConfigured": "Key login configured — no password needed from now on",
+    "keyConfigureFailed": "Could not set up key login; password login is kept",
     "routeThroughLocalProxy": "Remote Takeover (Host)",
     "routeThroughLocalProxyHint": "Applies to this host: when enabled, the provider of the corresponding app uses your locally running proxy via the SSH reverse tunnel; if not running, it starts the local proxy automatically. Configure container targets under the container.",
     "addDone": "Added to remote {{target}}",
@@ -189,6 +250,8 @@
   "batchApply": {
     "title": "Batch Apply",
     "noProvider": "(No available Provider)",
+    "source": "Provider source",
+    "sourceLocal": "This machine",
     "host": "Host",
     "container": "Container",
     "searchPlaceholder": "Search host name / address / container…",

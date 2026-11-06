@@ -166,6 +166,9 @@ pub struct RemoteSession {
     /// 用互斥锁保护：取连接时按宿主当前意图对账（补建/取消），不重建连接。
     /// 注意这只是「本连接是否持有」；整机是否可用看主机级 HOST_TUNNEL_STATE。
     tunnel_active: Mutex<bool>,
+    /// ProxyJump：跳板机连接。目标连接的传输跑在它的 direct-tcpip 通道上，
+    /// 必须与目标连接同生命周期（提前 drop 会把目标连接一起断掉）。
+    _jump: Option<Arc<Handle<RemoteHandler>>>,
 }
 
 impl Drop for RemoteSession {
@@ -308,6 +311,9 @@ impl RemoteSession {
     /// 读取远端文件文本（不存在 / 为空时返回 None）。
     /// 走 exec `cat`（宿主机 `sh -c` / 容器 `docker exec`），不依赖 SFTP
     /// （容器目标无 SFTP）。供远端读-改-写类切换（gemini settings.json 等）使用。
+    ///
+    /// 用 [`exec_command_raw`]（不 trim）：文件末尾换行必须原样保留，
+    /// 否则用读回内容算的 sha256 与磁盘真文件对不上。
     pub async fn read_remote_text(
         &self,
         path: &str,
@@ -321,7 +327,7 @@ impl RemoteSession {
                 format!("docker exec {} sh -c {}", ops.container, shell_quote(&cat))
             }
         };
-        let out = exec_command(&self.channel, &cmd).await?;
+        let out = exec_command_raw(&self.channel, &cmd).await?;
         Ok(if out.is_empty() { None } else { Some(out) })
     }
 
@@ -348,7 +354,10 @@ impl RemoteSession {
         let tmp = format!("{path}.ccswitch.tmp");
         let hash_guard = match expected_hash {
             Some(h) if !h.is_empty() => format!(
-                "if [ -f {p} ] && [ \"$(sha256sum {p} 2>/dev/null | cut -d' ' -f1)\" != '{h}' ]; then echo REMOTE_CONFLICT; exit 0; fi; ",
+                // 远端没有 sha256sum（精简容器常见）时算不出真实值，此时**放行**而不是
+                // 拿空串去比：宁可漏过一次校验，也不能误报「已被外部修改」挡住正常切换。
+                "cur=$(sha256sum {p} 2>/dev/null | cut -d' ' -f1); \
+                 if [ -f {p} ] && [ -n \"$cur\" ] && [ \"$cur\" != '{h}' ]; then echo REMOTE_CONFLICT; exit 0; fi; ",
                 p = shell_quote(path),
                 h = h,
             ),
@@ -433,37 +442,339 @@ pub async fn connect(
     pooled_connect(host, password).await
 }
 
+/// `~/.ssh/config` 解析结果（只取连接需要的四项）。
+#[derive(Clone)]
+struct SshConfigEntry {
+    hostname: Option<String>,
+    port: Option<u16>,
+    user: Option<String>,
+    identity_file: Option<String>,
+    /// `ProxyJump`（原样，可能是 `user@host:port` / 逗号分隔多跳）
+    proxy_jump: Option<String>,
+}
+
+/// 用系统 `ssh -G <alias>` 解析 SSH 配置（不建连，纯展开）。
+///
+/// 比自己解析 `~/.ssh/config` 更可靠：Include、Match、通配符、ProxyJump 等
+/// 都由 OpenSSH 自己处理。系统没有 ssh 或解析失败时返回 None（退回原值）。
+fn resolve_ssh_config(alias: &str) -> Option<SshConfigEntry> {
+    use std::collections::HashMap;
+    use std::sync::{LazyLock, Mutex};
+
+    static CACHE: LazyLock<Mutex<HashMap<String, Option<SshConfigEntry>>>> =
+        LazyLock::new(|| Mutex::new(HashMap::new()));
+    if let Ok(cache) = CACHE.lock() {
+        if let Some(hit) = cache.get(alias) {
+            return hit.clone();
+        }
+    }
+
+    let parsed = (|| {
+        let output = std::process::Command::new("ssh")
+            .args(["-G", alias])
+            .output()
+            .ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        let text = String::from_utf8_lossy(&output.stdout);
+        let mut entry = SshConfigEntry {
+            hostname: None,
+            port: None,
+            user: None,
+            identity_file: None,
+            proxy_jump: None,
+        };
+        for line in text.lines() {
+            let mut parts = line.splitn(2, char::is_whitespace);
+            let key = parts.next().unwrap_or("").to_ascii_lowercase();
+            let value = parts.next().unwrap_or("").trim();
+            if value.is_empty() || value.eq_ignore_ascii_case("none") {
+                continue;
+            }
+            match key.as_str() {
+                "hostname" if entry.hostname.is_none() => {
+                    entry.hostname = Some(value.to_string())
+                }
+                "port" if entry.port.is_none() => entry.port = value.parse().ok(),
+                "user" if entry.user.is_none() => entry.user = Some(value.to_string()),
+                "identityfile" if entry.identity_file.is_none() => {
+                    entry.identity_file = Some(value.to_string())
+                }
+                "proxyjump" if entry.proxy_jump.is_none() => {
+                    entry.proxy_jump = Some(value.to_string())
+                }
+                _ => {}
+            }
+        }
+        // 什么都没解析出来（例如 alias 本身就是主机名）时不缓存空结果也没意义
+        Some(entry)
+    })();
+
+    if let Ok(mut cache) = CACHE.lock() {
+        cache.insert(alias.to_string(), parsed.clone());
+    }
+    parsed
+}
+
+/// `~/.ssh/config` 里某个别名的 `IdentityFile`（供「私钥」表单自动填充）。
+pub(crate) fn ssh_config_identity_file(alias: &str) -> Option<String> {
+    resolve_ssh_config(alias.trim()).and_then(|cfg| cfg.identity_file)
+}
+
+/// 是否是 IP 字面量（IP 不做 ssh config 展开）。
+fn is_ip_literal(value: &str) -> bool {
+    use std::net::IpAddr;
+    value.trim().parse::<IpAddr>().is_ok()
+}
+
+/// 把 `RemoteHost` 与 `~/.ssh/config` 合成实际连接参数：
+/// `HostName` 总是优先；端口/用户名/私钥只在用户没显式改过时由配置补全
+/// （端口 22 视为未设置，用户名空视为未设置）。
+struct EffectiveParams {
+    host: String,
+    port: u16,
+    user: String,
+    key_path: Option<String>,
+    /// `ProxyJump` 原始规格（`[user@]host[:port]`，多跳取第一跳）
+    proxy_jump: Option<String>,
+}
+
+fn effective_connection_params(host: &RemoteHost) -> EffectiveParams {
+    let cfg = if is_ip_literal(&host.host) {
+        None
+    } else {
+        resolve_ssh_config(host.host.trim())
+    };
+
+    let target_host = cfg
+        .as_ref()
+        .and_then(|c| c.hostname.clone())
+        .unwrap_or_else(|| host.host.clone());
+    let target_port = if host.port == 22 {
+        cfg.as_ref().and_then(|c| c.port).unwrap_or(host.port)
+    } else {
+        host.port
+    };
+    let user = if host.username.trim().is_empty() {
+        cfg.as_ref()
+            .and_then(|c| c.user.clone())
+            .unwrap_or_default()
+    } else {
+        host.username.clone()
+    };
+    let key_path = host
+        .private_key_path
+        .clone()
+        .filter(|p| !p.trim().is_empty())
+        .or_else(|| cfg.as_ref().and_then(|c| c.identity_file.clone()));
+    let proxy_jump = cfg
+        .and_then(|c| c.proxy_jump)
+        .map(|spec| spec.trim().to_string())
+        .filter(|spec| !spec.is_empty());
+
+    EffectiveParams {
+        host: target_host,
+        port: target_port,
+        user,
+        key_path,
+        proxy_jump,
+    }
+}
+
+/// 解析 `ProxyJump`：`[user@]host[:port]`。多跳（逗号分隔）只取第一跳。
+fn parse_jump_spec(spec: &str) -> (String, Option<String>, Option<u16>) {
+    let first = spec.split(',').next().unwrap_or(spec).trim();
+    let (user, host_port) = match first.rsplit_once('@') {
+        Some((user, rest)) => (Some(user.to_string()), rest),
+        None => (None, first),
+    };
+    // IPv6 需要 [addr]:port；这里只处理常见的 host:port（含 [..] 两种写法）
+    let (host, port) = if let Some(rest) = host_port.strip_prefix('[') {
+        match rest.split_once(']') {
+            Some((addr, after)) => {
+                let port = after
+                    .strip_prefix(':')
+                    .and_then(|p| p.parse::<u16>().ok());
+                (format!("[{addr}]"), port)
+            }
+            None => (host_port.to_string(), None),
+        }
+    } else {
+        match host_port.rsplit_once(':') {
+            Some((host, port_text)) if !host.contains(':') => (
+                host.to_string(),
+                port_text.parse::<u16>().ok(),
+            ),
+            _ => (host_port.to_string(), None),
+        }
+    };
+    (host, user, port)
+}
+
+/// 在一条已建立的 SSH 连接上完成认证（跳板机与目标机共用）。
+async fn authenticate_channel(
+    channel: &mut Handle<RemoteHandler>,
+    auth_method: AuthMethod,
+    username: &str,
+    password: Option<&str>,
+    key_path: Option<&str>,
+) -> Result<(), String> {
+    match auth_method {
+        AuthMethod::Password => {
+            let pw = password.unwrap_or_default();
+            let auth = channel
+                .authenticate_password(username, pw)
+                .await
+                .map_err(|e| format!("认证失败: {e}"))?;
+            if !auth.success() {
+                return Err("认证失败: 服务器拒绝了用户名/密码".to_string());
+            }
+        }
+        AuthMethod::Key => {
+            let raw_path = key_path
+                .map(str::trim)
+                .filter(|p| !p.is_empty())
+                .ok_or_else(|| {
+                    "密钥认证：未配置私钥文件路径（也可在 ~/.ssh/config 里设置 IdentityFile）"
+                        .to_string()
+                })?;
+            let key_file = expand_tilde(raw_path);
+            // 口令复用凭据存储（未加密私钥时为空）
+            let passphrase = password.filter(|p| !p.is_empty());
+            let key = russh::keys::load_secret_key(&key_file, passphrase)
+                .map_err(|e| format!("加载私钥失败 {}: {e}", key_file.display()))?;
+            let rsa_hash = if key.algorithm().is_rsa() {
+                channel
+                    .best_supported_rsa_hash()
+                    .await
+                    .ok()
+                    .flatten()
+                    .flatten()
+            } else {
+                None
+            };
+            let auth = channel
+                .authenticate_publickey(
+                    username,
+                    russh::keys::PrivateKeyWithHashAlg::new(
+                        std::sync::Arc::new(key),
+                        rsa_hash,
+                    ),
+                )
+                .await
+                .map_err(|e| format!("认证失败: {e}"))?;
+            if !auth.success() {
+                return Err("认证失败: 服务器拒绝了该私钥".to_string());
+            }
+        }
+    }
+    Ok(())
+}
+
+/// 私钥路径展开 `~/`（Windows 下 `~` 也按当前用户 home 处理）。
+fn expand_tilde(path: &str) -> std::path::PathBuf {
+    if let Some(rest) = path.strip_prefix("~/").or_else(|| path.strip_prefix("~\\")) {
+        if let Some(home) = dirs::home_dir() {
+            return home.join(rest);
+        }
+    }
+    std::path::PathBuf::from(path)
+}
+
 /// 建连核心（不经过池）：TCP → SSH 握手 → SFTP，带 10 秒总超时与 keepalive。
-async fn connect_fresh(
+pub(crate) async fn connect_fresh(
     host: &RemoteHost,
     password: Option<&str>,
 ) -> Result<Arc<RemoteSession>, String> {
-    let host_display = format!("{}:{}", host.host, host.port);
+    // ~/.ssh/config 兼容：别名 → HostName/Port/User/IdentityFile/ProxyJump
+    let params = effective_connection_params(host);
+    let host_display = format!("{}:{}", params.host, params.port);
     let connect_fut = async {
         let config = Arc::new(client::Config {
             keepalive_interval: Some(KEEPALIVE_INTERVAL),
             ..client::Config::default()
         });
 
-        let mut channel = client::connect(config, (host.host.as_str(), host.port), RemoteHandler)
-            .await
-            .map_err(|e| format!("SSH 连接失败 {host_display}: {e}"))?;
+        // ProxyJump：先连跳板机，再在它的 direct-tcpip 通道上跑目标机的 SSH 握手。
+        // 跳板机连接必须保活到目标连接结束（见 `RemoteSession::_jump`）。
+        let mut jump_keepalive: Option<Arc<Handle<RemoteHandler>>> = None;
+        let mut channel = match params.proxy_jump.as_deref() {
+            Some(spec) if !spec.trim().is_empty() => {
+                let (jump_alias, jump_user, jump_port) = parse_jump_spec(spec);
+                let jump_cfg = resolve_ssh_config(&jump_alias);
+                let jump_host = jump_cfg
+                    .as_ref()
+                    .and_then(|c| c.hostname.clone())
+                    .unwrap_or_else(|| jump_alias.clone());
+                let jump_port = jump_port
+                    .or_else(|| jump_cfg.as_ref().and_then(|c| c.port))
+                    .unwrap_or(22);
+                let jump_user = jump_user
+                    .or_else(|| jump_cfg.as_ref().and_then(|c| c.user.clone()))
+                    .unwrap_or_else(|| params.user.clone());
+                let jump_key = jump_cfg
+                    .as_ref()
+                    .and_then(|c| c.identity_file.clone())
+                    .or_else(|| params.key_path.clone());
+                let jump_display = format!("{jump_host}:{jump_port}");
 
-        match host.auth_method {
-            AuthMethod::Password => {
-                let pw = password.unwrap_or_default();
-                let auth = channel
-                    .authenticate_password(host.username.as_str(), pw)
+                let mut jump = client::connect(
+                    config.clone(),
+                    (jump_host.as_str(), jump_port),
+                    RemoteHandler,
+                )
+                .await
+                .map_err(|e| format!("SSH 连接跳板机失败 {jump_display}: {e}"))?;
+                authenticate_channel(
+                    &mut jump,
+                    host.auth_method,
+                    &jump_user,
+                    password,
+                    jump_key.as_deref(),
+                )
+                .await
+                .map_err(|e| format!("跳板机 {jump_display} {e}"))?;
+                let jump = Arc::new(jump);
+
+                let forwarded = jump
+                    .channel_open_direct_tcpip(
+                        params.host.clone(),
+                        u32::from(params.port),
+                        "127.0.0.1",
+                        0,
+                    )
                     .await
-                    .map_err(|e| format!("认证失败: {e}"))?;
-                if !auth.success() {
-                    return Err("认证失败:服务器拒绝了用户名/密码".to_string());
-                }
+                    .map_err(|e| {
+                        format!("跳板机 {jump_display} 转发到 {host_display} 失败: {e}")
+                    })?;
+                let target = client::connect_stream(
+                    config.clone(),
+                    forwarded.into_stream(),
+                    RemoteHandler,
+                )
+                .await
+                .map_err(|e| format!("经跳板机连接 {host_display} 失败: {e}"))?;
+                jump_keepalive = Some(jump);
+                target
             }
-            AuthMethod::Key => {
-                return Err("密钥认证尚未实现(M1 仅支持密码认证)".to_string());
-            }
-        }
+            _ => client::connect(
+                config,
+                (params.host.as_str(), params.port),
+                RemoteHandler,
+            )
+            .await
+            .map_err(|e| format!("SSH 连接失败 {host_display}: {e}"))?,
+        };
+
+        authenticate_channel(
+            &mut channel,
+            host.auth_method,
+            &params.user,
+            password,
+            params.key_path.as_deref(),
+        )
+        .await?;
 
         let sftp_channel = channel
             .channel_open_session()
@@ -487,6 +798,7 @@ async fn connect_fresh(
             sftp,
             host_id: host.id.clone(),
             tunnel_active: Mutex::new(false),
+            _jump: jump_keepalive,
         });
 
         // 探测远端真实 `$HOME`（best-effort）：default_home() 的推导只在未探测时兜底
@@ -721,21 +1033,45 @@ pub async fn exec_command(
     session: &Handle<RemoteHandler>,
     command: &str,
 ) -> Result<String, String> {
-    let ch = session
-        .channel_open_session()
-        .await
-        .map_err(|e| format!("打开命令通道失败: {e}"))?;
-    ch.exec(true, command)
-        .await
-        .map_err(|e| format!("执行命令失败: {e}"))?;
-    let mut stream = ch.into_stream();
-    let mut output = Vec::new();
-    stream
-        .read_to_end(&mut output)
-        .await
-        .map_err(|e| format!("读取命令输出失败: {e}"))?;
-    Ok(String::from_utf8_lossy(&output).trim().to_string())
+    let raw = exec_command_raw(session, command).await?;
+    Ok(raw.trim().to_string())
 }
+
+/// 同 [`exec_command`]，但**不做 trim**：原样返回命令 stdout。
+///
+/// 读取文件内容（`cat`）时必须用这个——`trim()` 会削掉文件末尾换行，
+/// 导致用读回内容算的 sha256 与磁盘真文件对不上（`write_settings_with_backup`
+/// 的 `expected_hash` 校验会误报「已被外部修改」）。
+pub async fn exec_command_raw(
+    session: &Handle<RemoteHandler>,
+    command: &str,
+) -> Result<String, String> {
+    // 硬超时：容器/远端命令挂住时（docker exec 卡死、磁盘卡住等）不能无限转圈，
+    // 超时后把明确错误抛给前端。
+    let fut = async {
+        let ch = session
+            .channel_open_session()
+            .await
+            .map_err(|e| format!("打开命令通道失败: {e}"))?;
+        ch.exec(true, command)
+            .await
+            .map_err(|e| format!("执行命令失败: {e}"))?;
+        let mut stream = ch.into_stream();
+        let mut output = Vec::new();
+        stream
+            .read_to_end(&mut output)
+            .await
+            .map_err(|e| format!("读取命令输出失败: {e}"))?;
+        Ok::<Vec<u8>, String>(output)
+    };
+    let output = tokio::time::timeout(COMMAND_TIMEOUT, fut)
+        .await
+        .map_err(|_| format!("远端命令超时（{}s）：{command}", COMMAND_TIMEOUT.as_secs()))??;
+    Ok(String::from_utf8_lossy(&output).into_owned())
+}
+
+/// 单条远端命令的硬超时。
+const COMMAND_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// 执行命令并通过 stdin 管道传入数据（不嵌入命令字符串，避免大文件撑爆 SSH 通道）。
 ///
